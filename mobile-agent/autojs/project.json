@@ -1,0 +1,16 @@
+{
+  "name": "AgriVideoCollector",
+  "main": "main.js",
+  "versionName": "0.1.0",
+  "versionCode": 1,
+  "packageName": "com.agri.video.collector",
+  "description": "农业视频手机自动化采集脚本",
+  "launchConfig": {
+    "hideLogs": false
+  },
+  "scripts": {},
+  "optimization": {
+    "removeOpenCv": true,
+    "unusedResources": true
+  }
+}

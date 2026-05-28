@@ -1,0 +1,75 @@
+function createPermissionManager(config, logger) {
+  function waitForAccessibility() {
+    if (auto.service) {
+      return true;
+    }
+
+    logger.warn("无障碍服务未开启，跳转设置页");
+    toast("请开启无障碍服务后返回脚本");
+    app.startActivity({
+      action: "android.settings.ACCESSIBILITY_SETTINGS"
+    });
+
+    for (var i = 0; i < 60; i++) {
+      sleep(1000);
+      if (auto.service) {
+        logger.info("无障碍服务已开启");
+        return true;
+      }
+    }
+
+    logger.error("等待无障碍服务超时");
+    return false;
+  }
+
+  function ensureCapturePermission() {
+    logger.info("请求截图权限");
+    var granted = requestScreenCapture(false);
+    if (!granted) {
+      logger.error("截图权限请求失败");
+      toast("截图权限失败，任务停止");
+      return false;
+    }
+    logger.info("截图权限已获得");
+    return true;
+  }
+
+  function ensureOutputDirs() {
+    var dirs = [
+      config.output.baseDir,
+      config.output.cacheDir
+    ];
+    if (config.task.saveScreenshots) {
+      dirs.push(config.output.screenshotDir);
+    }
+    if (config.output.writeLogFile) {
+      dirs.push(config.output.logDir);
+    }
+    dirs.forEach(function (dirPath) {
+      if (!files.exists(dirPath)) {
+        files.createWithDirs(dirPath + "/.keep");
+        files.remove(dirPath + "/.keep");
+      }
+    });
+    return true;
+  }
+
+  function ensureAll() {
+    ensureOutputDirs();
+    if (!waitForAccessibility()) {
+      return false;
+    }
+    if (!ensureCapturePermission()) {
+      return false;
+    }
+    return true;
+  }
+
+  return {
+    ensureAll: ensureAll
+  };
+}
+
+module.exports = {
+  createPermissionManager: createPermissionManager
+};

@@ -1,0 +1,11 @@
+.idea/
+dist/
+docs/materials/
+
+# Runtime collection outputs
+mobile-agent/autojs/datasource/*
+!mobile-agent/autojs/datasource/.gitkeep
+
+# Local OS/editor noise
+Thumbs.db
+.DS_Store
