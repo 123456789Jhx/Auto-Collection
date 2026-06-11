@@ -47,8 +47,8 @@ jobs:
         working-directory: .
         run: |
           owner_lower=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
-          echo "api_image=ghcr.io/${owner_lower}/auto-collection-api" >> "$GITHUB_OUTPUT"
-          echo "web_image=ghcr.io/${owner_lower}/auto-collection-web" >> "$GITHUB_OUTPUT"
+          echo "api_image=ghcr.io/${owner_lower}/auto-collection/api" >> "$GITHUB_OUTPUT"
+          echo "web_image=ghcr.io/${owner_lower}/auto-collection/web" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3

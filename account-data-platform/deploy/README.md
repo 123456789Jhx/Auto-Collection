@@ -3,7 +3,7 @@
 This deploy pack runs the agriculture collection backend as an isolated Docker Compose stack.
 Normal production updates are handled by GitHub Actions:
 
-1. `Docker Image CI` builds and pushes `ghcr.io/dafengchan/auto-collection-api` and `ghcr.io/dafengchan/auto-collection-web`.
+1. `Docker Image CI` builds and pushes `ghcr.io/dafengchan/auto-collection/api` and `ghcr.io/dafengchan/auto-collection/web`.
 2. `Deploy on Self-Hosted Runner` runs on the `dafengchan-deploy` runner and updates the server stack with Docker Compose.
 
 ## Ports

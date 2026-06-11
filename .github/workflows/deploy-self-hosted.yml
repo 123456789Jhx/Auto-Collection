@@ -26,19 +26,35 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Deploy via docker compose
+      - name: Deploy via SSH docker compose
         env:
+          SSH_HOST: 49.235.171.75
+          SSH_PORT: "18022"
+          SSH_USER: bigbear0079
+          SSHPASS: ${{ secrets.AUTO_COLLECTION_DEPLOY_SSH_PASSWORD }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEPLOY_DIR: /opt/stacks/auto-collection
           COMPOSE_FILE: docker-compose.production.yml
           HEALTH_URL: http://127.0.0.1:18080/ready
           HEALTH_RETRIES: "30"
           HEALTH_INTERVAL_SECONDS: "3"
         run: |
-          bash scripts/deploy_with_compose.sh
+          if command -v sshpass >/dev/null 2>&1; then
+            bash scripts/deploy_via_ssh.sh
+          else
+            docker run --rm \
+              -e SSH_HOST \
+              -e SSH_PORT \
+              -e SSH_USER \
+              -e SSHPASS \
+              -e GHCR_USER \
+              -e GHCR_TOKEN \
+              -e DEPLOY_DIR \
+              -e COMPOSE_FILE \
+              -e HEALTH_URL \
+              -e HEALTH_RETRIES \
+              -e HEALTH_INTERVAL_SECONDS \
+              -v "$PWD:/workspace:ro" \
+              -w /workspace \
+              alpine:3.22 sh -lc "apk add --no-cache bash curl openssh-client sshpass && bash scripts/deploy_via_ssh.sh"

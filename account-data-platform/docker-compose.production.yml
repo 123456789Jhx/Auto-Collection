@@ -32,7 +32,7 @@ services:
       retries: 10
 
   api:
-    image: ${API_IMAGE:-ghcr.io/dafengchan/auto-collection-api:latest}
+    image: ${API_IMAGE:-ghcr.io/dafengchan/auto-collection/api:latest}
     pull_policy: ${APP_PULL_POLICY:-always}
     container_name: auto-collection-api
     restart: unless-stopped
@@ -49,7 +49,7 @@ services:
         condition: service_healthy
 
   web:
-    image: ${WEB_IMAGE:-ghcr.io/dafengchan/auto-collection-web:latest}
+    image: ${WEB_IMAGE:-ghcr.io/dafengchan/auto-collection/web:latest}
     pull_policy: ${APP_PULL_POLICY:-always}
     container_name: auto-collection-web
     restart: unless-stopped
@@ -61,7 +61,7 @@ services:
       - api
 
   db-push:
-    image: ${API_IMAGE:-ghcr.io/dafengchan/auto-collection-api:latest}
+    image: ${API_IMAGE:-ghcr.io/dafengchan/auto-collection/api:latest}
     pull_policy: ${APP_PULL_POLICY:-always}
     profiles:
       - tools
