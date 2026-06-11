@@ -32,10 +32,9 @@ jobs:
           SSH_PORT: "18022"
           SSH_USER: bigbear0079
           SSHPASS: ${{ secrets.AUTO_COLLECTION_DEPLOY_SSH_PASSWORD }}
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEPLOY_DIR: /opt/stacks/auto-collection
           COMPOSE_FILE: docker-compose.production.yml
+          APP_PULL_POLICY: never
           HEALTH_URL: http://127.0.0.1:18080/ready
           HEALTH_RETRIES: "30"
           HEALTH_INTERVAL_SECONDS: "3"
@@ -48,10 +47,9 @@ jobs:
               -e SSH_PORT \
               -e SSH_USER \
               -e SSHPASS \
-              -e GHCR_USER \
-              -e GHCR_TOKEN \
               -e DEPLOY_DIR \
               -e COMPOSE_FILE \
+              -e APP_PULL_POLICY \
               -e HEALTH_URL \
               -e HEALTH_RETRIES \
               -e HEALTH_INTERVAL_SECONDS \

@@ -3,8 +3,8 @@
 This deploy pack runs the agriculture collection backend as an isolated Docker Compose stack.
 Normal production updates are handled by GitHub Actions:
 
-1. `Docker Image CI` builds and pushes `ghcr.io/dafengchan/auto-collection/api` and `ghcr.io/dafengchan/auto-collection/web`.
-2. `Deploy on Self-Hosted Runner` runs on the `dafengchan-deploy` runner and updates the server stack with Docker Compose.
+1. `Docker Image CI` runs quality gates and validates the Docker builds.
+2. `Deploy on Self-Hosted Runner` runs on the `dafengchan-deploy` runner, connects to the production host by SSH, syncs `account-data-platform`, builds images on the server, and updates the Docker Compose stack.
 
 ## Ports
 
@@ -35,7 +35,7 @@ cp /path/to/Auto-Collection/account-data-platform/.env.production.example .env
 
 Edit `.env` and replace both passwords. Use letters and numbers only unless the password is URL-encoded, because the values are used inside database URLs.
 
-The self-hosted deployment script syncs `docker-compose.production.yml` from the repository, pulls the latest GHCR images, starts PostgreSQL and Redis, runs `db-push`, starts API and Web, and checks `/ready`.
+The self-hosted deployment script syncs the application source from the repository, builds the images on the server, starts PostgreSQL and Redis, runs `db-push`, starts API and Web, and checks `/ready`.
 
 Check status:
 

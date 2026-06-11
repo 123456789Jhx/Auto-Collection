@@ -12,8 +12,7 @@ HEALTH_URL="${HEALTH_URL:-}"
 HEALTH_RETRIES="${HEALTH_RETRIES:-30}"
 HEALTH_INTERVAL_SECONDS="${HEALTH_INTERVAL_SECONDS:-3}"
 RUN_DB_PUSH="${RUN_DB_PUSH:-true}"
-GHCR_USER="${GHCR_USER:-}"
-GHCR_TOKEN="${GHCR_TOKEN:-}"
+APP_PULL_POLICY="${APP_PULL_POLICY:-never}"
 
 if [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ] || [ -z "$SSHPASS" ]; then
   echo "SSH_HOST, SSH_USER, and SSHPASS are required"
@@ -25,14 +24,10 @@ if [ -z "$DEPLOY_DIR" ]; then
   exit 1
 fi
 
-if [ -z "$GHCR_USER" ] || [ -z "$GHCR_TOKEN" ]; then
-  echo "GHCR_USER and GHCR_TOKEN are required"
-  exit 1
-fi
-
-repo_compose_path="account-data-platform/$COMPOSE_FILE"
-if [ ! -f "$repo_compose_path" ]; then
-  echo "Compose file not found in repository: $repo_compose_path"
+repo_source_path="account-data-platform"
+repo_compose_path="$repo_source_path/$COMPOSE_FILE"
+if [ ! -d "$repo_source_path" ] || [ ! -f "$repo_compose_path" ]; then
+  echo "Deploy source not found in repository: $repo_source_path"
   exit 1
 fi
 
@@ -55,16 +50,14 @@ echo "Preparing remote deploy directory: $DEPLOY_DIR"
 sshpass -e ssh "${ssh_opts[@]}" "$remote" \
   "test -d '$DEPLOY_DIR' && mkdir -p '$DEPLOY_DIR/public/downloads' && test -f '$DEPLOY_DIR/.env'"
 
-echo "Syncing compose file to remote host"
-sshpass -e scp "${scp_opts[@]}" "$repo_compose_path" "$remote:$DEPLOY_DIR/$COMPOSE_FILE"
-
-echo "Logging in to GHCR on remote host"
-printf '%s' "$GHCR_TOKEN" | sshpass -e ssh "${ssh_opts[@]}" "$remote" \
-  "docker login ghcr.io -u '$GHCR_USER' --password-stdin >/dev/null"
+echo "Syncing application source to remote host"
+COPYFILE_DISABLE=1 tar --no-xattrs --exclude='._*' --exclude='.DS_Store' --exclude='node_modules' --exclude='**/node_modules' --exclude='dist' --exclude='**/dist' --exclude='dist-types' --exclude='**/dist-types' -C "$repo_source_path" -czf - . |
+  sshpass -e ssh "${ssh_opts[@]}" "$remote" \
+    "set -euo pipefail; tmp_dir=\$(mktemp -d); tar -xzf - -C \"\$tmp_dir\"; find '$DEPLOY_DIR' -mindepth 1 -maxdepth 1 ! -name .env ! -name public -exec rm -rf {} +; find \"\$tmp_dir\" -name '._*' -o -name '.DS_Store' -delete; cp -a \"\$tmp_dir\"/. '$DEPLOY_DIR'/; rm -rf \"\$tmp_dir\"; mkdir -p '$DEPLOY_DIR/public/downloads'"
 
 echo "Deploying remote compose stack"
 sshpass -e ssh "${ssh_opts[@]}" "$remote" \
-  "DEPLOY_DIR='$DEPLOY_DIR' COMPOSE_FILE='$COMPOSE_FILE' RUN_DB_PUSH='$RUN_DB_PUSH' HEALTH_URL='$HEALTH_URL' HEALTH_RETRIES='$HEALTH_RETRIES' HEALTH_INTERVAL_SECONDS='$HEALTH_INTERVAL_SECONDS' bash -s" <<'REMOTE_SCRIPT'
+  "DEPLOY_DIR='$DEPLOY_DIR' COMPOSE_FILE='$COMPOSE_FILE' RUN_DB_PUSH='$RUN_DB_PUSH' APP_PULL_POLICY='$APP_PULL_POLICY' HEALTH_URL='$HEALTH_URL' HEALTH_RETRIES='$HEALTH_RETRIES' HEALTH_INTERVAL_SECONDS='$HEALTH_INTERVAL_SECONDS' bash -s" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 cd "$DEPLOY_DIR"
@@ -73,15 +66,22 @@ echo "Deploy directory: $DEPLOY_DIR"
 echo "Compose file: $COMPOSE_FILE"
 echo "Runtime env file: $DEPLOY_DIR/.env"
 
-docker compose -f "$COMPOSE_FILE" pull api web db-push
+if [ "$APP_PULL_POLICY" = "never" ]; then
+  echo "APP_PULL_POLICY=never, skipping docker compose pull"
+else
+  docker compose -f "$COMPOSE_FILE" pull api web db-push
+fi
+
+docker compose -f "$COMPOSE_FILE" build api web db-push
 docker compose -f "$COMPOSE_FILE" up -d postgres redis
 
 if [ "$RUN_DB_PUSH" = "true" ]; then
-  docker compose -f "$COMPOSE_FILE" run --rm db-push
+  docker compose -f "$COMPOSE_FILE" run -T --rm db-push </dev/null
 else
   echo "RUN_DB_PUSH=false, skipping database schema sync"
 fi
 
+echo "Starting API and web services"
 docker compose -f "$COMPOSE_FILE" up -d --remove-orphans api web
 docker compose -f "$COMPOSE_FILE" ps
 
