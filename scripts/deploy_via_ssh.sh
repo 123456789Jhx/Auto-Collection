@@ -51,7 +51,12 @@ sshpass -e ssh "${ssh_opts[@]}" "$remote" \
   "test -d '$DEPLOY_DIR' && mkdir -p '$DEPLOY_DIR/public/downloads' && test -f '$DEPLOY_DIR/.env'"
 
 echo "Syncing application source to remote host"
-COPYFILE_DISABLE=1 tar --no-xattrs --exclude='._*' --exclude='.DS_Store' --exclude='node_modules' --exclude='**/node_modules' --exclude='dist' --exclude='**/dist' --exclude='dist-types' --exclude='**/dist-types' -C "$repo_source_path" -czf - . |
+tar_extra_args=()
+if tar --help 2>&1 | grep -q -- "--no-xattrs"; then
+  tar_extra_args+=(--no-xattrs)
+fi
+
+COPYFILE_DISABLE=1 tar "${tar_extra_args[@]}" --exclude='._*' --exclude='.DS_Store' --exclude='node_modules' --exclude='**/node_modules' --exclude='dist' --exclude='**/dist' --exclude='dist-types' --exclude='**/dist-types' -C "$repo_source_path" -czf - . |
   sshpass -e ssh "${ssh_opts[@]}" "$remote" \
     "set -euo pipefail; tmp_dir=\$(mktemp -d); tar -xzf - -C \"\$tmp_dir\"; find '$DEPLOY_DIR' -mindepth 1 -maxdepth 1 ! -name .env ! -name public -exec rm -rf {} +; find \"\$tmp_dir\" -name '._*' -o -name '.DS_Store' -delete; cp -a \"\$tmp_dir\"/. '$DEPLOY_DIR'/; rm -rf \"\$tmp_dir\"; mkdir -p '$DEPLOY_DIR/public/downloads'"
 
