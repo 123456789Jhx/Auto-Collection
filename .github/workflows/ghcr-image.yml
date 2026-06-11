@@ -1,0 +1,90 @@
+name: Docker Image CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test-build-and-push:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: account-data-platform
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Type check
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+      - name: Build
+        run: bun run build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare image tags
+        id: prep
+        working-directory: .
+        run: |
+          owner_lower=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          echo "api_image=ghcr.io/${owner_lower}/auto-collection-api" >> "$GITHUB_OUTPUT"
+          echo "web_image=ghcr.io/${owner_lower}/auto-collection-web" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./account-data-platform
+          file: ./account-data-platform/deploy/docker/Dockerfile.api
+          platforms: linux/amd64
+          pull: true
+          push: true
+          tags: |
+            ${{ steps.prep.outputs.api_image }}:latest
+            ${{ steps.prep.outputs.api_image }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=auto-collection-api
+          cache-to: type=gha,mode=max,scope=auto-collection-api
+
+      - name: Build and push Web image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./account-data-platform
+          file: ./account-data-platform/deploy/docker/Dockerfile.web
+          platforms: linux/amd64
+          pull: true
+          push: true
+          tags: |
+            ${{ steps.prep.outputs.web_image }}:latest
+            ${{ steps.prep.outputs.web_image }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=auto-collection-web
+          cache-to: type=gha,mode=max,scope=auto-collection-web

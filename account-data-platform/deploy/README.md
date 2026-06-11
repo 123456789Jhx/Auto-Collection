@@ -1,6 +1,10 @@
 # Auto Collection Production Deploy
 
 This deploy pack runs the agriculture collection backend as an isolated Docker Compose stack.
+Normal production updates are handled by GitHub Actions:
+
+1. `Docker Image CI` builds and pushes `ghcr.io/dafengchan/auto-collection-api` and `ghcr.io/dafengchan/auto-collection-web`.
+2. `Deploy on Self-Hosted Runner` runs on the `dafengchan-deploy` runner and updates the server stack with Docker Compose.
 
 ## Ports
 
@@ -19,60 +23,31 @@ Public URLs:
 Recommended path:
 
 ```bash
-/opt/auto-collection/account-data-platform
+/opt/stacks/auto-collection
 ```
 
 ## First Deploy
 
 ```bash
-cd /opt/auto-collection/account-data-platform
-cp .env.production.example .env.production
+cd /opt/stacks/auto-collection
+cp /path/to/Auto-Collection/account-data-platform/.env.production.example .env
 ```
 
-Edit `.env.production` and replace both passwords. Use letters and numbers only unless the password is URL-encoded, because the values are used inside database URLs.
+Edit `.env` and replace both passwords. Use letters and numbers only unless the password is URL-encoded, because the values are used inside database URLs.
 
-Build images:
-
-```bash
-docker compose --env-file .env.production -f docker-compose.production.yml build
-```
-
-Start database and redis:
-
-```bash
-docker compose --env-file .env.production -f docker-compose.production.yml up -d postgres redis
-```
-
-Initialize or sync the database schema:
-
-```bash
-docker compose --env-file .env.production -f docker-compose.production.yml run --rm db-push
-```
-
-Use this on the first empty production database. Do not pass `--force` unless you have reviewed the generated schema changes and accepted possible data loss.
-
-Start API and web:
-
-```bash
-docker compose --env-file .env.production -f docker-compose.production.yml up -d api web
-```
+The self-hosted deployment script syncs `docker-compose.production.yml` from the repository, pulls the latest GHCR images, starts PostgreSQL and Redis, runs `db-push`, starts API and Web, and checks `/ready`.
 
 Check status:
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.production.yml ps
+docker compose -f docker-compose.production.yml ps
 curl http://127.0.0.1:18080/health
 curl http://127.0.0.1:18080/ready
 ```
 
 ## Update Deploy
 
-```bash
-cd /opt/auto-collection/account-data-platform
-docker compose --env-file .env.production -f docker-compose.production.yml build
-docker compose --env-file .env.production -f docker-compose.production.yml run --rm db-push
-docker compose --env-file .env.production -f docker-compose.production.yml up -d
-```
+Push to `main` or `master`; GitHub Actions builds the images and the self-hosted runner deploys automatically. You can also trigger both workflows manually from the GitHub Actions page.
 
 ## Mobile Agent URL
 

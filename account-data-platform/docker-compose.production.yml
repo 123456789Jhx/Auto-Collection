@@ -32,10 +32,8 @@ services:
       retries: 10
 
   api:
-    build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile.api
-    image: auto-collection-api:latest
+    image: ${API_IMAGE:-ghcr.io/dafengchan/auto-collection-api:latest}
+    pull_policy: ${APP_PULL_POLICY:-always}
     container_name: auto-collection-api
     restart: unless-stopped
     environment:
@@ -51,10 +49,8 @@ services:
         condition: service_healthy
 
   web:
-    build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile.web
-    image: auto-collection-web:latest
+    image: ${WEB_IMAGE:-ghcr.io/dafengchan/auto-collection-web:latest}
+    pull_policy: ${APP_PULL_POLICY:-always}
     container_name: auto-collection-web
     restart: unless-stopped
     ports:
@@ -65,10 +61,8 @@ services:
       - api
 
   db-push:
-    build:
-      context: .
-      dockerfile: deploy/docker/Dockerfile.api
-    image: auto-collection-api:latest
+    image: ${API_IMAGE:-ghcr.io/dafengchan/auto-collection-api:latest}
+    pull_policy: ${APP_PULL_POLICY:-always}
     profiles:
       - tools
     environment:
