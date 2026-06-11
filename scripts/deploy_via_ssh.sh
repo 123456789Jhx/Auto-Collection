@@ -7,11 +7,12 @@ SSH_PORT="${SSH_PORT:-22}"
 SSH_USER="${SSH_USER:-}"
 SSHPASS="${SSHPASS:-${SSH_PASSWORD:-}}"
 DEPLOY_DIR="${DEPLOY_DIR:-}"
+COMPOSE_DIR="${COMPOSE_DIR:-$DEPLOY_DIR}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.production.yml}"
 HEALTH_URL="${HEALTH_URL:-}"
 HEALTH_RETRIES="${HEALTH_RETRIES:-30}"
 HEALTH_INTERVAL_SECONDS="${HEALTH_INTERVAL_SECONDS:-3}"
-RUN_DB_PUSH="${RUN_DB_PUSH:-true}"
+RUN_DB_PUSH="${RUN_DB_PUSH:-false}"
 APP_PULL_POLICY="${APP_PULL_POLICY:-never}"
 
 if [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ] || [ -z "$SSHPASS" ]; then
@@ -46,30 +47,46 @@ scp_opts=(
 )
 remote="${SSH_USER}@${SSH_HOST}"
 
-echo "Preparing remote deploy directory: $DEPLOY_DIR"
+echo "Checking remote deploy directories"
 sshpass -e ssh "${ssh_opts[@]}" "$remote" \
-  "test -d '$DEPLOY_DIR' && mkdir -p '$DEPLOY_DIR/public/downloads' && test -f '$DEPLOY_DIR/.env'"
+  "mkdir -p '$DEPLOY_DIR' '$COMPOSE_DIR/public/downloads' && test -f '$COMPOSE_DIR/.env'"
 
 echo "Syncing application source to remote host"
-tar_extra_args=()
-if tar --help 2>&1 | grep -q -- "--no-xattrs"; then
-  tar_extra_args+=(--no-xattrs)
+tar_extra_args=""
+if tar --no-xattrs -cf /dev/null --files-from /dev/null >/dev/null 2>&1; then
+  tar_extra_args="--no-xattrs"
 fi
 
-COPYFILE_DISABLE=1 tar "${tar_extra_args[@]}" --exclude='._*' --exclude='.DS_Store' --exclude='node_modules' --exclude='**/node_modules' --exclude='dist' --exclude='**/dist' --exclude='dist-types' --exclude='**/dist-types' -C "$repo_source_path" -czf - . |
+COPYFILE_DISABLE=1 tar ${tar_extra_args:+$tar_extra_args} \
+  --exclude='._*' \
+  --exclude='.DS_Store' \
+  --exclude='.git' \
+  --exclude='.env' \
+  --exclude='.env.*' \
+  --exclude='node_modules' \
+  --exclude='**/node_modules' \
+  --exclude='dist' \
+  --exclude='**/dist' \
+  --exclude='dist-types' \
+  --exclude='**/dist-types' \
+  -C "$repo_source_path" -czf - . |
   sshpass -e ssh "${ssh_opts[@]}" "$remote" \
-    "set -euo pipefail; tmp_dir=\$(mktemp -d); tar -xzf - -C \"\$tmp_dir\"; find '$DEPLOY_DIR' -mindepth 1 -maxdepth 1 ! -name .env ! -name public -exec rm -rf {} +; find \"\$tmp_dir\" -name '._*' -o -name '.DS_Store' -delete; cp -a \"\$tmp_dir\"/. '$DEPLOY_DIR'/; rm -rf \"\$tmp_dir\"; mkdir -p '$DEPLOY_DIR/public/downloads'"
+    "set -euo pipefail; tmp_dir=\$(mktemp -d); tar -xzf - -C \"\$tmp_dir\"; find '$DEPLOY_DIR' -mindepth 1 -maxdepth 1 -exec rm -rf {} +; find \"\$tmp_dir\" -name '._*' -o -name '.DS_Store' -delete; cp -a \"\$tmp_dir\"/. '$DEPLOY_DIR'/; rm -rf \"\$tmp_dir\""
+
+echo "Syncing compose file to remote stack directory"
+sshpass -e scp "${scp_opts[@]}" "$repo_compose_path" "$remote:$COMPOSE_DIR/$COMPOSE_FILE"
 
 echo "Deploying remote compose stack"
 sshpass -e ssh "${ssh_opts[@]}" "$remote" \
-  "DEPLOY_DIR='$DEPLOY_DIR' COMPOSE_FILE='$COMPOSE_FILE' RUN_DB_PUSH='$RUN_DB_PUSH' APP_PULL_POLICY='$APP_PULL_POLICY' HEALTH_URL='$HEALTH_URL' HEALTH_RETRIES='$HEALTH_RETRIES' HEALTH_INTERVAL_SECONDS='$HEALTH_INTERVAL_SECONDS' bash -s" <<'REMOTE_SCRIPT'
+  "DEPLOY_DIR='$DEPLOY_DIR' COMPOSE_DIR='$COMPOSE_DIR' COMPOSE_FILE='$COMPOSE_FILE' RUN_DB_PUSH='$RUN_DB_PUSH' APP_PULL_POLICY='$APP_PULL_POLICY' HEALTH_URL='$HEALTH_URL' HEALTH_RETRIES='$HEALTH_RETRIES' HEALTH_INTERVAL_SECONDS='$HEALTH_INTERVAL_SECONDS' bash -s" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
-cd "$DEPLOY_DIR"
+cd "$COMPOSE_DIR"
 
 echo "Deploy directory: $DEPLOY_DIR"
+echo "Compose directory: $COMPOSE_DIR"
 echo "Compose file: $COMPOSE_FILE"
-echo "Runtime env file: $DEPLOY_DIR/.env"
+echo "Runtime env file: $COMPOSE_DIR/.env"
 
 if [ "$APP_PULL_POLICY" = "never" ]; then
   echo "APP_PULL_POLICY=never, skipping docker compose pull"

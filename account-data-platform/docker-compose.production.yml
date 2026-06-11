@@ -33,7 +33,7 @@ services:
 
   api:
     build:
-      context: .
+      context: ${APP_SOURCE_DIR:-.}
       dockerfile: deploy/docker/Dockerfile.api
     image: ${API_IMAGE:-ghcr.io/dafengchan/auto-collection/api:latest}
     pull_policy: ${APP_PULL_POLICY:-always}
@@ -53,14 +53,14 @@ services:
 
   web:
     build:
-      context: .
+      context: ${APP_SOURCE_DIR:-.}
       dockerfile: deploy/docker/Dockerfile.web
     image: ${WEB_IMAGE:-ghcr.io/dafengchan/auto-collection/web:latest}
     pull_policy: ${APP_PULL_POLICY:-always}
     container_name: auto-collection-web
     restart: unless-stopped
     ports:
-      - "${WEB_PUBLIC_PORT:-18080}:80"
+      - "${WEB_BIND_HOST:-127.0.0.1}:${WEB_PUBLIC_PORT:-9026}:80"
     volumes:
       - ./public/downloads:/usr/share/nginx/html/downloads:ro
     depends_on:
@@ -68,7 +68,7 @@ services:
 
   db-push:
     build:
-      context: .
+      context: ${APP_SOURCE_DIR:-.}
       dockerfile: deploy/docker/Dockerfile.api
     image: ${API_IMAGE:-ghcr.io/dafengchan/auto-collection/api:latest}
     pull_policy: ${APP_PULL_POLICY:-always}
