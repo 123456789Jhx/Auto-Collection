@@ -1,0 +1,63 @@
+name: Deploy on Self-Hosted Runner
+
+on:
+  workflow_run:
+    workflows: ["Docker Image CI"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success'
+      )
+    runs-on: [self-hosted, linux, x64, dafengchan-deploy]
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH docker compose
+        env:
+          SSH_HOST: 49.235.171.75
+          SSH_PORT: "18082"
+          SSH_USER: bigbear0079
+          SSHPASS: ${{ secrets.AUTO_COLLECTION_DEPLOY_SSH_PASSWORD }}
+          DEPLOY_DIR: /data/projects/auto-collection/account-data-platform
+          COMPOSE_DIR: /data/stacks/auto-collection
+          COMPOSE_FILE: docker-compose.production.yml
+          APP_PULL_POLICY: never
+          RUN_DB_PUSH: "false"
+          HEALTH_URL: http://127.0.0.1:9026/health
+          HEALTH_RETRIES: "30"
+          HEALTH_INTERVAL_SECONDS: "3"
+        run: |
+          if command -v sshpass >/dev/null 2>&1; then
+            bash scripts/deploy_via_ssh.sh
+          else
+            docker run --rm \
+              -e SSH_HOST \
+              -e SSH_PORT \
+              -e SSH_USER \
+              -e SSHPASS \
+              -e DEPLOY_DIR \
+              -e COMPOSE_DIR \
+              -e COMPOSE_FILE \
+              -e APP_PULL_POLICY \
+              -e RUN_DB_PUSH \
+              -e HEALTH_URL \
+              -e HEALTH_RETRIES \
+              -e HEALTH_INTERVAL_SECONDS \
+              -v "$PWD:/workspace:ro" \
+              -w /workspace \
+              alpine:3.22 sh -lc "apk add --no-cache bash curl openssh-client sshpass && bash scripts/deploy_via_ssh.sh"
+          fi

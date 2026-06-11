@@ -97,24 +97,24 @@ function tokenSuffix(deviceToken: string, length = 10) {
 }
 
 async function allocateDeviceCode(preferredCode: string, deviceToken: string) {
-  var normalized = (preferredCode || "").trim();
+  const normalized = (preferredCode || "").trim();
   if (normalized) {
-    var existing = await findDeviceByCode(normalized);
+    const existing = await findDeviceByCode(normalized);
     if (!existing) {
       return normalized;
     }
   }
 
-  var suffix = tokenSuffix(deviceToken, 12);
-  var generated = "device_" + suffix;
-  var generatedExisting = await findDeviceByCode(generated);
+  const suffix = tokenSuffix(deviceToken, 12);
+  const generated = "device_" + suffix;
+  const generatedExisting = await findDeviceByCode(generated);
   if (!generatedExisting) {
     return generated;
   }
 
-  for (var index = 2; index <= 99; index += 1) {
-    var candidate = generated + "_" + index;
-    var candidateExisting = await findDeviceByCode(candidate);
+  for (let index = 2; index <= 99; index += 1) {
+    const candidate = generated + "_" + index;
+    const candidateExisting = await findDeviceByCode(candidate);
     if (!candidateExisting) {
       return candidate;
     }

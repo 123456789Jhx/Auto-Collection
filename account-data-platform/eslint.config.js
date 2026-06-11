@@ -5,6 +5,6 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ["**/dist/**", "**/node_modules/**", "mobile-agent/**", "docs/materials/**"]
+    ignores: ["**/dist/**", "**/dist-types/**", "**/node_modules/**", "mobile-agent/**", "docs/materials/**"]
   }
 );
