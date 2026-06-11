@@ -1,0 +1,100 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f5f7fa;
+  color: #1f2933;
+  font-family: Inter, "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: #17212b;
+}
+
+.brand {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 700;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.topbar {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.page-title {
+  margin: 0 !important;
+}
+
+.content {
+  padding: 18px;
+}
+
+.metrics {
+  margin-bottom: 16px;
+}
+
+.section-card {
+  margin-bottom: 16px;
+}
+
+.metric-card {
+  height: 100%;
+  border-radius: 8px;
+}
+
+.device-card {
+  height: 100%;
+  border-radius: 8px;
+}
+
+.device-card .ant-card-body {
+  min-height: 170px;
+}
+
+.progress-device-card .ant-card-body {
+  min-height: 310px;
+}
+
+.card-icon {
+  color: #1677ff;
+  font-size: 22px;
+}
+
+.card-stats {
+  margin: 18px 0 10px;
+}
+
+.log-preview {
+  max-height: 520px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #d1d5db;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.compact-log-preview {
+  max-height: 280px;
+}

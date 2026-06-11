@@ -1,6 +1,22 @@
 .idea/
 dist/
 docs/materials/
+docs/runtime.log
+docs/error
+scripts/__pycache__/
+
+# Backend/frontend local dependencies and build outputs
+account-data-platform/node_modules/
+account-data-platform/**/node_modules/
+account-data-platform/**/dist/
+account-data-platform/**/dist-types/
+account-data-platform/**/*.tsbuildinfo
+
+# Local environment files
+account-data-platform/.env
+account-data-platform/.env.*
+!account-data-platform/.env.example
+!account-data-platform/.env.production.example
 
 # Runtime collection outputs
 mobile-agent/autojs/datasource/*

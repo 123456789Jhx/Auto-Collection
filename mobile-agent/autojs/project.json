@@ -1,10 +1,10 @@
 {
   "name": "AgriVideoCollector",
-  "main": "main.js",
-  "versionName": "0.1.0",
-  "versionCode": 1,
+  "main": "launcher.js",
+  "versionName": "0.1.10",
+  "versionCode": 11,
   "packageName": "com.agri.video.collector",
-  "description": "农业视频手机自动化采集脚本",
+  "description": "Agri video collector mobile agent",
   "launchConfig": {
     "hideLogs": false
   },

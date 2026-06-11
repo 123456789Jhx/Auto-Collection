@@ -1,4 +1,18 @@
 function createOcr(config, logger) {
+  var permissionManager = null;
+
+  function setPermissionManager(manager) {
+    permissionManager = manager || null;
+  }
+
+  function ensureCaptureReady(reason) {
+    if (!permissionManager || !permissionManager.ensureCapturePermission) {
+      return true;
+    }
+    logger.info("OCR截图前确认截图权限", { reason: reason || "" });
+    return permissionManager.ensureCapturePermission();
+  }
+
   function normalizeResult(result) {
     if (!result) {
       return "";
@@ -66,6 +80,12 @@ function createOcr(config, logger) {
   }
 
   function captureAndRecognize() {
+    if (!ensureCaptureReady("capture_and_recognize")) {
+      return {
+        image: null,
+        text: ""
+      };
+    }
     var image = captureScreen();
     var text = recognize(image);
     return {
@@ -74,9 +94,43 @@ function createOcr(config, logger) {
     };
   }
 
+  function captureRegions(regionMap) {
+    if (!ensureCaptureReady("capture_regions")) {
+      return {
+        image: null,
+        regions: {},
+        text: ""
+      };
+    }
+    var image = captureScreen();
+    var result = {};
+    Object.keys(regionMap || {}).forEach(function (name) {
+      var region = regionMap[name];
+      try {
+        var clip = images.clip(image, region.x, region.y, region.w, region.h);
+        result[name] = recognize(clip);
+      } catch (error) {
+        logger.warn("区域 OCR 失败", {
+          region: name,
+          message: String(error)
+        });
+        result[name] = "";
+      }
+    });
+    return {
+      image: image,
+      regions: result,
+      text: Object.keys(result).map(function (key) {
+        return result[key];
+      }).filter(Boolean).join("\n")
+    };
+  }
+
   return {
     recognize: recognize,
-    captureAndRecognize: captureAndRecognize
+    captureAndRecognize: captureAndRecognize,
+    captureRegions: captureRegions,
+    setPermissionManager: setPermissionManager
   };
 }
 

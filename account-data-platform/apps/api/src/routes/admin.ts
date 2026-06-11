@@ -1,0 +1,63 @@
+import { createAgentVersionSchema, createMobileCommandSchema, updateDeviceSchema, updateDeviceTaskConfigSchema, updateTaskSchema } from "@pkg/types";
+import { Hono } from "hono";
+import { validationError } from "../lib/validation";
+import { createCommand, getCommands } from "../services/command.service";
+import { clearDeviceToken, getDeviceDailyProgress, getDeviceProgressHistory, getDeviceTaskConfig, getDevices, getLogDates, getLogDeviceSummary, getLogFileDates, getLogFileDetail, getLogFiles, getLogs, getOverview, getRecordDates, getRecordDeviceSummary, getRecords, getTasks, rotateDeviceToken, updateDevice, updateDeviceTaskConfig, updateTaskConfig } from "../services/admin.service";
+import { getAgentVersions, publishAgentVersion } from "../services/agent-version.service";
+
+export const adminRoutes = new Hono();
+
+adminRoutes.get("/overview", async (c) => c.json(await getOverview()));
+adminRoutes.get("/devices", async (c) => c.json(await getDevices()));
+adminRoutes.patch("/devices/:deviceCode", async (c) => {
+  const parsed = updateDeviceSchema.safeParse(await c.req.json());
+  if (!parsed.success) {
+    return validationError(c, parsed.error);
+  }
+  return c.json(await updateDevice(c.req.param("deviceCode"), parsed.data));
+});
+adminRoutes.post("/devices/:deviceCode/token", async (c) => c.json(await rotateDeviceToken(c.req.param("deviceCode"))));
+adminRoutes.delete("/devices/:deviceCode/token", async (c) => c.json(await clearDeviceToken(c.req.param("deviceCode"))));
+adminRoutes.get("/devices/:deviceCode/task-config", async (c) => c.json(await getDeviceTaskConfig(c.req.param("deviceCode"), c.req.query("platform") ?? "douyin")));
+adminRoutes.get("/devices/:deviceCode/progress-history", async (c) => c.json(await getDeviceProgressHistory(c.req.param("deviceCode"), c.req.query())));
+adminRoutes.get("/devices/:deviceCode/daily-progress", async (c) => c.json(await getDeviceDailyProgress(c.req.param("deviceCode"), c.req.query())));
+adminRoutes.patch("/devices/:deviceCode/task-config", async (c) => {
+  const parsed = updateDeviceTaskConfigSchema.safeParse(await c.req.json());
+  if (!parsed.success) {
+    return validationError(c, parsed.error);
+  }
+  return c.json(await updateDeviceTaskConfig(c.req.param("deviceCode"), parsed.data, c.req.query("platform") ?? "douyin"));
+});
+adminRoutes.get("/collection-records", async (c) => c.json(await getRecords(c.req.query())));
+adminRoutes.get("/collection-record-device-summary", async (c) => c.json(await getRecordDeviceSummary(c.req.query())));
+adminRoutes.get("/devices/:deviceCode/collection-record-dates", async (c) => c.json(await getRecordDates(c.req.param("deviceCode"))));
+adminRoutes.get("/runtime-logs", async (c) => c.json(await getLogs(c.req.query())));
+adminRoutes.get("/runtime-log-device-summary", async (c) => c.json(await getLogDeviceSummary(c.req.query())));
+adminRoutes.get("/devices/:deviceCode/runtime-log-dates", async (c) => c.json(await getLogDates(c.req.param("deviceCode"))));
+adminRoutes.get("/log-files", async (c) => c.json(await getLogFiles(c.req.query())));
+adminRoutes.get("/log-files/:id", async (c) => c.json(await getLogFileDetail(c.req.param("id"))));
+adminRoutes.get("/devices/:deviceCode/log-file-dates", async (c) => c.json(await getLogFileDates(c.req.param("deviceCode"))));
+adminRoutes.get("/tasks", async (c) => c.json(await getTasks()));
+adminRoutes.patch("/tasks/:id", async (c) => {
+  const parsed = updateTaskSchema.safeParse(await c.req.json());
+  if (!parsed.success) {
+    return validationError(c, parsed.error);
+  }
+  return c.json(await updateTaskConfig(c.req.param("id"), parsed.data));
+});
+adminRoutes.get("/mobile-commands", async (c) => c.json(await getCommands()));
+adminRoutes.get("/agent-versions", async (c) => c.json(await getAgentVersions()));
+adminRoutes.post("/agent-versions", async (c) => {
+  const parsed = createAgentVersionSchema.safeParse(await c.req.json());
+  if (!parsed.success) {
+    return validationError(c, parsed.error);
+  }
+  return c.json(await publishAgentVersion(parsed.data), 201);
+});
+adminRoutes.post("/mobile-commands", async (c) => {
+  const parsed = createMobileCommandSchema.safeParse(await c.req.json());
+  if (!parsed.success) {
+    return validationError(c, parsed.error);
+  }
+  return c.json(await createCommand(parsed.data), 201);
+});

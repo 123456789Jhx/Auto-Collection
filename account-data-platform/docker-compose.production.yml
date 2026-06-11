@@ -1,0 +1,84 @@
+name: auto-collection
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: auto-collection-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: Asia/Shanghai
+    volumes:
+      - auto_collection_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: auto-collection-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - auto_collection_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.api
+    image: auto-collection-api:latest
+    container_name: auto-collection-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_PORT: 8080
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.web
+    image: auto-collection-web:latest
+    container_name: auto-collection-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PUBLIC_PORT:-18080}:80"
+    volumes:
+      - ./public/downloads:/usr/share/nginx/html/downloads:ro
+    depends_on:
+      - api
+
+  db-push:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.api
+    image: auto-collection-api:latest
+    profiles:
+      - tools
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["bun", "--filter", "@pkg/db", "db:push"]
+
+volumes:
+  auto_collection_postgres:
+  auto_collection_redis:

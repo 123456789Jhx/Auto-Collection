@@ -6,9 +6,18 @@
 
 ```text
 mobile-agent/autojs/
-  main.js
-  main.module.js
-  config.js
+  main.js                 # 轻量入口，负责加载 main.module.js
+  main.module.js          # 初始化依赖并启动应用
+  config.js               # 本地运行配置
+  app/                    # 应用编排层
+    collector-app.js
+    phase-runner.js
+    control-loop.js
+    heartbeat.js
+  domain/                 # 业务规则层
+    candidate-service.js
+    live-scorer.js
+    risk-detector.js
   core/
     permission.js
     floaty-control.js
@@ -24,6 +33,12 @@ mobile-agent/autojs/
     douyin.js
 ```
 
+单文件版是生成物，不放在源码目录，生成后位于：
+
+```text
+dist/autojs/main.bundle.js
+```
+
 ## 第一阶段能力
 
 1. 检查无障碍和截图权限。
@@ -35,7 +50,7 @@ mobile-agent/autojs/
 7. 提取标题/文案、作者线索、互动指标、热门评论、OCR 可见文本。
 8. 候选记录写入手机本地 JSON。
 9. 如果 `config.upload.enabled = true`，再 POST 到 `config.upload.url`。
-10. 定时执行：视频流 2 小时、直播流 1 小时。
+10. 定时执行：视频流随机 2-3 小时、直播流随机 1-2 小时。
 
 ## 手机运行方式
 
@@ -68,18 +83,18 @@ dist/AgriVideoCollector-autojs-0.1.0.zip
 如果 AutoX.js 直接运行 `main.js` 时提示 `require` 或脚本目录定位失败，可以改用单文件版：
 
 ```text
-main.bundle.js
+dist/autojs/main.bundle.js
 ```
 
-它已经把 `config.js`、`core`、`platforms`、`utils` 打进一个文件里，不依赖相对路径加载。
+它已经把 `config.js`、`app`、`domain`、`core`、`platforms`、`utils` 打进一个文件里，不依赖相对路径加载。
 
 操作：
 
-1. 把 `mobile-agent/autojs/main.js` 复制到手机。
-2. 在 AutoX.js 中打开并运行 `main.js`。
+1. 把 `dist/autojs/main.bundle.js` 复制到手机。
+2. 在 AutoX.js 中打开并运行 `main.bundle.js`。
 3. 首次运行仍然需要开启无障碍、悬浮窗和截图权限。
 
-当前 `main.js` 已经是单文件入口。`main.module.js` 是保留给项目化运行的模块入口，手机端直接运行时不用导入它。
+当前 `main.js` 是项目化轻量入口，会加载同目录下的 `main.module.js`、`config.js`、`core`、`platforms`、`utils`。如果只想复制一个文件运行，才使用 `main.bundle.js`。
 
 ### 方式三：直接复制目录运行
 
@@ -91,8 +106,14 @@ main.bundle.js
    - `task.keywords`
    - `upload.enabled`
    - `upload.url`
-   - `schedule.videoMinutesPerDay`
-   - `schedule.liveMinutesPerDay`
+   - `schedule.videoMinutesMin`
+   - `schedule.videoMinutesMax`
+   - `schedule.liveMinutesMin`
+   - `schedule.liveMinutesMax`
+   - `task.quickCheckSecondsMin`
+   - `task.quickCheckSecondsMax`
+   - `task.matchedStaySecondsMin`
+   - `task.matchedStaySecondsMax`
 4. 在脚本 App 中运行 `main.js`。
 5. 按提示开启无障碍和截图权限。
 6. 点击悬浮窗“开始”。
@@ -138,16 +159,16 @@ main.bundle.js
 当前 `config.js` 里默认：
 
 ```js
-captureMode: "all"
-```
-
-表示调试期每条浏览到的视频都保存一份候选记录，避免 OCR 或关键词规则不准导致漏采。后续规则稳定后可以改成：
-
-```js
 captureMode: "matched"
 ```
 
-只采集命中农业关键词的视频。
+表示只保存命中农业关键词的视频。需要排查漏采时，可以临时改成：
+
+```js
+captureMode: "all"
+```
+
+这样会保存每条刷到的视频，便于分析 OCR 和关键词命中问题。
 
 点击悬浮窗 `XML` 按钮会导出当前页面控件树，便于调试抖音搜索、评论等入口。
 

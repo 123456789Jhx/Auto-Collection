@@ -1,4 +1,6 @@
 function createPermissionManager(config, logger) {
+  var captureGranted = false;
+
   function waitForAccessibility() {
     if (auto.service) {
       return true;
@@ -23,6 +25,9 @@ function createPermissionManager(config, logger) {
   }
 
   function ensureCapturePermission() {
+    if (captureGranted) {
+      return true;
+    }
     logger.info("请求截图权限");
     var granted = requestScreenCapture(false);
     if (!granted) {
@@ -30,6 +35,7 @@ function createPermissionManager(config, logger) {
       toast("截图权限失败，任务停止");
       return false;
     }
+    captureGranted = true;
     logger.info("截图权限已获得");
     return true;
   }
@@ -59,14 +65,12 @@ function createPermissionManager(config, logger) {
     if (!waitForAccessibility()) {
       return false;
     }
-    if (!ensureCapturePermission()) {
-      return false;
-    }
     return true;
   }
 
   return {
-    ensureAll: ensureAll
+    ensureAll: ensureAll,
+    ensureCapturePermission: ensureCapturePermission
   };
 }
 

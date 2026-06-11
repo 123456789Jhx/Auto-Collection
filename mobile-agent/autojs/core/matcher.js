@@ -13,6 +13,7 @@ function createMatcher(config) {
     var agricultureHits = containsAny(text, config.match.agricultureKeywords);
     var marketingHits = containsAny(text, config.match.marketingKeywords);
     var lowPriorityHits = containsAny(text, config.match.lowPriorityKeywords);
+    var liveHits = containsAny(text, config.match.liveKeywords);
 
     var priority = "none";
     if (agricultureHits.length > 0) {
@@ -33,7 +34,9 @@ function createMatcher(config) {
       priority: priority,
       agricultureHits: agricultureHits,
       marketingHits: marketingHits,
-      lowPriorityHits: lowPriorityHits
+      lowPriorityHits: lowPriorityHits,
+      liveHits: liveHits,
+      liveMatched: liveHits.length > 0
     };
   }
 
