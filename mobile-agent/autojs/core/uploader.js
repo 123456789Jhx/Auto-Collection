@@ -5,6 +5,7 @@ function createUploader(config, logger, storage) {
   }
 
   function requestHeaders() {
+    ensureDeviceIdentity();
     var headers = {
       "X-Device-Id": config.device.deviceId || ""
     };
@@ -36,6 +37,15 @@ function createUploader(config, logger, storage) {
     return value;
   }
 
+  function tokenSuffix(deviceToken, length) {
+    var clean = String(deviceToken || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+    return clean.substring(0, length || 12) || "unknown";
+  }
+
+  function isGenericDeviceId(deviceId) {
+    return !deviceId || deviceId === "android_001" || deviceId === "unknown";
+  }
+
   function ensureDeviceToken() {
     if (config.device.deviceToken) {
       return config.device.deviceToken;
@@ -57,14 +67,39 @@ function createUploader(config, logger, storage) {
     }
   }
 
+  function ensureDeviceIdentity() {
+    var token = ensureDeviceToken();
+    try {
+      var store = storages.create("AgriVideoCollectorDevice");
+      var storedDeviceId = store.get("deviceId", "");
+      if (storedDeviceId) {
+        config.device.deviceId = storedDeviceId;
+        return storedDeviceId;
+      }
+
+      var configuredDeviceId = config.device.deviceId || "";
+      var deviceId = isGenericDeviceId(configuredDeviceId) ? "device_" + tokenSuffix(token, 12) : configuredDeviceId;
+      store.put("deviceId", deviceId);
+      config.device.deviceId = deviceId;
+      return deviceId;
+    } catch (error) {
+      if (isGenericDeviceId(config.device.deviceId)) {
+        config.device.deviceId = "device_" + tokenSuffix(token, 12);
+      }
+      logger.warn("device id persistence failed; using token-derived id", { message: String(error), deviceId: config.device.deviceId });
+      return config.device.deviceId;
+    }
+  }
+
   function registerDeviceToken() {
     if (!config.upload.enabled) {
       return { enabled: false, success: false, message: "upload disabled" };
     }
     var token = ensureDeviceToken();
+    var deviceId = ensureDeviceIdentity();
     try {
       var response = postJson(endpoint("/mobile/device-token/register"), {
-        deviceId: config.device.deviceId,
+        deviceId: deviceId,
         platform: config.task.platform,
         appVersion: config.app.version,
         deviceToken: token,
@@ -78,22 +113,39 @@ function createUploader(config, logger, storage) {
         reportedAt: new Date().toISOString()
       });
       var body = response.body ? response.body.string() : "";
-      logger.info("设备 token 注册完成", {
+      var responsePayload = {};
+      try {
+        responsePayload = JSON.parse(body || "{}");
+      } catch (parseError) {
+        responsePayload = {};
+      }
+      if (response.statusCode >= 200 && response.statusCode < 300 && responsePayload.deviceCode) {
+        config.device.deviceId = responsePayload.deviceCode;
+        try {
+          storages.create("AgriVideoCollectorDevice").put("deviceId", responsePayload.deviceCode);
+        } catch (storeError) {
+          logger.warn("backend device id persistence failed", { message: String(storeError), deviceId: responsePayload.deviceCode });
+        }
+      }
+      logger.info("device token registration completed", {
         statusCode: response.statusCode,
-        body: body
+        body: body,
+        deviceId: config.device.deviceId
       });
       return {
         enabled: true,
         success: response.statusCode >= 200 && response.statusCode < 300,
         statusCode: response.statusCode,
-        body: body
+        body: body,
+        deviceId: config.device.deviceId
       };
     } catch (error) {
-      logger.warn("设备 token 注册失败", { message: String(error) });
+      logger.warn("device token registration failed", { message: String(error), deviceId: config.device.deviceId });
       return {
         enabled: true,
         success: false,
-        message: String(error)
+        message: String(error),
+        deviceId: config.device.deviceId
       };
     }
   }

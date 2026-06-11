@@ -7,7 +7,7 @@ import {
   listMobileCommands,
   updateMobileCommandStatus
 } from "../repositories/command.repository";
-import { markDeviceCommandIssued, upsertDevice, upsertDeviceByToken } from "../repositories/device.repository";
+import { findDeviceByCode, markDeviceCommandIssued, resolveDeviceByToken } from "../repositories/device.repository";
 import { findTaskByCode } from "../repositories/task.repository";
 
 const STATE_COMMAND_TYPES = ["START", "RESUME", "PAUSE", "STOP"];
@@ -18,9 +18,12 @@ function addSeconds(seconds: number) {
 
 export async function createCommand(payload: CreateMobileCommandPayload) {
   const [device, task] = await Promise.all([
-    upsertDevice(payload.deviceId),
+    findDeviceByCode(payload.deviceId),
     payload.taskId ? findTaskByCode(payload.taskId) : Promise.resolve(null)
   ]);
+  if (!device) {
+    throw new Error("DEVICE_UNREGISTERED");
+  }
 
   if (STATE_COMMAND_TYPES.includes(payload.commandType)) {
     await ignorePendingCommandsByDeviceId(device.id, STATE_COMMAND_TYPES, "superseded_by_new_state_command");
@@ -48,9 +51,17 @@ export async function getCommands() {
 
 async function resolveCommandDevice(deviceCode: string, deviceToken?: string) {
   if (deviceToken) {
-    return upsertDeviceByToken({ deviceToken, preferredDeviceCode: deviceCode });
+    return resolveDeviceByToken({ deviceToken });
   }
-  return upsertDevice(deviceCode);
+
+  const device = await findDeviceByCode(deviceCode);
+  if (!device) {
+    throw new Error("DEVICE_UNREGISTERED");
+  }
+  if (!device.enabled) {
+    throw new Error("DEVICE_DISABLED");
+  }
+  return device;
 }
 
 export async function pollCommands(deviceCode: string, deviceToken?: string) {

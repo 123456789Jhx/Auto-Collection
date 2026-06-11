@@ -28,6 +28,10 @@ async function readBody(c: Context) {
   }
 }
 
+function mobileAuthError(code: string, message: string, status: 400 | 401 | 403, details: Record<string, unknown> = {}) {
+  return { error: { code, message, details }, status };
+}
+
 export async function mobileAuth(c: Context<{ Variables: MobileVariables }>, next: Next) {
   const queryDeviceId = c.req.query("deviceId");
   const body = c.req.method === "GET" ? {} : ((await readBody(c)) as Record<string, unknown>);
@@ -44,14 +48,20 @@ export async function mobileAuth(c: Context<{ Variables: MobileVariables }>, nex
   }
 
   if (!deviceId) {
-    await next();
-    return;
+    const result = mobileAuthError("DEVICE_ID_REQUIRED", "deviceId is required", 400);
+    return c.json({ error: result.error }, result.status);
   }
 
-  const tokenDevice = deviceToken ? await findDeviceByToken(deviceToken) : null;
+  if (!deviceToken) {
+    const result = mobileAuthError("DEVICE_TOKEN_REQUIRED", "X-Device-Token is required", 401, { deviceId });
+    return c.json({ error: result.error }, result.status);
+  }
+
+  const tokenDevice = await findDeviceByToken(deviceToken);
   if (tokenDevice) {
     if (!tokenDevice.enabled) {
-      return c.json({ error: { code: "DEVICE_DISABLED", message: "设备已禁用", details: { deviceId: tokenDevice.deviceCode } } }, 403);
+      const result = mobileAuthError("DEVICE_DISABLED", "Device is disabled", 403, { deviceId: tokenDevice.deviceCode });
+      return c.json({ error: result.error }, result.status);
     }
     await next();
     return;
@@ -59,17 +69,20 @@ export async function mobileAuth(c: Context<{ Variables: MobileVariables }>, nex
 
   const device = await findDeviceByCode(deviceId);
   if (!device) {
-    await next();
-    return;
+    const result = mobileAuthError("DEVICE_UNREGISTERED", "Device is not registered", 401, { deviceId });
+    return c.json({ error: result.error }, result.status);
   }
 
   if (!device.enabled) {
-    return c.json({ error: { code: "DEVICE_DISABLED", message: "设备已禁用", details: { deviceId } } }, 403);
+    const result = mobileAuthError("DEVICE_DISABLED", "Device is disabled", 403, { deviceId });
+    return c.json({ error: result.error }, result.status);
   }
 
-  if (device.deviceToken && device.deviceToken !== deviceToken) {
-    return c.json({ error: { code: "DEVICE_UNAUTHORIZED", message: "设备鉴权失败", details: { deviceId } } }, 401);
+  if (!device.deviceToken) {
+    const result = mobileAuthError("DEVICE_TOKEN_REQUIRED", "Device token is not bound", 401, { deviceId });
+    return c.json({ error: result.error }, result.status);
   }
 
-  await next();
+  const result = mobileAuthError("DEVICE_UNAUTHORIZED", "Device token mismatch", 401, { deviceId });
+  return c.json({ error: result.error }, result.status);
 }

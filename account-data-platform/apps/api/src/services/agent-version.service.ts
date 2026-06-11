@@ -1,7 +1,7 @@
 import type { CreateAgentVersionPayload, MobileAgentUpdateEventPayload } from "@pkg/types";
 import { config } from "../config";
 import { createAgentUpdateEvent, createAgentVersion, findLatestPublishedAgentVersion, listAgentVersions } from "../repositories/agent-version.repository";
-import { upsertDevice, upsertDeviceByToken } from "../repositories/device.repository";
+import { resolveDeviceByToken } from "../repositories/device.repository";
 import { parseOptionalDate } from "../lib/date";
 
 function compareVersion(left: string, right: string) {
@@ -16,10 +16,10 @@ function compareVersion(left: string, right: string) {
 }
 
 function resolveVersionDevice(deviceId: string, appVersion?: string, deviceToken?: string) {
-  if (deviceToken) {
-    return upsertDeviceByToken({ deviceToken, preferredDeviceCode: deviceId, appVersion });
+  if (!deviceToken) {
+    throw new Error("DEVICE_TOKEN_REQUIRED");
   }
-  return upsertDevice(deviceId, undefined, appVersion);
+  return resolveDeviceByToken({ deviceToken, appVersion });
 }
 
 export async function getAgentVersionCheck(deviceId: string, currentVersion: string, channel = "stable", deviceToken?: string) {

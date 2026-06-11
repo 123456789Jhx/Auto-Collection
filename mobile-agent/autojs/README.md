@@ -1,185 +1,96 @@
 # 手机自动化采集脚本
 
-当前目录只实现手机端 AutoX.js / Auto.js 自动化脚本，不包含后台、数据库、官方 API 和 AI 分析。
+本目录是 Auto Collection 的手机端 AutoX.js / Auto.js 脚本工程。脚本负责在 Android 手机上运行采集流程，并把设备状态、心跳、运行日志、完整日志文件和采集记录上报到后台。
 
 ## 目录结构
 
 ```text
 mobile-agent/autojs/
-  main.js                 # 轻量入口，负责加载 main.module.js
-  main.module.js          # 初始化依赖并启动应用
-  config.js               # 本地运行配置
-  app/                    # 应用编排层
-    collector-app.js
-    phase-runner.js
-    control-loop.js
-    heartbeat.js
-  domain/                 # 业务规则层
-    candidate-service.js
-    live-scorer.js
-    risk-detector.js
-  core/
-    permission.js
-    floaty-control.js
-    ocr.js
-    matcher.js
-    storage.js
-    uploader.js
-    logger.js
-  utils/
-    autojs-utils.js
-    xml-dumper.js
-  platforms/
-    douyin.js
+  main.js                 轻量入口，加载 main.module.js
+  main.module.js          初始化依赖并启动应用
+  launcher.js             APK 按钮页入口
+  watchdog.js             守护脚本
+  config.js               本地运行配置
+  app/                    应用编排层
+  core/                   权限、悬浮窗、OCR、日志、上传等基础能力
+  domain/                 候选内容、直播评分、风险检测等业务规则
+  platforms/              平台适配
+  utils/                  通用工具
 ```
 
-单文件版是生成物，不放在源码目录，生成后位于：
+## APK 页面
+
+APK 启动后提供简单按钮页，主要入口包括：
+
+1. 检查权限：检查无障碍、悬浮窗、截图等运行条件。
+2. 打开无障碍设置：跳转系统无障碍页面。
+3. 打开悬浮窗设置：跳转系统悬浮窗权限页面。
+4. 启动采集脚本：启动主采集流程。
+5. 停止采集脚本：停止主采集流程。
+6. 启动守护脚本：启动守护逻辑。
+7. 关闭全部脚本：停止相关脚本。
+8. 刷新状态：刷新当前运行状态。
+
+## 设备身份
+
+新版脚本会在首次运行时生成并保存本机设备 token，同时派生唯一设备 ID。默认 `android_001` 只作为旧配置占位，不再作为正式设备 ID 使用。
+
+移动端普通接口必须带：
 
 ```text
-dist/autojs/main.bundle.js
+deviceId
+X-Device-Token
 ```
 
-## 第一阶段能力
+未注册设备或 token 不匹配时，后台会拒绝请求，不再自动创建设备。
 
-1. 检查无障碍和截图权限。
-2. 显示悬浮窗：开始、暂停、跳过、采集、XML、停止。
-3. 打开抖音。
-4. 推荐流或搜索流浏览视频。
-5. 截图并 OCR 当前页面。
-6. 使用农业关键词判断候选内容。
-7. 提取标题/文案、作者线索、互动指标、热门评论、OCR 可见文本。
-8. 候选记录写入手机本地 JSON。
-9. 如果 `config.upload.enabled = true`，再 POST 到 `config.upload.url`。
-10. 定时执行：视频流随机 2-3 小时、直播流随机 1-2 小时。
+## 本地日志路径
 
-## 手机运行方式
+手机本地日志默认写入：
 
-### 方式一：导入项目包运行
+```text
+/storage/emulated/0/AgriVideoCollector/datasource/运行日志/YYYY-MM-DD.log
+```
 
-这种方式最快。手机需要先安装 AutoX.js，但脚本可以作为一个项目包导入，不用逐个复制文件。
+其他输出目录：
 
-在电脑执行：
+```text
+/storage/emulated/0/AgriVideoCollector/datasource/候选记录
+/storage/emulated/0/AgriVideoCollector/datasource/截图
+/storage/emulated/0/AgriVideoCollector/datasource/页面XML
+```
+
+后台结构化日志保存在数据库 `runtime_logs` 表，完整日志文件保存在 `device_log_files` 表。
+
+## 打包 APK
+
+在仓库根目录执行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/package-autojs.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\package-autojs-apk.ps1
 ```
 
-生成文件：
+打包输出位于 `dist/`。
 
-```text
-dist/AgriVideoCollector-autojs-0.1.0.zip
+## 打包 AutoX 项目包
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\package-autojs.ps1
 ```
 
-然后：
+生成的 zip 可导入 AutoX.js。
 
-1. 把这个 zip 发到手机。
-2. 在 AutoX.js 中导入或解压到脚本目录。
-3. 运行项目入口 `main.js`。
-4. 开启无障碍、悬浮窗和截图权限。
-5. 点击悬浮窗“开始”。
+## 运行前检查
 
-### 方式二：运行单文件版
+1. Android 已开启无障碍权限。
+2. 已开启悬浮窗权限。
+3. 截图权限已授权。
+4. 网络能访问 `http://106.54.41.106:18080/api/v1`。
+5. 使用新版 APK，避免旧版 `android_001` 设备 ID 被后台拒绝。
 
-如果 AutoX.js 直接运行 `main.js` 时提示 `require` 或脚本目录定位失败，可以改用单文件版：
+## 当前边界
 
-```text
-dist/autojs/main.bundle.js
-```
-
-它已经把 `config.js`、`app`、`domain`、`core`、`platforms`、`utils` 打进一个文件里，不依赖相对路径加载。
-
-操作：
-
-1. 把 `dist/autojs/main.bundle.js` 复制到手机。
-2. 在 AutoX.js 中打开并运行 `main.bundle.js`。
-3. 首次运行仍然需要开启无障碍、悬浮窗和截图权限。
-
-当前 `main.js` 是项目化轻量入口，会加载同目录下的 `main.module.js`、`config.js`、`core`、`platforms`、`utils`。如果只想复制一个文件运行，才使用 `main.bundle.js`。
-
-### 方式三：直接复制目录运行
-
-1. 在 Android 手机上安装 AutoX.js 或兼容 Auto.js 的脚本运行环境。
-2. 把 `mobile-agent/autojs` 目录复制到手机脚本目录。
-3. 修改 `config.js`：
-   - `device.deviceId`
-   - `task.mode`
-   - `task.keywords`
-   - `upload.enabled`
-   - `upload.url`
-   - `schedule.videoMinutesMin`
-   - `schedule.videoMinutesMax`
-   - `schedule.liveMinutesMin`
-   - `schedule.liveMinutesMax`
-   - `task.quickCheckSecondsMin`
-   - `task.quickCheckSecondsMax`
-   - `task.matchedStaySecondsMin`
-   - `task.matchedStaySecondsMax`
-4. 在脚本 App 中运行 `main.js`。
-5. 按提示开启无障碍和截图权限。
-6. 点击悬浮窗“开始”。
-
-### 方式四：打包成独立 APK
-
-独立 APK 可以做到手机上点图标启动，但它不是当前仓库直接生成的普通 zip，需要使用 AutoX.js/Auto.js 的 APK 打包功能或单独做 Android 壳工程。
-
-建议顺序：
-
-1. 先用方式一在真机跑通脚本。
-2. 修完抖音入口、评论入口、OCR 兼容问题。
-3. 再用 AutoX.js/Auto.js 打包器选择本项目目录，入口为 `main.js`。
-4. APK 首次运行仍然需要用户手动授予无障碍、悬浮窗和截图权限。
-
-也就是说，APK 只能减少“导入脚本”的步骤，不能绕过 Android 权限授权。
-
-## 本地输出
-
-默认固定写入：
-
-```text
-/storage/emulated/0/安卓群控/autojs/datasource
-```
-
-也就是手机文件管理器里的：
-
-```text
-内部存储 -> 安卓群控 -> autojs -> datasource
-```
-
-目录结构：
-
-```text
-/storage/emulated/0/安卓群控/autojs/datasource/候选记录
-/storage/emulated/0/安卓群控/autojs/datasource/截图      默认不写入，保留给调试开关
-/storage/emulated/0/安卓群控/autojs/datasource/运行日志    运行日志，用于排查调度和采集问题
-/storage/emulated/0/安卓群控/autojs/datasource/页面XML    点击 XML 时才写入
-```
-
-候选记录会生成 JSON 文件。默认不保存截图，会写运行日志。
-
-当前 `config.js` 里默认：
-
-```js
-captureMode: "matched"
-```
-
-表示只保存命中农业关键词的视频。需要排查漏采时，可以临时改成：
-
-```js
-captureMode: "all"
-```
-
-这样会保存每条刷到的视频，便于分析 OCR 和关键词命中问题。
-
-点击悬浮窗 `XML` 按钮会导出当前页面控件树，便于调试抖音搜索、评论等入口。
-
-## 当前不做
-
-1. 不点赞、评论、关注、私信。
-2. 不绕过验证码、登录校验或平台风控。
-3. 不批量下载完整视频。
-4. 不采集非公开内容。
-5. 不实现后台管理、数据库、官方 API、AI 分析和审核入库。
-
-## 注意事项
-
-不同手机、系统版本、抖音版本的控件结构会不同。`platforms/douyin.js` 里的搜索入口、评论入口和控件读取逻辑需要用真实手机调试后逐步增强。
+1. 不绕过验证码、登录校验或平台风控。
+2. 不采集非公开内容。
+3. 不做自动点赞、评论、关注、私信等互动功能。
+4. 不承诺平台推荐、标签或账号权重结果，只记录脚本实际运行证据。

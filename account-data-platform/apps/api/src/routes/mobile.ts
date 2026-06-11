@@ -73,6 +73,9 @@ mobileRoutes.post("/device-token/register", async (c) => {
     if (message === "DEVICE_TOKEN_CONFLICT") {
       return c.json({ error: { code: "DEVICE_TOKEN_CONFLICT", message: "Device token does not match bound token", details: {} } }, 409);
     }
+    if (message === "DEVICE_ID_NOT_UNIQUE") {
+      return c.json({ error: { code: "DEVICE_ID_NOT_UNIQUE", message: "Device ID must be unique. Upgrade the mobile agent.", details: {} } }, 409);
+    }
     return c.json({ error: { code: "INVALID_DEVICE_TOKEN", message: "Invalid device token registration payload", details: {} } }, 400);
   }
 });

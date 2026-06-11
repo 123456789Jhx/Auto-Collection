@@ -5,7 +5,7 @@ import { createRuntimeLog } from "../repositories/log.repository";
 import { upsertDeviceLogFile } from "../repositories/log-file.repository";
 import { createCollectionRecord } from "../repositories/record.repository";
 import { findCurrentTask, findDeviceTaskConfig, findTaskByCode } from "../repositories/task.repository";
-import { upsertDevice, upsertDeviceByToken } from "../repositories/device.repository";
+import { registerDeviceByToken, resolveDeviceByToken } from "../repositories/device.repository";
 import type { MobileCollectionRecordPayload, MobileHeartbeatPayload, MobileLogFilePayload, MobileRuntimeLogPayload } from "@pkg/types";
 
 async function resolveMobileDevice(values: {
@@ -15,16 +15,21 @@ async function resolveMobileDevice(values: {
   appVersion?: string;
   clientIp?: string;
 }) {
-  if (values.deviceToken) {
-    return upsertDeviceByToken({
-      deviceToken: values.deviceToken,
-      preferredDeviceCode: values.deviceId,
-      platform: values.platform,
-      appVersion: values.appVersion,
-      lastIp: values.clientIp
-    });
+  if (!values.deviceToken) {
+    throw new Error("DEVICE_TOKEN_REQUIRED");
   }
-  return upsertDevice(values.deviceId, values.platform, values.appVersion, values.clientIp);
+
+  return resolveDeviceByToken({
+    deviceToken: values.deviceToken,
+    platform: values.platform,
+    appVersion: values.appVersion,
+    lastIp: values.clientIp
+  });
+}
+
+function isGenericDeviceId(deviceId: string) {
+  const normalized = (deviceId || "").trim();
+  return !normalized || normalized === "android_001" || normalized === "unknown";
 }
 
 export async function getCurrentTask(deviceId: string, platform: string, clientIp?: string, deviceToken?: string) {
@@ -211,8 +216,11 @@ export async function registerDeviceToken(payload: {
   if (!payload.deviceId || !payload.deviceToken || payload.deviceToken.length < 32) {
     throw new Error("INVALID_DEVICE_TOKEN");
   }
+  if (isGenericDeviceId(payload.deviceId)) {
+    throw new Error("DEVICE_ID_NOT_UNIQUE");
+  }
 
-  const device = await upsertDeviceByToken({
+  const device = await registerDeviceByToken({
     deviceToken: payload.deviceToken,
     preferredDeviceCode: payload.deviceId,
     platform: payload.platform,
