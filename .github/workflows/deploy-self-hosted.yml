@@ -56,3 +56,4 @@ jobs:
               -v "$PWD:/workspace:ro" \
               -w /workspace \
               alpine:3.22 sh -lc "apk add --no-cache bash curl openssh-client sshpass && bash scripts/deploy_via_ssh.sh"
+          fi
