@@ -213,16 +213,13 @@ export async function registerDeviceToken(payload: {
   appVersion?: string;
   deviceInfo?: Record<string, unknown>;
 }, clientIp?: string) {
-  if (!payload.deviceId || !payload.deviceToken || payload.deviceToken.length < 32) {
+  if (!payload.deviceToken || payload.deviceToken.length < 32) {
     throw new Error("INVALID_DEVICE_TOKEN");
-  }
-  if (isGenericDeviceId(payload.deviceId)) {
-    throw new Error("DEVICE_ID_NOT_UNIQUE");
   }
 
   const device = await registerDeviceByToken({
     deviceToken: payload.deviceToken,
-    preferredDeviceCode: payload.deviceId,
+    preferredDeviceCode: isGenericDeviceId(payload.deviceId) ? undefined : payload.deviceId,
     platform: payload.platform,
     appVersion: payload.appVersion,
     lastIp: clientIp

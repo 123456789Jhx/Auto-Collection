@@ -72,7 +72,7 @@ function createUploader(config, logger, storage) {
     try {
       var store = storages.create("AgriVideoCollectorDevice");
       var storedDeviceId = store.get("deviceId", "");
-      if (storedDeviceId) {
+      if (storedDeviceId && !isGenericDeviceId(storedDeviceId)) {
         config.device.deviceId = storedDeviceId;
         return storedDeviceId;
       }
