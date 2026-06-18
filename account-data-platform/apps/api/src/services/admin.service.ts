@@ -77,15 +77,16 @@ export async function getOverview() {
     const heartbeat = latestHeartbeatByDeviceId.get(device.id);
     const rawPayload = heartbeat?.rawPayload ?? {};
     const todayProgress = todayProgressByDeviceCode.get(device.deviceCode);
-    const currentTask = heartbeat?.sceneType === "video" || heartbeat?.sceneType === "live" ? heartbeat.sceneType : "none";
-    const rawVideoElapsed = numberFromRaw(rawPayload, "videoElapsedMinutes") ?? (heartbeat?.sceneType === "video" ? heartbeat.elapsedMinutes ?? 0 : 0);
-    const rawLiveElapsed = numberFromRaw(rawPayload, "liveElapsedMinutes") ?? (heartbeat?.sceneType === "live" ? heartbeat.elapsedMinutes ?? 0 : 0);
+    const isActiveHeartbeat = heartbeat?.status === "running";
+    const currentTask = isActiveHeartbeat && (heartbeat?.sceneType === "video" || heartbeat?.sceneType === "live") ? heartbeat.sceneType : "none";
+    const rawVideoElapsed = isActiveHeartbeat ? numberFromRaw(rawPayload, "videoElapsedMinutes") ?? (heartbeat?.sceneType === "video" ? heartbeat.elapsedMinutes ?? 0 : 0) : 0;
+    const rawLiveElapsed = isActiveHeartbeat ? numberFromRaw(rawPayload, "liveElapsedMinutes") ?? (heartbeat?.sceneType === "live" ? heartbeat.elapsedMinutes ?? 0 : 0) : 0;
     const videoElapsed = Math.max(Number(rawVideoElapsed ?? 0), Number(todayProgress?.maxVideoElapsedMinutes ?? 0));
     const liveElapsed = Math.max(Number(rawLiveElapsed ?? 0), Number(todayProgress?.maxLiveElapsedMinutes ?? 0));
-    const videoPlanned = numberFromRaw(rawPayload, "plannedVideoMinutes") ?? todayProgress?.maxVideoPlannedMinutes;
-    const livePlanned = numberFromRaw(rawPayload, "plannedLiveMinutes") ?? todayProgress?.maxLivePlannedMinutes;
-    const rawVideoRemaining = numberFromRaw(rawPayload, "videoRemainingMinutes") ?? (heartbeat?.sceneType === "video" ? heartbeat.remainingMinutes ?? null : null);
-    const rawLiveRemaining = numberFromRaw(rawPayload, "liveRemainingMinutes") ?? (heartbeat?.sceneType === "live" ? heartbeat.remainingMinutes ?? null : null);
+    const videoPlanned = isActiveHeartbeat ? numberFromRaw(rawPayload, "plannedVideoMinutes") ?? todayProgress?.maxVideoPlannedMinutes : todayProgress?.maxVideoPlannedMinutes;
+    const livePlanned = isActiveHeartbeat ? numberFromRaw(rawPayload, "plannedLiveMinutes") ?? todayProgress?.maxLivePlannedMinutes : todayProgress?.maxLivePlannedMinutes;
+    const rawVideoRemaining = isActiveHeartbeat ? numberFromRaw(rawPayload, "videoRemainingMinutes") ?? (heartbeat?.sceneType === "video" ? heartbeat.remainingMinutes ?? null : null) : null;
+    const rawLiveRemaining = isActiveHeartbeat ? numberFromRaw(rawPayload, "liveRemainingMinutes") ?? (heartbeat?.sceneType === "live" ? heartbeat.remainingMinutes ?? null : null) : null;
     const videoRemaining = videoPlanned && videoPlanned > 0 ? Math.max(0, Number(videoPlanned) - videoElapsed) : rawVideoRemaining;
     const liveRemaining = livePlanned && livePlanned > 0 ? Math.max(0, Number(livePlanned) - liveElapsed) : rawLiveRemaining;
     return {
@@ -101,9 +102,9 @@ export async function getOverview() {
       liveRemainingMinutes: liveRemaining,
       plannedLiveMinutes: livePlanned,
       remainingMinutes: heartbeat?.remainingMinutes ?? null,
-      viewedCount: Math.max(Number(heartbeat?.viewedCount ?? 0), Number(todayProgress?.maxViewedCount ?? 0)),
-      liveViewedCount: Math.max(Number(heartbeat?.liveViewedCount ?? 0), Number(todayProgress?.maxLiveViewedCount ?? 0)),
-      capturedCount: Math.max(Number(heartbeat?.capturedCount ?? 0), Number(todayProgress?.maxCapturedCount ?? 0)),
+      viewedCount: Math.max(isActiveHeartbeat ? Number(heartbeat?.viewedCount ?? 0) : 0, Number(todayProgress?.maxViewedCount ?? 0)),
+      liveViewedCount: Math.max(isActiveHeartbeat ? Number(heartbeat?.liveViewedCount ?? 0) : 0, Number(todayProgress?.maxLiveViewedCount ?? 0)),
+      capturedCount: Math.max(isActiveHeartbeat ? Number(heartbeat?.capturedCount ?? 0) : 0, Number(todayProgress?.maxCapturedCount ?? 0)),
       lastHeartbeatAt: heartbeat?.reportedAt ?? device.lastHeartbeatAt,
       heartbeat
     };
@@ -128,7 +129,7 @@ export async function getDevices() {
   return devices.map((device) => {
     const latestHeartbeat = heartbeatByDeviceId.get(device.id);
     const deviceStatus = mapDeviceStatus(device);
-    const activeTask = deviceStatus.effectiveStatus !== "offline" && (latestHeartbeat?.sceneType === "video" || latestHeartbeat?.sceneType === "live");
+    const activeTask = latestHeartbeat?.status === "running" && (latestHeartbeat.sceneType === "video" || latestHeartbeat.sceneType === "live");
     return hideDeviceSecret({
       ...deviceStatus,
       currentTask: activeTask ? latestHeartbeat.sceneType : "none",

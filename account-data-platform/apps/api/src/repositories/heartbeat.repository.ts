@@ -82,6 +82,7 @@ export async function listDeviceHeartbeats(deviceCode: string, limit = 50) {
     .where(and(
       eq(deviceHeartbeats.tenantId, config.tenantId),
       eq(collectorDevices.deviceCode, deviceCode),
+      eq(deviceHeartbeats.status, "running"),
       isNull(deviceHeartbeats.deletedAt)
     ))
     .orderBy(desc(deviceHeartbeats.reportedAt), desc(deviceHeartbeats.createdAt))
