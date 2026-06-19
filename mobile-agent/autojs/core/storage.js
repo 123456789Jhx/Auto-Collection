@@ -27,6 +27,13 @@ function nowCompact() {
   ].join("");
 }
 
+function datePart(date) {
+  function pad(value) {
+    return value < 10 ? "0" + value : "" + value;
+  }
+  return [date.getFullYear(), pad(date.getMonth() + 1), pad(date.getDate())].join("-");
+}
+
 function createStorage(config, logger) {
   ensureDir(config.output.baseDir);
   ensureDir(config.output.cacheDir);
@@ -36,6 +43,29 @@ function createStorage(config, logger) {
     var filePath = config.output.cacheDir + "/" + fileName;
     files.write(filePath, JSON.stringify(candidate, null, 2));
     logger.info("候选记录已写入本地缓存", { filePath: filePath });
+    return filePath;
+  }
+
+  function liveCommentLogDir() {
+    var dirPath = config.output.baseDir + "/live-comment-actions";
+    ensureDir(dirPath);
+    return dirPath;
+  }
+
+  function appendLiveCommentLog(entry) {
+    var now = new Date();
+    var payload = entry || {};
+    if (!payload.loggedAt) {
+      payload.loggedAt = now.toISOString();
+    }
+    var filePath = liveCommentLogDir() + "/" + datePart(now) + ".jsonl";
+    files.append(filePath, JSON.stringify(payload) + "\n");
+    logger.info("M3 live comment action logged", {
+      filePath: filePath,
+      status: payload.status || "",
+      triggerEventId: payload.triggerEventId || "",
+      replyText: payload.replyText || ""
+    });
     return filePath;
   }
 
@@ -72,11 +102,15 @@ function createStorage(config, logger) {
   function markUploaded(filePath) {
     var targetPath = filePath.replace(/\.json$/, ".uploaded.json");
     files.rename(filePath, files.getName(targetPath));
+    if (files.exists(filePath) && !files.exists(targetPath)) {
+      throw new Error("failed to mark uploaded: " + filePath);
+    }
     return targetPath;
   }
 
   return {
     saveCandidate: saveCandidate,
+    appendLiveCommentLog: appendLiveCommentLog,
     saveScreenshot: saveScreenshot,
     listCachedCandidates: listCachedCandidates,
     readJson: readJson,

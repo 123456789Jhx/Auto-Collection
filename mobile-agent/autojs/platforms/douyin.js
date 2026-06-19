@@ -1,7 +1,15 @@
-function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
+function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedScreenRecognizer) {
   var autojsUtils = require(files.join(config.runtime.scriptDir, "utils/autojs-utils.js"));
+  var createScreenRecognizer = require(files.join(config.runtime.scriptDir, "core/screen-recognizer.js")).createScreenRecognizer;
   var packageName = "com.ss.android.ugc.aweme";
   var activeSearchKeyword = "";
+  var screenRecognizer = injectedScreenRecognizer || createScreenRecognizer(config, logger, ocrEngine, { expectedPackage: packageName });
+
+  function recognitionOptions() {
+    return {
+      activeSearchKeyword: activeSearchKeyword
+    };
+  }
 
   function avoidFloaty(reason) {
     try {
@@ -14,7 +22,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
   }
 
   function dismissStartupPopups() {
-    autojsUtils.clickIfExists(textMatches(/.*(允许).*/).clickable(true), 800, logger);
+    autojsUtils.clickIfExists(textMatches(".*(允许).*").clickable(true), 800, logger);
 
     var starCardNode =
       autojsUtils.waitForElement(textContains("玩转抖音星卡"), 500, null, logger) ||
@@ -47,7 +55,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
         autojsUtils.waitForElement(textContains("想要打开"), 300, null, null);
       if (promptNode) {
         allowed =
-          autojsUtils.clickIfExists(textMatches(/^(允许|始终允许)$/).clickable(true), 800, logger) ||
+          autojsUtils.clickIfExists(textMatches("^(允许|始终允许)$").clickable(true), 800, logger) ||
           autojsUtils.clickIfExists(textContains("允许").clickable(true), 800, logger);
         if (allowed) {
           autojsUtils.sleepRandom(800, 1200);
@@ -66,6 +74,15 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
       return false;
     }
     return true;
+  }
+
+  function isForeground() {
+    try {
+      return currentPackage() === packageName;
+    } catch (error) {
+      logger.warn("current package check failed", { message: String(error) });
+      return false;
+    }
   }
 
   function openApp() {
@@ -113,46 +130,134 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
     if (searchNode) {
       focusSearchInput(searchNode);
       autojsUtils.sleepRandom(600, 1000);
-      setText(keyword);
-      activeSearchKeyword = keyword || previousSearchKeyword;
-      autojsUtils.sleepRandom(500, 800);
-      logger.info("搜索流程诊断：关键词已输入", {
-        keyword: keyword,
-        screen: autojsUtils.describeScreenSize(),
-        textSample: extractVisibleText().slice(0, 220)
-      });
+      return completeSearchKeyword(keyword, previousSearchKeyword, "node");
+    }
 
-      submitSearchKeyword(keyword);
-      var submittedText = extractVisibleText();
-      var submittedState = detectSearchPageState(submittedText);
-      logger.info("搜索流程诊断：提交后页面状态", {
-        keyword: keyword,
-        isSearchResultPage: submittedState.isResult,
-        searchState: submittedState,
-        screen: autojsUtils.describeScreenSize(),
-        textSample: submittedText.slice(0, 260)
-      });
-      if (!isSearchResultPage()) {
-        logger.warn("搜索提交后仍停留在建议页，尝试点击第一条搜索建议", {
-          keyword: keyword,
-          textSample: extractVisibleText().slice(0, 180)
-        });
-        if (clickFirstSearchSuggestion(keyword)) {
-          autojsUtils.sleepRandom(1600, 2400);
-        }
-      }
-      if (!isSearchResultPage()) {
-        logger.warn("搜索提交后未确认进入搜索结果页", {
-          keyword: keyword,
-          textSample: extractVisibleText().slice(0, 220)
-        });
-        return false;
-      }
+    if (openSearchByCoordinateFallback(keyword, previousSearchKeyword)) {
       return true;
     }
     activeSearchKeyword = previousSearchKeyword;
     logger.warn("未找到搜索入口，保留在当前页面");
     return false;
+  }
+
+  function completeSearchKeyword(keyword, previousSearchKeyword, source) {
+    try {
+      setText(keyword);
+    } catch (error) {
+      logger.warn("搜索关键词输入失败", { keyword: keyword, source: source || "", message: String(error) });
+      activeSearchKeyword = previousSearchKeyword;
+      return false;
+    }
+    activeSearchKeyword = keyword || previousSearchKeyword;
+    autojsUtils.sleepRandom(500, 800);
+    logger.info("搜索流程诊断：关键词已输入", {
+      keyword: keyword,
+      source: source || "",
+      screen: autojsUtils.describeScreenSize(),
+      textSample: extractVisibleText().slice(0, 220)
+    });
+
+    submitSearchKeyword(keyword);
+    var submittedText = extractVisibleText();
+    var submittedState = detectSearchPageState(submittedText);
+    logger.info("搜索流程诊断：提交后页面状态", {
+      keyword: keyword,
+      source: source || "",
+      isSearchResultPage: submittedState.isResult,
+      searchState: submittedState,
+      screen: autojsUtils.describeScreenSize(),
+      textSample: submittedText.slice(0, 260)
+    });
+    if (!isSearchResultPage()) {
+      logger.warn("搜索提交后仍停留在建议页，尝试点击第一条搜索建议", {
+        keyword: keyword,
+        source: source || "",
+        textSample: extractVisibleText().slice(0, 180)
+      });
+      if (clickFirstSearchSuggestion(keyword)) {
+        autojsUtils.sleepRandom(1600, 2400);
+      }
+    }
+    if (!isSearchResultPage()) {
+      logger.warn("搜索提交后未确认进入搜索结果页", {
+        keyword: keyword,
+        source: source || "",
+        textSample: extractVisibleText().slice(0, 220)
+      });
+      activeSearchKeyword = previousSearchKeyword;
+      return false;
+    }
+    return true;
+  }
+
+  function openSearchByCoordinateFallback(keyword, previousSearchKeyword) {
+    logger.warn("搜索入口控件未找到，启用坐标兜底", {
+      keyword: keyword,
+      activity: safeCurrentActivity(),
+      textSample: extractVisibleText().slice(0, 160),
+      screen: autojsUtils.describeScreenSize()
+    });
+    leaveLiveRoomBeforeSearchIfNeeded();
+
+    var screen = autojsUtils.getScreenSize();
+    var points = [
+      { x: screen.width * 0.92, y: screen.height * 0.075, name: "top_right_primary" },
+      { x: screen.width * 0.86, y: screen.height * 0.075, name: "top_right_secondary" },
+      { x: screen.width * 0.92, y: screen.height * 0.115, name: "top_right_lower" },
+      { x: screen.width * 0.50, y: screen.height * 0.075, name: "top_center" }
+    ];
+    for (var i = 0; i < points.length; i++) {
+      var x = Math.floor(points[i].x);
+      var y = Math.floor(points[i].y);
+      logger.warn("搜索入口坐标兜底点击", {
+        keyword: keyword,
+        point: points[i].name,
+        x: x,
+        y: y,
+        activity: safeCurrentActivity()
+      });
+      autojsUtils.clickPoint(x, y, logger, "search_entry_fallback_" + points[i].name);
+      autojsUtils.sleepRandom(1200, 1800);
+      if (completeSearchKeyword(keyword, previousSearchKeyword, "coordinate:" + points[i].name)) {
+        logger.info("搜索入口坐标兜底成功", { keyword: keyword, point: points[i].name });
+        return true;
+      }
+      backFromSearchFallbackIfNeeded();
+      if (!ensureDouyinForeground()) {
+        openApp();
+      }
+    }
+    return false;
+  }
+
+  function backFromSearchFallbackIfNeeded() {
+    var visibleText = extractVisibleText();
+    if (/搜索|猜你想搜|相关搜索|最近看过/.test(visibleText || "")) {
+      back();
+      autojsUtils.sleepRandom(500, 900);
+    }
+  }
+
+  function leaveLiveRoomBeforeSearchIfNeeded() {
+    var activity = safeCurrentActivity();
+    var visibleText = extractVisibleText();
+    if (/Live/i.test(activity) || isLiveRoomVisible() || /欢迎来到直播间|说点什么|直播间/.test(visibleText)) {
+      logger.warn("搜索前检测到直播页，先返回普通视频流", {
+        activity: activity,
+        textSample: visibleText.slice(0, 160)
+      });
+      back();
+      autojsUtils.sleepRandom(1000, 1600);
+    }
+  }
+
+  function safeCurrentActivity() {
+    try {
+      return String(currentActivity && currentActivity() || "");
+    } catch (error) {
+      return "";
+    }
   }
 
   function focusSearchInput(searchNode) {
@@ -174,10 +279,10 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
   }
 
   function isSearchInputAlreadyVisible(visibleText) {
-    var lines = normalizeVisibleLines(visibleText);
+    var lines = screenRecognizer.normalizeVisibleLines(visibleText);
     return (
-      hasLineInFirst(lines, "搜索", 8) ||
-      hasSearchTabCluster(visibleText) ||
+      screenRecognizer.hasLineInFirst(lines, "搜索", 8) ||
+      screenRecognizer.hasSearchTabCluster(visibleText) ||
       /相关搜索|筛选|最近看过/.test(visibleText || "") ||
       !!(activeSearchKeyword && visibleText && visibleText.indexOf(activeSearchKeyword) >= 0)
     );
@@ -259,7 +364,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
       pushFoundNodes(nodes, textContains(keyword));
       pushFoundNodes(nodes, textContains(keyword.slice(0, Math.min(4, keyword.length))));
     }
-    pushFoundNodes(nodes, textMatches(/.+/));
+    pushFoundNodes(nodes, textMatches(".+"));
 
     var best = null;
     var bestScore = -1;
@@ -397,14 +502,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
   }
 
   function isVideoPlaybackPage() {
-    var visibleText = extractVisibleText();
-    if (!visibleText) {
-      return false;
-    }
-    if (isSearchResultPage() || isOverlayText(visibleText) || isPublishPageText(visibleText)) {
-      return false;
-    }
-    return /首页|朋友|消息|我|关注|推荐|分享|评论|点赞|展开|抖音/.test(visibleText);
+    return screenRecognizer.isVideoPlaybackPage(recognitionOptions());
   }
 
   function findSearchResultClickPoint() {
@@ -494,7 +592,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
   function findSearchResultDurationPoint(normalizePoint, screenHeight) {
     var durationNodes = [];
     try {
-      var nodes = textMatches(/^\d{1,2}:\d{2}$/).find();
+      var nodes = textMatches("^\\d{1,2}:\\d{2}$").find();
       var count = typeof nodes.length === "number" ? nodes.length : (nodes.size ? nodes.size() : 0);
       for (var i = 0; i < count; i++) {
         var node = typeof nodes.get === "function" ? nodes.get(i) : nodes[i];
@@ -530,73 +628,16 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
     return normalizePoint(durationNodes[0]);
   }
 
-  function isSearchResultPage() {
-    var visibleText = extractVisibleText();
-    return detectSearchPageState(visibleText).isResult;
+  function isSearchResultPage(visibleText) {
+    return screenRecognizer.isSearchResultPage(visibleText, recognitionOptions());
   }
 
   function detectSearchPageState(visibleText) {
-    var state = {
-      isResult: false,
-      hasTabs: false,
-      hasSearchHeader: false,
-      durationCount: 0,
-      dateCount: 0,
-      keywordHit: false,
-      resultScore: 0,
-      reasons: []
-    };
-    if (!visibleText) {
-      return state;
-    }
-    var lines = normalizeVisibleLines(visibleText);
-    state.hasTabs = hasSearchTabCluster(visibleText);
-    state.hasSearchHeader = hasLineInFirst(lines, "搜索", 8);
-    state.durationCount = countLinesMatching(lines, /^\d{1,2}:\d{2}$/);
-    state.dateCount = countLinesMatching(lines, /^(今天|昨天|前天|\d+\s*(分钟前|小时前|天前)|\d{1,2}\.\d{1,2}|\d{4}\.\d{1,2}\.\d{1,2})$/);
-    state.keywordHit = !!(activeSearchKeyword && visibleText.indexOf(activeSearchKeyword) >= 0);
-
-    if (state.hasTabs) {
-      state.resultScore += 3;
-      state.reasons.push("tabs");
-    }
-    if (state.hasSearchHeader) {
-      state.resultScore += 2;
-      state.reasons.push("search_header");
-    }
-    if (state.durationCount > 0) {
-      state.resultScore += Math.min(3, state.durationCount);
-      state.reasons.push("durations:" + state.durationCount);
-    }
-    if (state.dateCount > 0) {
-      state.resultScore += Math.min(3, state.dateCount);
-      state.reasons.push("dates:" + state.dateCount);
-    }
-    if (state.keywordHit) {
-      state.resultScore += 1;
-      state.reasons.push("keyword");
-    }
-    if (/相关搜索|筛选|最近看过/.test(visibleText)) {
-      state.resultScore += 1;
-      state.reasons.push("result_markers");
-    }
-
-    state.isResult =
-      (state.hasTabs && /搜索/.test(visibleText)) ||
-      (state.hasSearchHeader && state.durationCount >= 1 && (state.dateCount >= 1 || state.keywordHit)) ||
-      (state.hasSearchHeader && state.durationCount >= 2);
-    return state;
+    return screenRecognizer.detectSearchPageState(visibleText, recognitionOptions());
   }
 
   function normalizeVisibleLines(text) {
-    return String(text || "")
-      .split(/\n+/)
-      .map(function (line) {
-        return line.replace(/\s+/g, "").trim();
-      })
-      .filter(function (line) {
-        return line.length > 0;
-      });
+    return screenRecognizer.normalizeVisibleLines(text);
   }
 
   function countLinesMatching(lines, pattern) {
@@ -610,34 +651,15 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
   }
 
   function hasLineInFirst(lines, word, maxLines) {
-    var limit = Math.min(lines.length, maxLines || lines.length);
-    for (var i = 0; i < limit; i++) {
-      if (lines[i] === word) {
-        return true;
-      }
-    }
-    return false;
+    return screenRecognizer.hasLineInFirst(lines, word, maxLines);
   }
 
   function hasSearchTabCluster(text) {
-    var tabWords = ["综合", "视频", "用户", "直播", "图文", "店铺", "团购"];
-    var hitCount = 0;
-    for (var i = 0; i < tabWords.length; i++) {
-      if (hasStandaloneLine(text, tabWords[i])) {
-        hitCount += 1;
-      }
-    }
-    return hitCount >= 3;
+    return screenRecognizer.hasSearchTabCluster(text);
   }
 
   function hasStandaloneLine(text, word) {
-    var lines = String(text || "").split(/\n+/);
-    for (var i = 0; i < lines.length; i++) {
-      if (lines[i].replace(/\s+/g, "") === word) {
-        return true;
-      }
-    }
-    return false;
+    return screenRecognizer.hasStandaloneLine(text, word);
   }
 
   function enterVideoFeed() {
@@ -687,17 +709,11 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
   }
 
   function isOverlayText(text) {
-    if (!text) {
-      return false;
-    }
-    return /同时发布为作品|发送\n购物|商品评价|期待你的评论|发条评论|评论 0|视频同款点这里|加入购物车|立即购买|我的订单|编辑主页|获赞\n|互关\n|粉丝\n|全部功能|选择音乐|分段拍|照片|相机|开直播|创作灵感|灵感跟拍|倒计时|闪光灯|翻转|发布作品/.test(text);
+    return screenRecognizer.isOverlayText(text);
   }
 
   function isPublishPageText(text) {
-    if (!text) {
-      return false;
-    }
-    return /选择音乐|分段拍|照片|相机|开直播|创作灵感|灵感跟拍|倒计时|闪光灯|翻转|发布作品/.test(text);
+    return screenRecognizer.isPublishPageText(text);
   }
 
   function ensureFeedContext(reason) {
@@ -723,6 +739,444 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
     ensureFeedContext("enter_live_phase");
     enterVideoFeed();
     openLiveTabIfVisible();
+    return true;
+  }
+
+  function openLiveSearch(keyword) {
+    keyword = String(keyword || "").replace(/\s+/g, " ").trim();
+    if (!keyword) {
+      return false;
+    }
+    if (!openSearch(keyword)) {
+      return false;
+    }
+    autojsUtils.sleepRandom(1000, 1600);
+    logger.info("指定直播间测试：保留在综合搜索结果页，直接从综合页寻找直播入口", {
+      keyword: keyword,
+      textSample: extractVisibleText().slice(0, 180)
+    });
+    return true;
+  }
+
+  function openTargetLiveRoomFromSearch(options) {
+    options = options || {};
+    var targetRoom = options.targetRoom || {};
+    var keyword = String(options.keyword || targetRoom.anchorName || "").replace(/\s+/g, " ").trim();
+    var targetKeywords = buildTargetRoomKeywords(targetRoom, keyword);
+    if (!keyword && targetKeywords.length > 0) {
+      keyword = targetKeywords[0];
+    }
+    if (!keyword) {
+      logger.warn("target live search skipped: empty keyword");
+      return false;
+    }
+
+    if (!openLiveSearch(keyword)) {
+      return false;
+    }
+
+    for (var attempt = 1; attempt <= 4; attempt++) {
+      if (isLiveRoomVisible()) {
+        if (confirmTargetLiveRoom(keyword, targetKeywords, attempt, "already_in_live_room")) {
+          logger.info("target live search already in target live room", { attempt: attempt, keyword: keyword });
+          return true;
+        }
+        logger.warn("current live room is not target room, exit before target search", {
+          attempt: attempt,
+          keyword: keyword
+        });
+        back();
+        autojsUtils.sleepRandom(1200, 1800);
+      }
+
+      var entry = findTargetLiveSearchEntry(targetKeywords);
+      if (entry && clickTargetLiveSearchEntry(entry, keyword, targetKeywords, attempt)) {
+        return true;
+      }
+
+      if (attempt < 4) {
+        logger.warn("target live search entry not found, scroll search results", {
+          attempt: attempt,
+          keyword: keyword,
+          targetKeywords: targetKeywords,
+          textSample: extractVisibleText().slice(0, 180)
+        });
+        swipeSearchResultsUp();
+      }
+    }
+
+    logger.warn("target live search failed to enter live room", {
+      keyword: keyword,
+      targetKeywords: targetKeywords,
+      textSample: extractVisibleText().slice(0, 220)
+    });
+    return false;
+  }
+
+  function buildTargetRoomKeywords(targetRoom, fallbackKeyword) {
+    var result = [];
+    addTargetKeyword(result, targetRoom && targetRoom.anchorName);
+    addTargetKeywordList(result, targetRoom && targetRoom.titleKeywords);
+    addTargetKeywordList(result, targetRoom && targetRoom.roomKeywords);
+    addTargetKeyword(result, fallbackKeyword);
+    return result;
+  }
+
+  function addTargetKeywordList(result, values) {
+    if (!values || !values.length) {
+      return;
+    }
+    for (var i = 0; i < values.length; i++) {
+      addTargetKeyword(result, values[i]);
+    }
+  }
+
+  function addTargetKeyword(result, value) {
+    value = String(value || "").replace(/\s+/g, " ").trim();
+    if (!value) {
+      return;
+    }
+    for (var i = 0; i < result.length; i++) {
+      if (result[i] === value) {
+        return;
+      }
+    }
+    result.push(value);
+  }
+
+  function findTargetLiveSearchEntry(targetKeywords) {
+    var nodes = [];
+    pushFoundNodes(nodes, textMatches(".*(进入直播间|点击进入直播间|正在直播|直播中|热聊中|讲解中|LIVE|live).*"));
+    pushFoundNodes(nodes, descMatches(".*(进入直播间|点击进入直播间|正在直播|直播中|热聊中|讲解中|LIVE|live).*"));
+    for (var i = 0; i < targetKeywords.length; i++) {
+      pushFoundNodes(nodes, textContains(targetKeywords[i]));
+      pushFoundNodes(nodes, descContains(targetKeywords[i]));
+    }
+
+    var screen = autojsUtils.getScreenSize();
+    var best = null;
+    var bestScore = -1;
+    var samples = [];
+    for (var j = 0; j < nodes.length; j++) {
+      var node = nodes[j];
+      var bounds = node && node.bounds && node.bounds();
+      if (!bounds || !isTargetSearchBoundsAllowed(bounds, screen)) {
+        continue;
+      }
+
+      var textValue = getNodeOwnText(node);
+      var contextText = collectNodeContextText(node, 4);
+      var liveHit = containsLiveEntryText(textValue) || containsLiveEntryText(contextText);
+      var targetHit = containsAnyTargetKeyword(contextText || textValue, targetKeywords);
+      var score = 0;
+      if (targetHit) {
+        score += 60;
+      }
+      if (liveHit) {
+        score += 45;
+      }
+      if (containsLiveEntryText(textValue)) {
+        score += 12;
+      }
+      if (node.clickable && node.clickable()) {
+        score += 5;
+      }
+      if (bounds.centerY() >= screen.height * 0.16 && bounds.centerY() <= screen.height * 0.62) {
+        score += 4;
+      }
+      if (!targetHit && targetKeywords.length > 0) {
+        score -= 80;
+      }
+      if (!liveHit && !containsAnyTargetKeyword(textValue, targetKeywords)) {
+        score -= 40;
+      }
+
+      if (samples.length < 10) {
+        samples.push({
+          text: textValue.slice(0, 40),
+          contextText: contextText.slice(0, 80),
+          bounds: autojsUtils.formatBounds(bounds),
+          targetHit: targetHit,
+          liveHit: liveHit,
+          score: score
+        });
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = {
+          node: node,
+          bounds: bounds,
+          text: textValue,
+          contextText: contextText,
+          score: score,
+          targetHit: targetHit,
+          liveHit: liveHit
+        };
+      }
+    }
+
+    logger.info("target live search candidates scanned", {
+      total: nodes.length,
+      selected: !!best,
+      bestScore: bestScore,
+      samples: samples
+    });
+
+    if (!best || bestScore < 40 || (targetKeywords.length > 0 && !best.targetHit)) {
+      return null;
+    }
+    return best;
+  }
+
+  function clickTargetLiveSearchEntry(entry, keyword, targetKeywords, attempt) {
+    logger.info("click target live search entry", {
+      keyword: keyword,
+      attempt: attempt,
+      score: entry.score,
+      targetHit: entry.targetHit,
+      liveHit: entry.liveHit,
+      text: entry.text.slice(0, 80),
+      contextText: entry.contextText.slice(0, 160),
+      bounds: autojsUtils.formatBounds(entry.bounds)
+    });
+
+    var currentText = extractVisibleText();
+    if (containsLiveEntryText(currentText) && containsAnyTargetKeyword(currentText, targetKeywords)) {
+      if (clickTargetLiveSearchCardFallback(entry, keyword, attempt, currentText)) {
+        return true;
+      }
+    }
+
+    autojsUtils.axisClick(entry.node, logger);
+    autojsUtils.sleepRandom(2500, 4200);
+    if (confirmTargetLiveRoom(keyword, targetKeywords, attempt, "node_click")) {
+      logger.info("entered target live room from search", { keyword: keyword, attempt: attempt });
+      return true;
+    }
+
+    var visibleText = extractVisibleText();
+    if (containsLiveEntryText(visibleText) && containsAnyTargetKeyword(visibleText, targetKeywords)) {
+      logger.info("target profile/result page opened, try live entry on current screen", {
+        keyword: keyword,
+        attempt: attempt,
+        textSample: visibleText.slice(0, 180)
+      });
+      if (openLiveRoomFromCurrentScreen(visibleText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry")) {
+        return true;
+      }
+    }
+
+    logger.warn("target live search entry click did not enter live room, back to results", {
+      keyword: keyword,
+      attempt: attempt,
+      textSample: extractVisibleText().slice(0, 180)
+    });
+    back();
+    autojsUtils.sleepRandom(900, 1400);
+    return false;
+  }
+
+  function clickTargetLiveSearchCardFallback(entry, keyword, attempt, visibleText) {
+    var screen = autojsUtils.getScreenSize();
+    var bounds = entry && entry.bounds;
+    var anchorY = bounds && bounds.bottom ? bounds.bottom : Math.floor(screen.height * 0.35);
+    var cardY = Math.max(
+      Math.floor(screen.height * 0.34),
+      Math.min(Math.floor(anchorY + screen.height * 0.16), Math.floor(screen.height * 0.72))
+    );
+    var points = [
+      { x: screen.width * 0.36, y: cardY, name: "search_live_card_left" },
+      { x: screen.width * 0.50, y: cardY, name: "search_live_card_center" },
+      { x: screen.width * 0.36, y: screen.height * 0.56, name: "search_live_card_mid_left" },
+      { x: screen.width * 0.50, y: screen.height * 0.56, name: "search_live_card_mid_center" }
+    ];
+
+    for (var i = 0; i < points.length; i++) {
+      var x = Math.floor(points[i].x);
+      var y = Math.floor(points[i].y);
+      logger.warn("target live result card coordinate fallback", {
+        keyword: keyword,
+        attempt: attempt,
+        point: points[i].name,
+        x: x,
+        y: y,
+        activity: safeCurrentActivity(),
+        textSample: String(visibleText || "").slice(0, 160),
+        entryBounds: autojsUtils.formatBounds(bounds)
+      });
+      autojsUtils.clickPoint(x, y, logger, "target_live_search_card_" + points[i].name);
+      autojsUtils.sleepRandom(2600, 3800);
+      if (confirmTargetLiveRoom(keyword, targetKeywords, attempt, points[i].name)) {
+        logger.info("entered target live room from search card coordinate", {
+          keyword: keyword,
+          attempt: attempt,
+          point: points[i].name
+        });
+        return true;
+      }
+      if (!/SearchResult/i.test(safeCurrentActivity())) {
+        back();
+        autojsUtils.sleepRandom(900, 1400);
+      }
+    }
+    return false;
+  }
+
+  function confirmTargetLiveRoom(keyword, targetKeywords, attempt, source) {
+    if (!isLiveRoomVisible()) {
+      return false;
+    }
+    var visibleText = extractVisibleText();
+    if (containsAnyTargetKeyword(visibleText, targetKeywords)) {
+      return true;
+    }
+    logger.warn("entered live room but target anchor not matched, exit and continue search", {
+      keyword: keyword,
+      attempt: attempt,
+      source: source || "",
+      targetKeywords: targetKeywords,
+      textSample: visibleText.slice(0, 220)
+    });
+    back();
+    autojsUtils.sleepRandom(1200, 1800);
+    return false;
+  }
+
+  function containsLiveEntryText(value) {
+    return /进入直播间|点击进入直播间|正在直播|直播中|热聊中|讲解中|LIVE|live/i.test(String(value || ""));
+  }
+
+  function containsAnyTargetKeyword(value, keywords) {
+    value = String(value || "");
+    if (!keywords || !keywords.length) {
+      return false;
+    }
+    for (var i = 0; i < keywords.length; i++) {
+      if (keywords[i] && value.indexOf(keywords[i]) >= 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function getNodeOwnText(node) {
+    if (!node) {
+      return "";
+    }
+    var values = [];
+    try {
+      var textValue = node.text && node.text();
+      if (textValue) {
+        values.push(textValue);
+      }
+    } catch (error) {
+    }
+    try {
+      var descValue = node.desc && node.desc();
+      if (descValue) {
+        values.push(descValue);
+      }
+    } catch (error2) {
+    }
+    return values.join("\n");
+  }
+
+  function collectNodeContextText(node, maxParentDepth) {
+    var texts = [];
+    var current = node;
+    var depth = 0;
+    while (current && depth <= (maxParentDepth || 3)) {
+      appendNodeTreeText(current, texts, 0, 2);
+      try {
+        current = current.parent && current.parent();
+      } catch (error) {
+        current = null;
+      }
+      depth += 1;
+    }
+    return uniqueTextLines(texts).join("\n");
+  }
+
+  function appendNodeTreeText(node, texts, depth, maxDepth) {
+    if (!node || depth > maxDepth) {
+      return;
+    }
+    var value = getNodeOwnText(node);
+    if (value) {
+      texts.push(value);
+    }
+    var count = 0;
+    try {
+      count = node.childCount && node.childCount() || 0;
+    } catch (error) {
+      count = 0;
+    }
+    for (var i = 0; i < count; i++) {
+      try {
+        appendNodeTreeText(node.child(i), texts, depth + 1, maxDepth);
+      } catch (error2) {
+      }
+    }
+  }
+
+  function uniqueTextLines(values) {
+    var result = [];
+    for (var i = 0; i < values.length; i++) {
+      var parts = String(values[i] || "").split(/\n+/);
+      for (var j = 0; j < parts.length; j++) {
+        var value = parts[j].replace(/\s+/g, " ").trim();
+        if (!value) {
+          continue;
+        }
+        var exists = false;
+        for (var k = 0; k < result.length; k++) {
+          if (result[k] === value) {
+            exists = true;
+            break;
+          }
+        }
+        if (!exists) {
+          result.push(value);
+        }
+      }
+    }
+    return result;
+  }
+
+  function isTargetSearchBoundsAllowed(bounds, screen) {
+    if (!bounds || !screen) {
+      return false;
+    }
+    if (bounds.width && bounds.width() <= 0) {
+      return false;
+    }
+    if (bounds.height && bounds.height() <= 0) {
+      return false;
+    }
+    var centerX = bounds.centerX();
+    var centerY = bounds.centerY();
+    return centerX >= screen.width * 0.04 &&
+      centerX <= screen.width * 0.96 &&
+      centerY >= screen.height * 0.10 &&
+      centerY <= screen.height * 0.88;
+  }
+
+  function swipeSearchResultsUp() {
+    var screen = autojsUtils.getScreenSize();
+    try {
+      swipe(
+        Math.floor(screen.width * 0.52),
+        Math.floor(screen.height * 0.78),
+        Math.floor(screen.width * 0.52),
+        Math.floor(screen.height * 0.36),
+        420
+      );
+    } catch (error) {
+      logger.warn("search result swipe failed", { message: String(error) });
+      return false;
+    }
+    autojsUtils.sleepRandom(900, 1400);
     return true;
   }
 
@@ -818,18 +1272,17 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
     return best;
   }
 
-  function openLiveRoomFromCurrentScreen() {
-    var entryNode =
-      autojsUtils.waitForElement(textMatches(/.*进入直播间.*/), 1000, null, logger) ||
-      autojsUtils.waitForElement(descMatches(/.*进入直播间.*/), 800, null, logger) ||
-      autojsUtils.waitForElement(textMatches(/.*直播中.*/), 800, null, logger) ||
-      autojsUtils.waitForElement(descMatches(/.*直播中.*/), 800, null, logger) ||
-      autojsUtils.waitForElement(textMatches(/.*热聊中.*/), 800, null, logger) ||
-      autojsUtils.waitForElement(textMatches(/.*讲解中.*/), 800, null, logger);
+  function openLiveRoomFromCurrentScreen(visibleTextHint) {
+    var entryNode = findLiveRoomEntryNode();
 
     if (entryNode) {
-      logger.info("找到直播入口控件，尝试点击进入直播间");
-      autojsUtils.safeClick(entryNode, 3, logger);
+      var entryBounds = entryNode.bounds && entryNode.bounds();
+      logger.info("找到直播入口控件，尝试点击进入直播间", {
+        text: entryNode.text && entryNode.text(),
+        desc: entryNode.desc && entryNode.desc(),
+        bounds: autojsUtils.formatBounds(entryBounds)
+      });
+      autojsUtils.axisClick(entryNode, logger);
       autojsUtils.sleepRandom(2500, 4000);
       if (isLiveRoomVisible()) {
         return true;
@@ -842,7 +1295,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
       return false;
     }
 
-    if (tryLiveEntryFallback()) {
+    if (tryLiveEntryFallback(visibleTextHint)) {
       return true;
     }
 
@@ -850,18 +1303,101 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
     return false;
   }
 
-  function tryLiveEntryFallback() {
-    var visibleText = extractVisibleText();
+  function findLiveRoomEntryNode() {
+    var nodes = [];
+    pushFoundNodes(nodes, textMatches(".*(进入直播间|直播中|热聊中|讲解中).*"));
+    pushFoundNodes(nodes, descMatches(".*(进入直播间|直播中|热聊中|讲解中).*"));
+
+    var screen = autojsUtils.getScreenSize();
+    var best = null;
+    var bestScore = -1;
+    var samples = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var bounds = node && node.bounds && node.bounds();
+      if (!bounds) {
+        continue;
+      }
+      var value = String((node.text && node.text()) || (node.desc && node.desc()) || "");
+      if (samples.length < 8) {
+        samples.push({
+          text: value.slice(0, 30),
+          bounds: autojsUtils.formatBounds(bounds),
+          clickable: !!(node.clickable && node.clickable())
+        });
+      }
+      if (!isLiveEntryBoundsAllowed(bounds, screen)) {
+        continue;
+      }
+
+      var centerY = bounds.centerY();
+      var score = 0;
+      if (/点击进入直播间/.test(value)) {
+        score += 30;
+      } else if (/进入直播间/.test(value)) {
+        score += 24;
+      } else if (/直播中|热聊中|讲解中/.test(value)) {
+        score += 12;
+      }
+      if (centerY >= screen.height * 0.16 && centerY <= screen.height * 0.62) {
+        score += 10;
+      }
+      if (bounds.width && bounds.width() >= screen.width * 0.08) {
+        score += 3;
+      }
+      if (node.clickable && node.clickable()) {
+        score += 2;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = node;
+      }
+    }
+
+    logger.info("直播入口候选筛选完成", {
+      total: nodes.length,
+      selected: !!best,
+      bestScore: bestScore,
+      samples: samples
+    });
+    return best;
+  }
+
+  function isLiveEntryBoundsAllowed(bounds, screen) {
+    if (!bounds || !screen) {
+      return false;
+    }
+    var centerX = bounds.centerX();
+    var centerY = bounds.centerY();
+    if (bounds.width && bounds.width() <= 0) {
+      return false;
+    }
+    if (bounds.height && bounds.height() <= 0) {
+      return false;
+    }
+    if (centerX < screen.width * 0.04 || centerX > screen.width * 0.96) {
+      return false;
+    }
+    if (centerY < screen.height * 0.10 || centerY > screen.height * 0.82) {
+      return false;
+    }
+    return true;
+  }
+
+  function tryLiveEntryFallback(visibleTextHint) {
+    var visibleText = visibleTextHint || extractVisibleText();
     if (!/进入直播间|点击进入直播间|正在直播|直播中|主播|讲解中|热聊中/.test(visibleText)) {
       return false;
     }
 
     var screen = autojsUtils.getScreenSize();
     var points = [
+      { x: screen.width * 0.50, y: screen.height * 0.20, name: "top_center" },
+      { x: screen.width * 0.50, y: screen.height * 0.28, name: "upper_card" },
+      { x: screen.width * 0.68, y: screen.height * 0.28, name: "upper_right" },
+      { x: screen.width * 0.50, y: screen.height * 0.36, name: "card_center" },
       { x: screen.width * 0.50, y: screen.height * 0.42, name: "center_upper" },
-      { x: screen.width * 0.50, y: screen.height * 0.55, name: "center_middle" },
-      { x: screen.width * 0.70, y: screen.height * 0.42, name: "right_upper" },
-      { x: screen.width * 0.70, y: screen.height * 0.55, name: "right_middle" }
+      { x: screen.width * 0.70, y: screen.height * 0.42, name: "right_upper" }
     ];
 
     for (var i = 0; i < points.length; i++) {
@@ -884,8 +1420,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
   }
 
   function isLiveRoomVisible() {
-    var visibleText = extractVisibleText();
-    return /说点什么|主播|在线|正在直播|直播中|小黄车|粉丝团|礼物|连麦/.test(visibleText) && !isOverlayText(visibleText) && !isPublishPageText(visibleText);
+    return screenRecognizer.isLiveRoomVisible(recognitionOptions());
   }
 
   function exitLiveRoom() {
@@ -895,60 +1430,15 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
   }
 
   function extractVisibleText() {
-    var texts = [];
-    var nodes = className("android.widget.TextView").find();
-    for (var i = 0; i < nodes.length; i++) {
-      var value = nodes[i].text();
-      if (value) {
-        texts.push(value);
-      }
-    }
-    return texts.join("\n");
+    return screenRecognizer.extractVisibleText();
   }
 
   function extractScreen() {
-    var screen = autojsUtils.getScreenSize();
-    var width = screen.width;
-    var height = screen.height;
-    var result = ocrEngine.captureRegions({
-      title: {
-        x: 0,
-        y: Math.floor(height * 0.55),
-        w: Math.floor(width * 0.78),
-        h: Math.floor(height * 0.28)
-      },
-      subtitle: {
-        x: Math.floor(width * 0.08),
-        y: Math.floor(height * 0.35),
-        w: Math.floor(width * 0.84),
-        h: Math.floor(height * 0.22)
-      },
-      metrics: {
-        x: Math.floor(width * 0.76),
-        y: Math.floor(height * 0.35),
-        w: Math.floor(width * 0.24),
-        h: Math.floor(height * 0.45)
-      }
-    });
-    var visibleText = extractVisibleText();
-    var combinedText = [result.text, visibleText].filter(Boolean).join("\n");
-    return {
-      image: result.image,
-      ocrText: result.text,
-      ocrRegions: result.regions,
-      visibleText: visibleText,
-      combinedText: combinedText
-    };
+    return screenRecognizer.extractScreen(null, recognitionOptions());
   }
 
   function extractFastText() {
-    var visibleText = extractVisibleText();
-    return {
-      image: null,
-      ocrText: "",
-      visibleText: visibleText,
-      combinedText: visibleText
-    };
+    return screenRecognizer.extractFastText(recognitionOptions());
   }
 
   function openComments() {
@@ -985,14 +1475,14 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
   function findCommentEntry() {
     var nodes = [];
     try {
-      var descNodes = descMatches(/.*评论.*/).find();
+      var descNodes = descMatches(".*评论.*").find();
       for (var i = 0; i < descNodes.length; i++) {
         nodes.push(descNodes[i]);
       }
     } catch (error) {
     }
     try {
-      var textNodes = textMatches(/.*评论.*/).find();
+      var textNodes = textMatches(".*评论.*").find();
       for (var j = 0; j < textNodes.length; j++) {
         nodes.push(textNodes[j]);
       }
@@ -1038,10 +1528,175 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
 
   function isCommentPanelVisible() {
     return !!(
-      textMatches(/.*评论.*/).findOne(500) ||
-      descMatches(/.*评论.*/).findOne(500) ||
-      textMatches(/说点什么|抢首评|全部评论|暂无评论/).findOne(500)
+      textMatches(".*评论.*").findOne(500) ||
+      descMatches(".*评论.*").findOne(500) ||
+      textMatches("说点什么|抢首评|全部评论|暂无评论").findOne(500)
     );
+  }
+
+  function requiresConfiguredLiveReply(options) {
+    options = options || {};
+    var commentMode = options.commentMode || config.task.liveCommentMode || "";
+    return commentMode !== "agri_chatbot";
+  }
+
+  function isConfiguredLiveReply(replyText) {
+    var liveComment = config.task.liveComment || {};
+    var replyPools = liveComment.replyPools || {};
+    var groups = ["A", "B", "C"];
+    for (var i = 0; i < groups.length; i++) {
+      var pool = replyPools[groups[i]] || [];
+      for (var j = 0; j < pool.length; j++) {
+        if (String(pool[j]) === String(replyText)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function findLiveCommentInput() {
+    var selectors = [
+      textMatches("说点什么|发条评论|期待你的评论"),
+      descMatches("说点什么|发条评论|期待你的评论"),
+      className("android.widget.EditText")
+    ];
+    for (var i = 0; i < selectors.length; i++) {
+      try {
+        var node = selectors[i].findOne(800);
+        if (node) {
+          return node;
+        }
+      } catch (error) {
+      }
+    }
+    return null;
+  }
+
+  function findLiveCommentSendButton() {
+    var selectors = [
+      textMatches("^发送$|^发布$"),
+      descMatches("^发送$|^发布$")
+    ];
+    for (var i = 0; i < selectors.length; i++) {
+      try {
+        var node = selectors[i].findOne(800);
+        if (node) {
+          return node;
+        }
+      } catch (error) {
+      }
+    }
+    return null;
+  }
+
+  function sendLiveComment(replyText, options) {
+    options = options || {};
+    replyText = String(replyText || "").trim();
+    if (!replyText) {
+      return { success: false, failureReason: "empty_reply_text" };
+    }
+    if (requiresConfiguredLiveReply(options) && !isConfiguredLiveReply(replyText)) {
+      return { success: false, failureReason: "reply_not_configured" };
+    }
+    if (!ensureDouyinForeground()) {
+      return { success: false, failureReason: "douyin_not_foreground" };
+    }
+    if (!isLiveRoomVisible()) {
+      return { success: false, failureReason: "live_room_not_visible" };
+    }
+    if (options.plannedDelayMs) {
+      sleep(Number(options.plannedDelayMs));
+    }
+    if (!ensureDouyinForeground()) {
+      return { success: false, failureReason: "douyin_not_foreground_after_delay" };
+    }
+    if (!isLiveRoomVisible()) {
+      return { success: false, failureReason: "live_room_not_visible_after_delay" };
+    }
+
+    avoidFloaty("live_comment_send");
+    var inputNode = findLiveCommentInput();
+    if (!inputNode) {
+      return { success: false, failureReason: "comment_input_not_found" };
+    }
+    if (!autojsUtils.safeClick(inputNode, 3, logger)) {
+      return { success: false, failureReason: "comment_input_click_failed" };
+    }
+    autojsUtils.sleepRandom(500, 900);
+    try {
+      setText(replyText);
+    } catch (error) {
+      return { success: false, failureReason: "set_text_failed:" + String(error) };
+    }
+    autojsUtils.sleepRandom(300, 700);
+
+    var sendButton = findLiveCommentSendButton();
+    if (!sendButton) {
+      return { success: false, failureReason: "send_button_not_found" };
+    }
+    if (!autojsUtils.safeClick(sendButton, 3, logger)) {
+      return { success: false, failureReason: "send_button_click_failed" };
+    }
+    autojsUtils.sleepRandom(800, 1400);
+    return {
+      success: true,
+      failureReason: "",
+      sentAt: new Date().toISOString()
+    };
+  }
+
+  function likeCurrentLiveRoom(options) {
+    options = options || {};
+    if (!ensureDouyinForeground()) {
+      return { success: false, failureReason: "douyin_not_foreground" };
+    }
+    if (!isLiveRoomVisible()) {
+      return { success: false, failureReason: "live_room_not_visible" };
+    }
+    var maxLikes = Math.max(1, Math.min(Number(options.maxLikes || options.maxLikesPerLiveRoom || 1), 3));
+    avoidFloaty("p3_live_like");
+    var screen = autojsUtils.getScreenSize();
+    for (var i = 0; i < maxLikes; i++) {
+      autojsUtils.clickPoint(Math.floor(screen.width * 0.88), Math.floor(screen.height * 0.62), logger, "p3_live_like");
+      autojsUtils.sleepRandom(900, 1600);
+    }
+    return {
+      success: true,
+      failureReason: "",
+      likedCount: maxLikes
+    };
+  }
+
+  function followAuthorizedAccount(options) {
+    options = options || {};
+    if (!ensureDouyinForeground()) {
+      return { success: false, failureReason: "douyin_not_foreground" };
+    }
+    if (!isLiveRoomVisible()) {
+      return { success: false, failureReason: "live_room_not_visible" };
+    }
+    var targetName = String(options.targetAccountName || "").trim();
+    var visibleText = extractVisibleText();
+    if (targetName && visibleText.indexOf(targetName) < 0) {
+      return { success: false, failureReason: "target_account_not_visible" };
+    }
+    var followNode =
+      autojsUtils.waitForElement(textMatches("^(关注|关注主播|\\+)$"), 800, null, logger) ||
+      autojsUtils.waitForElement(descMatches("^(关注|关注主播|\\+)$"), 800, null, logger);
+    if (!followNode) {
+      return { success: false, failureReason: "follow_button_not_found" };
+    }
+    avoidFloaty("p3_authorized_follow");
+    if (!autojsUtils.safeClick(followNode, 3, logger)) {
+      return { success: false, failureReason: "follow_button_click_failed" };
+    }
+    autojsUtils.sleepRandom(1200, 1800);
+    return {
+      success: true,
+      failureReason: "",
+      targetAccountName: targetName
+    };
   }
 
   function extractHotComments(limit) {
@@ -1092,6 +1747,18 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
   }
 
   function recover(sceneType) {
+    if (!isForeground()) {
+      logger.warn("Douyin is not foreground, reopen before recovery", {
+        sceneType: sceneType || "",
+        actualPackage: currentPackage()
+      });
+      if (sceneType !== "live" && shouldRecoverSearchContext(sceneType || "recover")) {
+        restartSearchContext("recover_foreground");
+        return;
+      }
+      restartToFeed();
+      return;
+    }
     logger.warn("执行抖音页面恢复");
     if (sceneType !== "live" && shouldRecoverSearchContext(sceneType || "recover")) {
       restartSearchContext("recover");
@@ -1110,8 +1777,11 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
   }
 
   return {
+    isForeground: isForeground,
     openApp: openApp,
     openSearch: openSearch,
+    openLiveSearch: openLiveSearch,
+    openTargetLiveRoomFromSearch: openTargetLiveRoomFromSearch,
     openFirstVideoFromSearch: openFirstVideoFromSearch,
     enterVideoFeed: enterVideoFeed,
     ensurePlayableFeed: ensurePlayableFeed,
@@ -1122,6 +1792,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl) {
     exitLiveRoom: exitLiveRoom,
     extractFastText: extractFastText,
     extractScreen: extractScreen,
+    sendLiveComment: sendLiveComment,
+    likeCurrentLiveRoom: likeCurrentLiveRoom,
+    followAuthorizedAccount: followAuthorizedAccount,
     openComments: openComments,
     extractHotComments: extractHotComments,
     closeComments: closeComments,

@@ -24,6 +24,7 @@ if (-not (Test-Path $projectSource)) {
 
 $projectConfigPath = Join-Path $projectSource "project.json"
 $sourceConfig = Get-Content -Raw -Encoding UTF8 -Path $projectConfigPath | ConvertFrom-Json
+$sourceIconPath = Join-Path $projectSource "assets\app-icon.png"
 $gradleBuildPath = Join-Path $AutoJs6Root "app\build.gradle.kts"
 $inrtManifestPath = Join-Path $AutoJs6Root "app\src\inrt\AndroidManifest.xml"
 $assetsProjectLauncherPath = Join-Path $AutoJs6Root "app\src\main\java\org\autojs\autojs\inrt\launch\AssetsProjectLauncher.kt"
@@ -195,6 +196,54 @@ $($componentLines -join "`r`n")
   Write-Host "  $ManifestPath"
 }
 
+function Write-LauncherIconResources([string]$SourceIconPath, [string]$ResRoot) {
+  if (-not (Test-Path $SourceIconPath)) {
+    Write-Host "Launcher icon source not found, skip icon patch: $SourceIconPath"
+    return
+  }
+
+  Add-Type -AssemblyName System.Drawing
+
+  $densitySizes = [ordered]@{
+    "mipmap-mdpi" = 48
+    "mipmap-hdpi" = 72
+    "mipmap-xhdpi" = 96
+    "mipmap-xxhdpi" = 144
+    "mipmap-xxxhdpi" = 192
+    "mipmap" = 512
+  }
+
+  $sourceImage = [System.Drawing.Image]::FromFile($SourceIconPath)
+  try {
+    foreach ($entry in $densitySizes.GetEnumerator()) {
+      $targetDir = Join-Path $ResRoot $entry.Key
+      New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+      $targetPath = Join-Path $targetDir "ic_launcher.png"
+      $size = [int]$entry.Value
+      $bitmap = New-Object System.Drawing.Bitmap $size, $size
+      try {
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        try {
+          $graphics.Clear([System.Drawing.Color]::Transparent)
+          $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+          $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+          $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+          $graphics.DrawImage($sourceImage, 0, 0, $size, $size)
+        } finally {
+          $graphics.Dispose()
+        }
+        $bitmap.Save($targetPath, [System.Drawing.Imaging.ImageFormat]::Png)
+      } finally {
+        $bitmap.Dispose()
+      }
+    }
+    Write-Host "Launcher icons written from:"
+    Write-Host "  $SourceIconPath"
+  } finally {
+    $sourceImage.Dispose()
+  }
+}
+
 function Patch-InrtUiLaunchFlags([string]$LauncherPath) {
   if (-not (Test-Path $LauncherPath)) {
     Write-Host "AssetsProjectLauncher not found, skip UI launch patch: $LauncherPath"
@@ -213,6 +262,44 @@ function Patch-InrtUiLaunchFlags([string]$LauncherPath) {
     Write-Host "  $LauncherPath"
   } else {
     Write-Host "Inrt UI launch flag pattern not found, review manually:"
+    Write-Host "  $LauncherPath"
+  }
+}
+
+function Patch-InrtPreserveUpdatedProject([string]$LauncherPath) {
+  if (-not (Test-Path $LauncherPath)) {
+    Write-Host "AssetsProjectLauncher not found, skip project preservation patch: $LauncherPath"
+    return
+  }
+
+  $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $LauncherPath
+  $old = @"
+        val projectConfig = ProjectConfig.fromProjectDir(mProjectDir)
+        if (projectConfig != null &&
+            TextUtils.equals(projectConfig.buildInfo.buildId, mProjectConfig.buildInfo.buildId)
+        ) {
+            initKey(projectConfig)
+            return
+        }
+"@
+  $new = @"
+        val projectConfig = ProjectConfig.fromProjectDir(mProjectDir)
+        if (projectConfig != null && File(mProjectDir, projectConfig.mainScriptFileName).isFile) {
+            initKey(projectConfig)
+            return
+        }
+"@
+
+  if ($text.Contains($old)) {
+    $text = $text.Replace($old, $new)
+    Write-Utf8NoBom -Path $LauncherPath -Value $text
+    Write-Host "Patched inrt project preservation:"
+    Write-Host "  $LauncherPath"
+  } elseif ($text.Contains('if (projectConfig != null && File(mProjectDir, projectConfig.mainScriptFileName).isFile)')) {
+    Write-Host "Inrt project preservation already patched:"
+    Write-Host "  $LauncherPath"
+  } else {
+    Write-Host "Inrt project preservation pattern not found, review manually:"
     Write-Host "  $LauncherPath"
   }
 }
@@ -324,7 +411,9 @@ if (-not (Test-Path $gradleBuildPath)) {
 }
 
 Write-InrtPermissionOverlay -ManifestPath $inrtManifestPath
+Write-LauncherIconResources -SourceIconPath $sourceIconPath -ResRoot (Join-Path $AutoJs6Root "app\src\main\res")
 Patch-InrtUiLaunchFlags -LauncherPath $assetsProjectLauncherPath
+Patch-InrtPreserveUpdatedProject -LauncherPath $assetsProjectLauncherPath
 Patch-InrtNoRootRuntime -RootUtilsPath $rootUtilsPath -AbstractAutoJsPath $abstractAutoJsPath -ProcessShellPath $processShellPath -AbstractShellPath $abstractShellPath
 
 $gradleText = Get-Content -Raw -Encoding UTF8 -Path $gradleBuildPath
@@ -370,6 +459,22 @@ Get-ChildItem -LiteralPath $projectSource -Force | ForEach-Object {
   Copy-Item -LiteralPath $_.FullName -Destination $targetProject -Recurse -Force
 }
 
+$registrationSecret = [string]$env:MOBILE_REGISTRATION_SECRET
+if (-not [string]::IsNullOrWhiteSpace($registrationSecret)) {
+  $targetConfigPath = Join-Path $targetProject "config.js"
+  if (Test-Path $targetConfigPath) {
+    $targetConfigText = Get-Content -Raw -Encoding UTF8 -LiteralPath $targetConfigPath
+    $targetConfigText = [regex]::Replace(
+      $targetConfigText,
+      '(registrationSecret\s*:\s*)".*?"',
+      '${1}"' + $registrationSecret + '"',
+      1
+    )
+    Write-Utf8NoBom -Path $targetConfigPath -Value $targetConfigText
+    Write-Host "Registration secret injected into staged AutoJS config."
+  }
+}
+
 $buildId = "AGRI-" + (Get-Date -Format "yyyyMMddHHmmss")
 $inrtConfig = [ordered]@{
   name = $appName
@@ -389,7 +494,7 @@ $inrtConfig = [ordered]@{
     splashVisible = $false
     launcherVisible = $true
     runOnBoot = $false
-    slug = "Agri Video Collector"
+    slug = $appName
   }
   permissions = @(
     "android.permission.WAKE_LOCK",

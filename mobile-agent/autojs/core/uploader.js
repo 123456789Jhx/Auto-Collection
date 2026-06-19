@@ -4,13 +4,63 @@ function createUploader(config, logger, storage) {
     return baseUrl.replace(/\/$/, "") + path;
   }
 
-  function requestHeaders() {
+  function bytesToHex(bytes) {
+    var hex = "";
+    for (var i = 0; i < bytes.length; i++) {
+      var value = bytes[i];
+      if (value < 0) {
+        value += 256;
+      }
+      var part = value.toString(16);
+      hex += part.length === 1 ? "0" + part : part;
+    }
+    return hex;
+  }
+
+  function sha256Hex(value) {
+    var digest = java.security.MessageDigest.getInstance("SHA-256");
+    digest.update(new java.lang.String(value || "").getBytes("UTF-8"));
+    return bytesToHex(digest.digest());
+  }
+
+  function hmacSha256Hex(secret, value) {
+    var mac = javax.crypto.Mac.getInstance("HmacSHA256");
+    var key = new javax.crypto.spec.SecretKeySpec(new java.lang.String(secret || "").getBytes("UTF-8"), "HmacSHA256");
+    mac.init(key);
+    return bytesToHex(mac.doFinal(new java.lang.String(value || "").getBytes("UTF-8")));
+  }
+
+  function canonicalRequest(url, method, timestamp, bodyHash) {
+    var uri = android.net.Uri.parse(url);
+    var query = uri.getEncodedQuery() || "";
+    return [
+      String(method || "GET").toUpperCase(),
+      uri.getEncodedPath() || "/",
+      query,
+      timestamp,
+      bodyHash
+    ].join("\n");
+  }
+
+  function requestHeaders(url, method, bodyText, options) {
+    options = options || {};
     ensureDeviceIdentity();
+    var token = config.device.deviceToken || "";
+    var timestamp = new Date().toISOString();
+    var bodyHash = sha256Hex(bodyText || "");
     var headers = {
-      "X-Device-Id": config.device.deviceId || ""
+      "X-Device-Id": config.device.deviceId || "",
+      "X-Timestamp": timestamp,
+      "X-Body-SHA256": bodyHash
     };
-    if (config.device.deviceToken) {
-      headers["X-Device-Token"] = config.device.deviceToken;
+    if (token) {
+      if (options.includeDeviceToken) {
+        headers["X-Device-Token"] = token;
+      }
+      headers["X-Signature"] = hmacSha256Hex(token, canonicalRequest(url, method, timestamp, bodyHash));
+    }
+    if (config.upload.registrationSecret) {
+      headers["X-Registration-Secret"] = config.upload.registrationSecret;
     }
     return headers;
   }
@@ -102,6 +152,7 @@ function createUploader(config, logger, storage) {
         deviceId: deviceId,
         platform: config.task.platform,
         appVersion: config.app.version,
+        registrationSecret: config.upload.registrationSecret || "",
         deviceToken: token,
         deviceInfo: {
           brand: device.brand,
@@ -151,16 +202,17 @@ function createUploader(config, logger, storage) {
   }
 
   function postJson(url, payload) {
+    var bodyText = JSON.stringify(payload || {});
     return http.postJson(url, payload, {
       timeout: config.upload.timeoutMs,
-      headers: requestHeaders()
+        headers: requestHeaders(url, "POST", bodyText, { includeDeviceToken: url.indexOf("/mobile/device-token/register") >= 0 })
     });
   }
 
   function getJson(url) {
     return http.get(url, {
       timeout: config.upload.timeoutMs,
-      headers: requestHeaders()
+        headers: requestHeaders(url, "GET", "")
     });
   }
 
@@ -272,13 +324,20 @@ function createUploader(config, logger, storage) {
     }
 
     try {
+      var normalizedLevel = String(level || "INFO").toUpperCase();
+      if (normalizedLevel !== "INFO" && normalizedLevel !== "WARN" && normalizedLevel !== "ERROR") {
+        normalizedLevel = "INFO";
+      }
+      var normalizedMessage = String(message || "runtime log");
+      var normalizedContext = context && typeof context === "object" ? context : {};
+      var stopReason = normalizedContext.stopReason ? String(normalizedContext.stopReason) : undefined;
       var payload = {
         taskId: config.task.taskId,
-        deviceId: config.device.deviceId,
-        level: level,
-        message: message,
-        context: context || {},
-        stopReason: context && context.stopReason ? context.stopReason : undefined,
+        deviceId: config.device.deviceId || ensureDeviceIdentity(),
+        level: normalizedLevel,
+        message: normalizedMessage,
+        context: normalizedContext,
+        stopReason: stopReason,
         reportedAt: new Date().toISOString()
       };
       var response = postJson(endpoint("/mobile/runtime-logs"), payload);
@@ -289,6 +348,58 @@ function createUploader(config, logger, storage) {
       };
     } catch (error) {
       logger.warn("运行日志上传失败", { level: level, message: message, error: String(error) });
+      return {
+        enabled: true,
+        success: false,
+        message: String(error)
+      };
+    }
+  }
+
+  function uploadLiveCommentAction(action) {
+    if (!config.upload.enabled) {
+      return { enabled: false, success: false, message: "upload disabled" };
+    }
+
+    try {
+      action = action || {};
+      var payload = {
+        taskId: action.taskId || config.task.taskId,
+        deviceId: action.deviceId || config.device.deviceId,
+        platform: action.platform || config.task.platform || "douyin",
+        triggerEventId: action.triggerEventId,
+        roomName: action.roomName || "",
+        leaderAccountName: action.leaderAccountName || action.triggerAuthor || "",
+        triggerText: action.triggerText || "",
+        matchedKeywords: action.matchedKeywords || [],
+        replyText: action.replyText || "(skipped)",
+        plannedDelayMs: action.plannedDelayMs,
+        status: action.status || "planned",
+        skipReason: action.skipReason || "",
+        failureReason: action.failureReason || "",
+        rawPayload: action,
+        plannedAt: action.plannedAt,
+        sentAt: action.sentAt,
+        reportedAt: new Date().toISOString()
+      };
+      var response = postJson(endpoint("/mobile/live-comment-actions"), payload);
+      var responseBody = response.body ? response.body.string() : "";
+      var success = response.statusCode >= 200 && response.statusCode < 300;
+      if (!success) {
+        logger.warn("直播评论执行记录上传失败", {
+          statusCode: response.statusCode,
+          body: responseBody,
+          triggerEventId: payload.triggerEventId
+        });
+      }
+      return {
+        enabled: true,
+        success: success,
+        statusCode: response.statusCode,
+        body: responseBody
+      };
+    } catch (error) {
+      logger.warn("直播评论执行记录上传异常", { message: String(error) });
       return {
         enabled: true,
         success: false,
@@ -481,27 +592,38 @@ function createUploader(config, logger, storage) {
     };
   }
 
+  var retryCachedRunning = false;
+
   function retryCached() {
     if (!config.upload.enabled || !config.upload.retryCachedOnStart) {
       return;
     }
+    if (retryCachedRunning) {
+      logger.info("缓存候选记录补传已在运行，跳过本轮");
+      return;
+    }
+    retryCachedRunning = true;
 
-    var filesToUpload = storage.listCachedCandidates();
-    filesToUpload.forEach(function (filePath) {
-      try {
-        var candidate = storage.readJson(filePath);
-        var result = upload(candidate);
-        if (result.success) {
-          storage.markUploaded(filePath);
-          logger.info("缓存候选记录补传成功", { filePath: filePath });
+    try {
+      var filesToUpload = storage.listCachedCandidates();
+      filesToUpload.forEach(function (filePath) {
+        try {
+          var candidate = storage.readJson(filePath);
+          var result = upload(candidate);
+          if (result.success) {
+            storage.markUploaded(filePath);
+            logger.info("缓存候选记录补传成功", { filePath: filePath });
+          }
+        } catch (error) {
+          logger.warn("缓存候选记录补传失败", {
+            filePath: filePath,
+            message: String(error)
+          });
         }
-      } catch (error) {
-        logger.warn("缓存候选记录补传失败", {
-          filePath: filePath,
-          message: String(error)
-        });
-      }
-    });
+      });
+    } finally {
+      retryCachedRunning = false;
+    }
   }
 
   function pollCommands(deviceId) {
@@ -670,6 +792,7 @@ function createUploader(config, logger, storage) {
     upload: upload,
     uploadHeartbeat: uploadHeartbeat,
     uploadRuntimeLog: uploadRuntimeLog,
+    uploadLiveCommentAction: uploadLiveCommentAction,
     uploadLogFile: uploadLogFile,
     uploadRecentLogFiles: uploadRecentLogFiles,
     uploadLogFilesByOptions: uploadLogFilesByOptions,

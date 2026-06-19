@@ -240,18 +240,23 @@ function createControlLoop(context) {
 
   function handleControlCommand(command) {
     var commandType = command.commandType;
+    var payload = command.payload || command.payloadJson || {};
     logger.info("收到后台控制指令", {
       commandId: command.id,
       commandType: commandType,
-      payload: command.payload || {}
+      payload: payload
     });
     reportRuntimeLog("INFO", "收到后台控制指令", {
       commandId: command.id,
       commandType: commandType,
-      payload: command.payload || {}
+      payload: payload
     });
 
     try {
+      if (payload.taskType === "live_comment_control") {
+        handleLiveCommentControlCommand(command, payload);
+        return;
+      }
       if (commandType === "START" || commandType === "RESUME") {
         floatyControl.update({
           running: true,
@@ -383,6 +388,82 @@ function createControlLoop(context) {
     }
   }
 
+  function handleLiveCommentControlCommand(command, payload) {
+    var commandType = command.commandType;
+    if (commandType === "REFRESH_CONFIG") {
+      var configResult = refreshRuntimeConfig();
+      uploader.ackCommand(command.id, "DONE", {
+        applied: !!configResult.applied,
+        commandType: commandType,
+        taskType: payload.taskType,
+        message: configResult.message,
+        config: configResult.config || null
+      });
+      return;
+    }
+    if (commandType === "START" || commandType === "RESUME") {
+      context.liveCommentPriorityRequested = true;
+      floatyControl.update({
+        running: true,
+        paused: false,
+        stopRequested: false,
+        manualOverride: false,
+        liveCommentControlStatus: "running",
+        liveCommentExecutionEnabled: true,
+        lastManualAction: "backend_live_comment_" + commandType,
+        lastMessage: "直播评论已启动"
+      });
+      logCommandApplied(command, "INFO", {
+        taskType: payload.taskType,
+        running: true,
+        paused: false,
+        liveCommentControlStatus: "running",
+        liveCommentExecutionEnabled: true
+      });
+      heartbeatService.reportImmediateHeartbeat(counters.currentPhase, currentAgentStatus(), "直播评论已启动");
+      uploader.ackCommand(command.id, "DONE", { applied: true, commandType: commandType, taskType: payload.taskType });
+      return;
+    }
+    if (commandType === "PAUSE") {
+      floatyControl.update({
+        liveCommentControlStatus: "paused",
+        liveCommentExecutionEnabled: false,
+        lastManualAction: "backend_live_comment_pause",
+        lastMessage: "直播评论已暂停"
+      });
+      logCommandApplied(command, "INFO", {
+        taskType: payload.taskType,
+        liveCommentControlStatus: "paused",
+        liveCommentExecutionEnabled: false
+      });
+      heartbeatService.reportImmediateHeartbeat(counters.currentPhase, currentAgentStatus(), "直播评论已暂停");
+      uploader.ackCommand(command.id, "DONE", { applied: true, commandType: commandType, taskType: payload.taskType });
+      return;
+    }
+    if (commandType === "STOP") {
+      floatyControl.update({
+        liveCommentControlStatus: "stopped",
+        liveCommentExecutionEnabled: false,
+        lastManualAction: "backend_live_comment_stop",
+        lastMessage: "直播评论已停止"
+      });
+      logCommandApplied(command, "INFO", {
+        taskType: payload.taskType,
+        liveCommentControlStatus: "stopped",
+        liveCommentExecutionEnabled: false
+      });
+      heartbeatService.reportImmediateHeartbeat(counters.currentPhase, currentAgentStatus(), "直播评论已停止");
+      uploader.ackCommand(command.id, "DONE", { applied: true, commandType: commandType, taskType: payload.taskType });
+      return;
+    }
+    uploader.ackCommand(command.id, "IGNORED", {
+      applied: false,
+      commandType: commandType,
+      taskType: payload.taskType,
+      reason: "unsupported_live_comment_command"
+    });
+  }
+
   function logCommandApplied(command, level, state) {
     var payload = {
       commandId: command.id,
@@ -426,6 +507,50 @@ function createControlLoop(context) {
     config.schedule.autoStart = remoteConfig.autoStart === true;
     config.task.collectComments = remoteConfig.collectComments !== false;
     config.task.commentLimit = Math.max(0, Number(remoteConfig.commentLimit || config.task.commentLimit || 10));
+    if (!config.task.liveComment) {
+      config.task.liveComment = {};
+    }
+    var liveCommentRole = remoteConfig.liveCommentRole === "followed" || remoteConfig.liveCommentRole === "follower" ? remoteConfig.liveCommentRole : "none";
+    var liveCommentGroup = remoteConfig.liveCommentGroup === "A" || remoteConfig.liveCommentGroup === "B" || remoteConfig.liveCommentGroup === "C" ? remoteConfig.liveCommentGroup : "";
+    var liveCommentMode = remoteConfig.liveCommentMode === "off" || remoteConfig.liveCommentMode === "target_follow" || remoteConfig.liveCommentMode === "agri_chatbot" ? remoteConfig.liveCommentMode : "agri_chatbot";
+    config.task.liveCommentRole = liveCommentRole;
+    config.task.liveCommentGroup = liveCommentGroup;
+    config.task.liveCommentMode = liveCommentMode;
+    config.task.accountProfile = sanitizeObjectConfig(remoteConfig.accountProfile, config.task.accountProfile || {});
+    config.task.liveCommentBotConfig = sanitizeObjectConfig(remoteConfig.liveCommentBotConfig, config.task.liveCommentBotConfig || {});
+    config.task.followedAccounts = sanitizeFollowedAccounts(remoteConfig.followedAccounts || []);
+    if (remoteConfig.liveCommentConfig && typeof remoteConfig.liveCommentConfig === "object") {
+      var liveCommentConfig = sanitizeLiveCommentConfig(remoteConfig.liveCommentConfig);
+      var accountTargets = buildFollowedAccountTargets(config.task.followedAccounts);
+      if (accountTargets.names.length > 0 || accountTargets.ids.length > 0) {
+        liveCommentConfig.leaderAccountNames = accountTargets.names;
+        liveCommentConfig.leaderAccountIds = accountTargets.ids;
+      }
+      if (liveCommentGroup) {
+        liveCommentConfig.groupName = liveCommentGroup;
+      }
+      Object.keys(liveCommentConfig).forEach(function (key) {
+        config.task.liveComment[key] = liveCommentConfig[key];
+      });
+      if (context.liveTriggerDetector && context.liveTriggerDetector.updateOptions) {
+        context.liveTriggerDetector.updateOptions({
+          leaderAccountNames: config.task.liveComment.leaderAccountNames,
+          leaderAccountIds: config.task.liveComment.leaderAccountIds,
+          triggerKeywords: config.task.liveComment.triggerKeywords
+        });
+      }
+      if (context.liveCommentActionPlanner && context.liveCommentActionPlanner.updateOptions) {
+        context.liveCommentActionPlanner.updateOptions(config.task.liveComment);
+      }
+      if (context.liveCommentCache && context.liveCommentCache.updateOptions) {
+        context.liveCommentCache.updateOptions({
+          maxSize: config.task.liveComment.localCommentCacheSize
+        });
+      }
+    }
+    if (remoteConfig.p3ExtensionsConfig && typeof remoteConfig.p3ExtensionsConfig === "object") {
+      config.p3Extensions = sanitizeP3ExtensionsConfig(remoteConfig.p3ExtensionsConfig);
+    }
     config.runtime.heartbeatMinutes = heartbeatMinutes;
     config.runtime.idleHeartbeatSeconds = Math.max(30, Number(config.runtime.idleHeartbeatSeconds || 60));
 
@@ -438,7 +563,15 @@ function createControlLoop(context) {
       liveMinutesMax: liveMinutesMax,
       autoStart: config.schedule.autoStart,
       heartbeatMinutes: heartbeatMinutes,
-      commentLimit: config.task.commentLimit
+      commentLimit: config.task.commentLimit,
+      liveCommentRole: config.task.liveCommentRole,
+      liveCommentGroup: config.task.liveCommentGroup,
+      liveCommentMode: config.task.liveCommentMode,
+      accountProfileName: config.task.accountProfile && config.task.accountProfile.profileName || "",
+      botName: config.task.liveCommentBotConfig && config.task.liveCommentBotConfig.botName || "",
+      followedAccountCount: config.task.followedAccounts.length,
+      liveCommentConfigApplied: !!remoteConfig.liveCommentConfig,
+      p3ExtensionsConfigApplied: !!remoteConfig.p3ExtensionsConfig
     };
 
     logger.info("后台配置已应用到当前脚本", appliedConfig);
@@ -468,6 +601,151 @@ function createControlLoop(context) {
     syncBackendOnce: syncBackendOnce,
     syncBackendAsync: syncBackendAsync
   };
+
+  function normalizeStringList(value, maxItems, maxLength) {
+    if (!value || !value.length) {
+      return [];
+    }
+    var result = [];
+    for (var i = 0; i < value.length && result.length < maxItems; i++) {
+      var item = String(value[i] || "").replace(/\s+/g, " ").trim();
+      if (item && item.length <= maxLength) {
+        result.push(item);
+      }
+    }
+    return result;
+  }
+
+  function sanitizeFollowedAccounts(value) {
+    if (!value || !value.length) {
+      return [];
+    }
+    var result = [];
+    for (var i = 0; i < value.length && result.length < 20; i++) {
+      var item = value[i] || {};
+      var accountName = normalizeStringList([item.accountName || ""], 1, 100)[0] || "";
+      var accountId = normalizeStringList([item.accountId || ""], 1, 100)[0] || "";
+      var aliasNames = normalizeStringList(item.aliasNames || [], 20, 100);
+      if (accountName || accountId || aliasNames.length > 0) {
+        result.push({
+          accountName: accountName,
+          accountId: accountId,
+          aliasNames: aliasNames
+        });
+      }
+    }
+    return result;
+  }
+
+  function sanitizeObjectConfig(value, fallback) {
+    if (!value || typeof value !== "object" || value.length) {
+      return fallback || {};
+    }
+    return value;
+  }
+
+  function buildFollowedAccountTargets(accounts) {
+    var names = [];
+    var ids = [];
+    for (var i = 0; i < accounts.length; i++) {
+      var account = accounts[i] || {};
+      if (account.accountName) {
+        names.push(account.accountName);
+      }
+      var aliasNames = account.aliasNames || [];
+      for (var j = 0; j < aliasNames.length; j++) {
+        names.push(aliasNames[j]);
+      }
+      if (account.accountId) {
+        ids.push(account.accountId);
+      }
+    }
+    return {
+      names: normalizeStringList(names, 40, 100),
+      ids: normalizeStringList(ids, 40, 100)
+    };
+  }
+
+  function clampNumber(value, fallback, minValue, maxValue) {
+    var number = Number(value);
+    if (!isFinite(number)) {
+      number = fallback;
+    }
+    number = Math.max(minValue, Math.min(maxValue, number));
+    return Math.floor(number);
+  }
+
+  function sanitizeReplyPools(value) {
+    var source = value || {};
+    return {
+      A: normalizeStringList(source.A || [], 30, 80),
+      B: normalizeStringList(source.B || [], 30, 80),
+      C: normalizeStringList(source.C || [], 30, 80)
+    };
+  }
+
+  function sanitizeLiveCommentConfig(value) {
+    value = value || {};
+    var result = {};
+    if (typeof value.enabled === "boolean") {
+      result.enabled = value.enabled;
+    }
+    result.executeEnabled = value.executeEnabled === true;
+    result.manualExecutionApproved = value.manualExecutionApproved === true;
+    if (value.groupName === "A" || value.groupName === "B" || value.groupName === "C") {
+      result.groupName = value.groupName;
+    }
+    if (value.leaderAccountNames) {
+      result.leaderAccountNames = normalizeStringList(value.leaderAccountNames, 20, 100);
+    }
+    if (value.leaderAccountIds) {
+      result.leaderAccountIds = normalizeStringList(value.leaderAccountIds, 20, 100);
+    }
+    if (value.triggerKeywords) {
+      result.triggerKeywords = normalizeStringList(value.triggerKeywords, 50, 30);
+    }
+    if (value.replyPools) {
+      result.replyPools = sanitizeReplyPools(value.replyPools);
+    }
+    result.sendDelayMinMs = clampNumber(value.sendDelayMinMs, config.task.liveComment.sendDelayMinMs || 500, 500, 60000);
+    result.sendDelayMaxMs = clampNumber(value.sendDelayMaxMs, config.task.liveComment.sendDelayMaxMs || 3000, result.sendDelayMinMs, 120000);
+    result.perDeviceCooldownSeconds = clampNumber(value.perDeviceCooldownSeconds, config.task.liveComment.perDeviceCooldownSeconds || 10, 10, 3600);
+    result.localCommentCacheSize = clampNumber(value.localCommentCacheSize, config.task.liveComment.localCommentCacheSize || 200, 20, 2000);
+    result.maxConsecutiveSendFailures = clampNumber(value.maxConsecutiveSendFailures, config.task.liveComment.maxConsecutiveSendFailures || 3, 1, 10);
+    result.perTaskMaxComments = clampNumber(value.perTaskMaxComments, config.task.liveComment.perTaskMaxComments || 60, 1, 500);
+    if (value.lowConfidenceAction === "skip" || value.lowConfidenceAction === "log_only") {
+      result.lowConfidenceAction = value.lowConfidenceAction;
+    }
+    return result;
+  }
+
+  function sanitizeP3ExtensionsConfig(value) {
+    value = value || {};
+    var current = config.p3Extensions || {};
+    var result = {
+      liveLike: {
+        enabled: false,
+        manualExecutionApproved: false,
+        maxLikesPerLiveRoom: clampNumber(value.liveLike && value.liveLike.maxLikesPerLiveRoom, current.liveLike && current.liveLike.maxLikesPerLiveRoom || 0, 0, 3),
+        minIntervalSeconds: clampNumber(value.liveLike && value.liveLike.minIntervalSeconds, current.liveLike && current.liveLike.minIntervalSeconds || 60, 30, 3600),
+        requireManualApproval: true
+      },
+      authorizedFollow: {
+        enabled: false,
+        manualExecutionApproved: false,
+        requireEmployeeAuthorization: true,
+        targetAccountId: value.authorizedFollow && value.authorizedFollow.targetAccountId ? normalizeStringList([value.authorizedFollow.targetAccountId], 1, 100)[0] || "" : "",
+        targetAccountName: value.authorizedFollow && value.authorizedFollow.targetAccountName ? normalizeStringList([value.authorizedFollow.targetAccountName], 1, 100)[0] || "" : "",
+        independentTaskOnly: true
+      },
+      linkage: {
+        allowM1Input: false,
+        allowM2Input: false,
+        allowM3OutputToMaterialPool: false
+      }
+    };
+    return result;
+  }
 }
 
 module.exports = {

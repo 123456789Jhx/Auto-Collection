@@ -24,6 +24,84 @@ function createCollectorApp(context) {
     return keywords[Math.floor(Math.random() * keywords.length)];
   }
 
+  function pickLiveCommentSearchKeyword() {
+    var botConfig = config.task.liveCommentBotConfig || {};
+    var targetRoom = botConfig.targetRoom || {};
+    var titleKeywords = targetRoom.titleKeywords || [];
+    var roomKeywords = targetRoom.roomKeywords || [];
+    if (targetRoom.anchorName) {
+      return String(targetRoom.anchorName);
+    }
+    if (titleKeywords.length > 0) {
+      return String(titleKeywords[0]);
+    }
+    if (roomKeywords.length > 0) {
+      return String(roomKeywords[0]);
+    }
+    return pickRandomKeyword();
+  }
+
+  function getLiveCommentTargetRoom() {
+    var botConfig = config.task.liveCommentBotConfig || {};
+    return botConfig.targetRoom || {};
+  }
+
+  function shouldEnterTargetLiveRoom() {
+    var targetRoom = getLiveCommentTargetRoom();
+    return targetRoom.enabled === true && !!(
+      targetRoom.anchorName ||
+      (targetRoom.titleKeywords && targetRoom.titleKeywords.length) ||
+      (targetRoom.roomKeywords && targetRoom.roomKeywords.length)
+    );
+  }
+
+  function isLiveCommentPriorityRequested() {
+    return !!context.liveCommentPriorityRequested ||
+      !!(floatyControl && floatyControl.state && floatyControl.state.liveCommentControlStatus === "running");
+  }
+
+  function tryEnterTargetLiveRoomFromSearch(reason) {
+    if (!shouldEnterTargetLiveRoom() || !douyin.openTargetLiveRoomFromSearch) {
+      return false;
+    }
+    var liveKeyword = pickLiveCommentSearchKeyword();
+    var targetRoom = getLiveCommentTargetRoom();
+    if (douyin.openTargetLiveRoomFromSearch({ keyword: liveKeyword, targetRoom: targetRoom })) {
+      counters.lastSearchKeyword = liveKeyword;
+      context.targetLiveRoomEntry = {
+        enteredAt: Date.now(),
+        keyword: liveKeyword,
+        anchorName: targetRoom.anchorName || "",
+        titleKeywords: targetRoom.titleKeywords || [],
+        roomKeywords: targetRoom.roomKeywords || []
+      };
+      logger.info("live comment: entered target live room from search", {
+        reason: reason || "",
+        keyword: liveKeyword,
+        anchorName: targetRoom.anchorName || ""
+      });
+      controlLoop.reportRuntimeLog("INFO", "live comment: entered target live room from search", {
+        phase: "live_comment_target_search",
+        reason: reason || "",
+        keyword: liveKeyword,
+        anchorName: targetRoom.anchorName || ""
+      });
+      return true;
+    }
+    logger.warn("live comment: target live room search failed", {
+      reason: reason || "",
+      keyword: liveKeyword,
+      anchorName: targetRoom.anchorName || ""
+    });
+    controlLoop.reportRuntimeLog("WARN", "live comment: target live room search failed", {
+      phase: "live_comment_target_search",
+      reason: reason || "",
+      keyword: liveKeyword,
+      anchorName: targetRoom.anchorName || ""
+    });
+    return false;
+  }
+
   function runBackground(name, fn) {
     try {
       if (typeof threads === "undefined" || !threads.start) {
@@ -84,13 +162,29 @@ function createCollectorApp(context) {
           forceUpdate: result.forceUpdate
         });
         floatyControl.update({ lastMessage: "发现新版本 " + latestVersion });
-        uploader.uploadAgentUpdateEvent({
-          eventType: "CHECKED",
-          fromVersion: config.app.version,
-          toVersion: latestVersion,
-          message: "发现新版本，等待更新实现或人工处理",
-          payload: result
-        });
+        try {
+          var updateResult = uploader.applyAgentUpdate(result, { scriptDir: config.runtime && config.runtime.scriptDir });
+          if (updateResult && updateResult.applied) {
+            floatyControl.update({
+              running: false,
+              paused: true,
+              stopRequested: false,
+              lastMessage: "更新完成，正在重启"
+            });
+            logger.info("agent update applied, exiting current engine", updateResult);
+            sleep(1000);
+            exit();
+          }
+        } catch (updateError) {
+          logger.warn("agent update failed", { message: String(updateError), latestVersion: latestVersion });
+          uploader.uploadAgentUpdateEvent({
+            eventType: "FAILED",
+            fromVersion: config.app.version,
+            toVersion: latestVersion,
+            message: String(updateError),
+            payload: result
+          });
+        }
       }
     });
   }
@@ -274,6 +368,33 @@ function createCollectorApp(context) {
     }
     logger.info("启动流程：抖音已打开", { elapsedMs: Date.now() - flowStartedAt });
 
+    if (isLiveCommentPriorityRequested()) {
+      logger.info("live comment control requested: force target room search flow");
+      if (tryEnterTargetLiveRoomFromSearch(config.task.liveCommentDirectTest === true ? "direct_test" : "control_start")) {
+        return true;
+      }
+      return false;
+    }
+
+    if (config.task.liveCommentDirectTest === true) {
+      if (tryEnterTargetLiveRoomFromSearch("direct_test")) {
+        return true;
+      }
+    }
+
+    if (config.task.liveCommentDirectTest === true) {
+      var liveKeyword = pickLiveCommentSearchKeyword();
+      if (liveKeyword && douyin.openLiveSearch && douyin.openLiveSearch(liveKeyword)) {
+        counters.lastSearchKeyword = liveKeyword;
+        logger.info("live comment direct test: opened live search", { keyword: liveKeyword });
+        controlLoop.reportRuntimeLog("INFO", "live comment direct test: opened live search", {
+          phase: "live_comment_search",
+          keyword: liveKeyword
+        });
+        return true;
+      }
+    }
+
     if (config.task.mode === "search") {
       if (!enterSearchFlow(flowStartedAt)) {
         return false;
@@ -317,7 +438,23 @@ function createCollectorApp(context) {
       heartbeatService.reportImmediateHeartbeat("", "running", "启动任务");
     });
     controlLoop.refreshRuntimeConfig();
-    if (!enterFlow()) {
+    if (config.task.liveCommentDirectTest === true) {
+      floatyControl.update({
+        liveCommentControlStatus: "running",
+        liveCommentExecutionEnabled: true
+      });
+    }
+    var liveCommentPriority = !!context.liveCommentPriorityRequested ||
+      floatyControl.state.liveCommentControlStatus === "running";
+    var alreadyInLiveRoom = false;
+    try {
+      alreadyInLiveRoom = config.task.liveCommentDirectTest === true &&
+        douyin.isForeground && douyin.isForeground() &&
+        douyin.isLiveRoomVisible && douyin.isLiveRoomVisible();
+    } catch (error) {
+      alreadyInLiveRoom = false;
+    }
+    if (!alreadyInLiveRoom && !enterFlow()) {
       logger.warn("启动流程被停止请求打断", {
         stopRequested: floatyControl.state.stopRequested,
         exitRequested: floatyControl.state.exitRequested
@@ -329,12 +466,22 @@ function createCollectorApp(context) {
     if (config.schedule.enabled) {
       var todayVideoMinutes = randomMinutes(config.schedule.videoMinutesMin, config.schedule.videoMinutesMax);
       var todayLiveMinutes = randomMinutes(config.schedule.liveMinutesMin, config.schedule.liveMinutesMax);
-      counters.plannedVideoMinutes = counters.plannedVideoMinutes || todayVideoMinutes;
+      counters.plannedVideoMinutes = liveCommentPriority ? 0 : (counters.plannedVideoMinutes || todayVideoMinutes);
       counters.plannedLiveMinutes = counters.plannedLiveMinutes || todayLiveMinutes;
       counters.videoElapsedMinutes = counters.videoElapsedMinutes || 0;
       counters.videoRemainingMinutes = Math.max(0, counters.plannedVideoMinutes - counters.videoElapsedMinutes);
       counters.liveElapsedMinutes = counters.liveElapsedMinutes || 0;
       counters.liveRemainingMinutes = Math.max(0, counters.plannedLiveMinutes - counters.liveElapsedMinutes);
+      if (liveCommentPriority) {
+        counters.videoRemainingMinutes = 0;
+        counters.liveRemainingMinutes = Math.max(1, counters.liveRemainingMinutes || counters.plannedLiveMinutes || todayLiveMinutes);
+        logger.info("live comment control requested, prioritize live phase", {
+          liveMinutes: counters.liveRemainingMinutes
+        });
+        controlLoop.reportRuntimeLog("INFO", "live comment control requested, prioritize live phase", {
+          liveMinutes: counters.liveRemainingMinutes
+        });
+      }
       logger.info("今日随机采集时长", {
         videoMinutes: counters.plannedVideoMinutes,
         liveMinutes: counters.plannedLiveMinutes

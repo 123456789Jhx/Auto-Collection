@@ -1,18 +1,18 @@
 module.exports = {
   app: {
-    name: "AgriVideoCollector",
-    version: "0.1.10"
+    name: "燎原星火",
+    version: "0.1.x"
   },
 
   device: {
-    deviceId: "android_001",
+    deviceId: "device_local_placeholder",
     deviceToken: ""
   },
 
   task: {
     taskId: "task_local_001",
     platform: "douyin",
-    mode: "search", // feed | search
+    mode: "search",
     keywords: [
       "水稻病虫害",
       "水稻病虫灾害",
@@ -41,7 +41,7 @@ module.exports = {
     matchedStaySecondsMax: 15,
     collectComments: true,
     commentLimit: 10,
-    captureMode: "matched", // matched 只保存农业命中；all 调试时保存所有视频
+    captureMode: "matched",
     saveScreenshots: false,
     liveMaxRoomsPerPhase: 5,
     liveCandidateMinScore: 55,
@@ -50,7 +50,81 @@ module.exports = {
     liveNormalStaySecondsMin: 480,
     liveNormalStaySecondsMax: 900,
     liveHighStaySecondsMin: 1200,
-    liveHighStaySecondsMax: 2100
+    liveHighStaySecondsMax: 2100,
+    liveReadonlyEnabled: true,
+    liveReadonlySampleCount: 8,
+    liveReadonlySampleIntervalMs: 1200,
+    liveReadonlyMaxComments: 30,
+    liveCommentDirectTest: true,
+    liveCommentRole: "none",
+    liveCommentGroup: "",
+    liveCommentMode: "agri_chatbot",
+    accountProfile: {
+      profileName: "三农交流账号",
+      region: { province: "", city: "", county: "" },
+      identity: { role: "种植户", years: 5, tone: "朴实、自然、接地气" },
+      products: [{ name: "水稻", scale: "几十亩", topics: ["病虫害", "水肥管理"] }],
+      interests: ["三农", "种植", "农产品"],
+      speakingStyle: { length: "short", emojiAllowed: false, questionRatio: 0.4 },
+      forbiddenClaims: ["夸大收益", "保证效果", "诱导私信", "售卖农资"],
+      status: "enabled"
+    },
+    liveCommentBotConfig: {
+      enabled: true,
+      botName: "三农聊天机器人",
+      commentTypes: ["question", "agree", "experience_share", "knowledge_tip"],
+      topicTags: ["水稻", "玉米", "蔬菜", "病虫害", "农机"],
+      maxCommentsPerRoom: 3,
+      maxCommentsPerHour: 10,
+      minIntervalSeconds: 30,
+      sendDelayMinMs: 800,
+      sendDelayMaxMs: 1800,
+      roomRelevanceThreshold: 1,
+      lowConfidenceAction: "skip"
+    },
+    followedAccounts: [],
+    liveComment: {
+      enabled: true,
+      executeEnabled: true,
+      manualExecutionApproved: true,
+      groupName: "A",
+      leaderAccountNames: ["运营号A"],
+      leaderAccountIds: [],
+      triggerKeywords: ["1", "2", "是", "否"],
+      replyPools: {
+        A: ["1", "是"],
+        B: ["2", "否"],
+        C: ["收到", "说得对"]
+      },
+      sendDelayMinMs: 500,
+      sendDelayMaxMs: 3000,
+      perDeviceCooldownSeconds: 10,
+      localCommentCacheSize: 200,
+      maxConsecutiveSendFailures: 3,
+      perTaskMaxComments: 60,
+      lowConfidenceAction: "log_only"
+    }
+  },
+
+  p3Extensions: {
+    liveLike: {
+      enabled: false,
+      maxLikesPerLiveRoom: 0,
+      minIntervalSeconds: 60,
+      requireManualApproval: true
+    },
+    authorizedFollow: {
+      enabled: false,
+      requireEmployeeAuthorization: true,
+      targetAccountId: "",
+      targetAccountName: "",
+      independentTaskOnly: true
+    },
+    linkage: {
+      allowM1Input: false,
+      allowM2Input: false,
+      allowM3OutputToMaterialPool: false
+    }
   },
 
   schedule: {
@@ -100,15 +174,14 @@ module.exports = {
       "兽药"
     ],
     marketingKeywords: ["招商", "加盟", "卖课", "收徒", "代理", "私信领取"],
-    lowPriorityKeywords: ["娱乐", "明星", "八卦", "游戏", "搞笑"]
-    ,
+    lowPriorityKeywords: ["娱乐", "明星", "八卦", "游戏", "搞笑"],
     liveKeywords: ["直播", "正在直播", "进入直播间", "直播中", "主播", "在线"]
   },
 
   output: {
     useProjectDir: true,
     folderName: "datasource",
-    fixedBaseDir: "/storage/emulated/0/AgriVideoCollector/datasource",
+    fixedBaseDir: "",
     baseDir: "",
     cacheDir: "",
     screenshotDir: "",
@@ -123,6 +196,7 @@ module.exports = {
     enabled: true,
     baseUrl: "http://106.54.41.106:18080/api/v1",
     url: "http://106.54.41.106:18080/api/v1/mobile/collection-records",
+    registrationSecret: "change_this_mobile_registration_secret",
     timeoutMs: 5000,
     retryCachedOnStart: true,
     controlEnabled: true,
@@ -137,8 +211,8 @@ module.exports = {
     logUploadRecentDays: 7,
     dailyLogUploadHour: 23,
     dailyLogUploadMinute: 55,
-    versionCheckEnabled: false,
-    versionCheckIntervalMinutes: 30,
+    versionCheckEnabled: true,
+    versionCheckIntervalMinutes: 2,
     versionChannel: "stable"
   },
 
