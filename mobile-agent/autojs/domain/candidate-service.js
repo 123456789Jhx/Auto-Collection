@@ -57,7 +57,7 @@ function createCandidateService(context) {
   var counters = context.counters;
   var controlLoop = context.controlLoop;
 
-  function buildCandidate(screenData, matchResult, screenshotFiles, hotComments) {
+  function buildCandidate(screenData, matchResult, screenshotFiles, hotComments, liveReadonly) {
     var keyInfo = extractKeyInfo(screenData, hotComments);
     return {
       taskId: config.task.taskId,
@@ -79,6 +79,7 @@ function createCandidateService(context) {
       authorName: keyInfo.authorName,
       metricsText: keyInfo.metricsText,
       hotComments: keyInfo.hotComments,
+      liveReadonly: liveReadonly || screenData.liveReadonly || null,
       visibleLines: keyInfo.visibleLines,
       screenshotFiles: screenshotFiles || [],
       capturedAt: isoNow(),
@@ -90,6 +91,9 @@ function createCandidateService(context) {
   function collectCandidate(screenData, matchResult, options) {
     if (options && options.fullScreenData) {
       screenData = options.fullScreenData;
+    }
+    if (options && options.liveRoomSample && !screenData.liveReadonly) {
+      screenData.liveReadonly = options.liveRoomSample;
     }
     if (options && options.fullMatchResult) {
       matchResult = options.fullMatchResult;
@@ -123,8 +127,8 @@ function createCandidateService(context) {
       }
     }
 
-    var candidate = buildCandidate(screenData, matchResult, [], hotComments);
-    storage.saveCandidate(candidate);
+    var candidate = buildCandidate(screenData, matchResult, [], hotComments, options && options.liveRoomSample);
+    var candidateFilePath = storage.saveCandidate(candidate);
     if (controlLoop && controlLoop.reportRuntimeLog) {
       controlLoop.reportRuntimeLog("INFO", "候选记录已写入本地缓存", {
         phase: "candidate",
@@ -136,6 +140,16 @@ function createCandidateService(context) {
       });
     }
     var uploadResult = uploader.upload(candidate);
+    if (uploadResult.success && candidateFilePath) {
+      try {
+        storage.markUploaded(candidateFilePath);
+      } catch (markError) {
+        logger.warn("候选记录上传成功但本地标记失败", {
+          filePath: candidateFilePath,
+          message: String(markError)
+        });
+      }
+    }
     if (controlLoop && controlLoop.reportRuntimeLog) {
       controlLoop.reportRuntimeLog(uploadResult.success ? "INFO" : "WARN", uploadResult.success ? "候选记录上传成功" : "候选记录上传失败", {
         phase: "candidate_upload",

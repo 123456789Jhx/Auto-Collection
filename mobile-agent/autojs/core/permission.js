@@ -1,8 +1,13 @@
 function createPermissionManager(config, logger) {
   var captureGranted = false;
+  var accessibility = require(files.join(config.runtime.scriptDir, "core/accessibility.js"));
+  if (accessibility.setContext) {
+    accessibility.setContext(context);
+  }
 
   function waitForAccessibility() {
-    if (auto.service) {
+    var accessibilityState = accessibility.detectAccessibility();
+    if (accessibilityState.enabled) {
       return true;
     }
 
@@ -14,7 +19,8 @@ function createPermissionManager(config, logger) {
 
     for (var i = 0; i < 60; i++) {
       sleep(1000);
-      if (auto.service) {
+      accessibilityState = accessibility.detectAccessibility();
+      if (accessibilityState.enabled) {
         logger.info("无障碍服务已开启");
         return true;
       }

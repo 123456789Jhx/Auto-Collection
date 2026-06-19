@@ -10,6 +10,7 @@ function createPhaseRunner(context) {
   var heartbeatService = context.heartbeatService;
   var candidateService = context.candidateService;
   var liveScorer = context.liveScorer;
+  var liveRoomSampler = context.liveRoomSampler;
   var riskDetector = context.riskDetector;
 
   function randomRangeSeconds(minValue, maxValue) {
@@ -67,6 +68,11 @@ function createPhaseRunner(context) {
     return false;
   }
 
+  function isLiveCommentPriorityRunning() {
+    return !!context.liveCommentPriorityRequested ||
+      !!(floatyControl && floatyControl.state && floatyControl.state.liveCommentControlStatus === "running");
+  }
+
   function sleepResponsive(totalMs, sceneType, phaseStartMs, phaseEndAt, stepMs) {
     var endAt = Date.now() + Math.max(0, totalMs || 0);
     var chunkMs = Math.max(100, stepMs || 300);
@@ -77,6 +83,35 @@ function createPhaseRunner(context) {
       }
       sleep(Math.min(chunkMs, endAt - Date.now()));
     }
+  }
+
+  function ensureDouyinForeground(sceneType, reason) {
+    if (!douyin.isForeground || douyin.isForeground()) {
+      return true;
+    }
+
+    counters.invalidContextCount += 1;
+    logger.warn("Skip scan because Douyin is not foreground", {
+      sceneType: sceneType || "",
+      reason: reason || "",
+      invalidContextCount: counters.invalidContextCount
+    });
+    controlLoop.reportRuntimeLog("WARN", "Skip scan because Douyin is not foreground", {
+      phase: "foreground_guard",
+      sceneType: sceneType || "",
+      reason: reason || "",
+      invalidContextCount: counters.invalidContextCount
+    });
+
+    if (sceneType === "live") {
+      douyin.restartToFeed();
+      if (config.task.liveCommentDirectTest !== true && !isLiveCommentPriorityRunning()) {
+        douyin.enterLiveFeed();
+      }
+    } else {
+      douyin.recover(sceneType || "video");
+    }
+    return false;
   }
 
   function handleVideo(sceneType, phaseEndAt) {
@@ -92,6 +127,9 @@ function createPhaseRunner(context) {
     if (shouldStop()) {
       return;
     }
+    if (!ensureDouyinForeground(sceneType || "video", "handle_video_start")) {
+      return;
+    }
     douyin.ensurePlayableFeed("handle_video_start");
 
     var staySeconds = randomQuickCheckSeconds();
@@ -104,6 +142,9 @@ function createPhaseRunner(context) {
     if (shouldStop()) {
       return;
     }
+    if (!ensureDouyinForeground(sceneType || "video", "before_video_ocr")) {
+      return;
+    }
 
     var fastStart = Date.now();
     var screenData = douyin.extractFastText();
@@ -111,12 +152,19 @@ function createPhaseRunner(context) {
     var text = screenData.combinedText || "";
     logger.info("快速文本识别完成", {
       elapsedMs: Date.now() - fastStart,
+      detectedScene: screenData.scene || "",
+      sceneReasons: screenData.sceneReasons || [],
+      currentPackageName: screenData.currentPackageName || "",
+      currentActivityName: screenData.currentActivityName || "",
       textLength: text.length,
       textSample: text.slice(0, 120)
     });
     controlLoop.reportRuntimeLog("INFO", "快速文本识别完成", {
       phase: "fast_ocr",
       sceneType: screenData.sceneType,
+      detectedScene: screenData.scene || "",
+      sceneReasons: screenData.sceneReasons || [],
+      currentPackageName: screenData.currentPackageName || "",
       elapsedMs: Date.now() - fastStart,
       textLength: text.length,
       viewedCount: counters.viewedCount,
@@ -220,6 +268,9 @@ function createPhaseRunner(context) {
     if (shouldStop()) {
       return;
     }
+    if (!ensureDouyinForeground(screenData.sceneType || "video", "before_full_video_ocr")) {
+      return;
+    }
     floatyControl.compact("OCR采集中");
     var fullScreenData = douyin.extractScreen();
     floatyControl.expand("OCR完成");
@@ -248,6 +299,9 @@ function createPhaseRunner(context) {
     if (shouldStop()) {
       return;
     }
+    if (!ensureDouyinForeground("live", "handle_live_start")) {
+      return;
+    }
 
     if (counters.liveRoomEnteredCount >= config.task.liveMaxRoomsPerPhase) {
       if (!livePhaseState.maxRoomsLogged) {
@@ -274,6 +328,10 @@ function createPhaseRunner(context) {
       liveViewedCount: counters.liveViewedCount,
       liveRoomEnteredCount: counters.liveRoomEnteredCount,
       score: liveScore.score,
+      detectedScene: screenData.scene || "",
+      sceneReasons: screenData.sceneReasons || [],
+      currentPackageName: screenData.currentPackageName || "",
+      currentActivityName: screenData.currentActivityName || "",
       quality: liveScore.quality,
       shouldEnter: liveScore.shouldEnter,
       agricultureHits: liveScore.agricultureHits,
@@ -284,6 +342,9 @@ function createPhaseRunner(context) {
     controlLoop.reportRuntimeLog("INFO", "直播候选扫描完成", {
       phase: "live_scan",
       sceneType: "live",
+      detectedScene: screenData.scene || "",
+      sceneReasons: screenData.sceneReasons || [],
+      currentPackageName: screenData.currentPackageName || "",
       score: liveScore.score,
       quality: liveScore.quality,
       shouldEnter: liveScore.shouldEnter,
@@ -303,6 +364,39 @@ function createPhaseRunner(context) {
 
     if (riskDetector.containsRisk(config, text)) {
       stopForRisk("直播阶段检测到验证码、登录或风控提示，停止任务", "live", text);
+      return;
+    }
+
+    var liveCommentConfig = config.task.liveComment || {};
+    var liveCommentExecutionEnabled = !!(context.floatyControl && context.floatyControl.state && context.floatyControl.state.liveCommentExecutionEnabled);
+    if (liveCommentConfig.enabled !== false && liveCommentConfig.executeEnabled && liveCommentConfig.manualExecutionApproved === true && !liveCommentExecutionEnabled) {
+      logger.info("直播评论计划已生成但等待手机本地人工确认", {
+        liveCommentEnabled: liveCommentConfig.enabled !== false,
+        executeEnabled: !!liveCommentConfig.executeEnabled,
+        manualExecutionApproved: liveCommentConfig.manualExecutionApproved === true,
+        floatyApproved: liveCommentExecutionEnabled
+      });
+      controlLoop.reportRuntimeLog("INFO", "直播评论计划等待本地人工确认", {
+        phase: "live_comment_gate",
+        liveCommentEnabled: liveCommentConfig.enabled !== false,
+        executeEnabled: !!liveCommentConfig.executeEnabled,
+        manualExecutionApproved: liveCommentConfig.manualExecutionApproved === true,
+        floatyApproved: liveCommentExecutionEnabled
+      });
+    }
+
+    if ((config.task.liveCommentDirectTest === true || isLiveCommentPriorityRunning()) && douyin.isLiveRoomVisible && douyin.isLiveRoomVisible()) {
+      enterAndCollectLiveRoom(screenData, text, matchResult, liveScore, phaseEndAt, phaseStartMs);
+      return;
+    }
+
+    if (config.task.liveCommentDirectTest === true) {
+      logger.info("指定直播间测试：从当前搜索综合页直接尝试进入直播间", {
+        score: liveScore.score,
+        reasons: liveScore.reasons,
+        textSample: text.slice(0, 160)
+      });
+      enterAndCollectLiveRoom(screenData, text, matchResult, liveScore, phaseEndAt, phaseStartMs);
       return;
     }
 
@@ -364,7 +458,7 @@ function createPhaseRunner(context) {
       reasons: liveScore.reasons
     });
 
-    if (!douyin.openLiveRoomFromCurrentScreen()) {
+    if (!douyin.isLiveRoomVisible() && !douyin.openLiveRoomFromCurrentScreen(text)) {
       logger.warn("直播入口点击失败，跳过候选", {
         score: liveScore.score,
         textSample: text.slice(0, 160)
@@ -417,22 +511,54 @@ function createPhaseRunner(context) {
       lastMessage: "直播间停留 " + Math.round(staySeconds / 60) + " 分钟"
     });
 
-    sleepWithHeartbeat(staySeconds, "live", phaseStartMs, phaseEndAt);
+    var sampledStaySeconds = 0;
+    var liveRoomSample = null;
+    if (liveRoomSampler && liveRoomSampler.sampleCurrentRoom) {
+      liveRoomSample = liveRoomSampler.sampleCurrentRoom({
+        shouldStop: shouldStop
+      });
+      sampledStaySeconds = Math.ceil(((liveRoomSample && liveRoomSample.sampleCount) || 0) * Number(config.task.liveReadonlySampleIntervalMs || 1200) / 1000);
+      logger.info("直播间只读采样完成", {
+        sampleCount: liveRoomSample ? liveRoomSample.sampleCount : 0,
+        commentCount: liveRoomSample ? liveRoomSample.commentCount : 0,
+        lastState: liveRoomSample ? liveRoomSample.lastState : ""
+      });
+      controlLoop.reportRuntimeLog("INFO", "直播间只读采样完成", {
+        phase: "live_readonly",
+        sampleCount: liveRoomSample ? liveRoomSample.sampleCount : 0,
+        commentCount: liveRoomSample ? liveRoomSample.commentCount : 0,
+        lastState: liveRoomSample ? liveRoomSample.lastState : ""
+      });
+      if (liveRoomSample && liveRoomSample.stopReason === "consecutive_comment_failures") {
+        counters.lastStopReason = "consecutive_comment_failures";
+        floatyControl.update({
+          stopRequested: true,
+          lastMessage: "直播评论连续失败，已停止"
+        });
+      }
+    }
+
+    sleepWithHeartbeat(Math.max(0, staySeconds - sampledStaySeconds), "live", phaseStartMs, phaseEndAt);
     if (shouldStop()) {
       if (!floatyControl.state.exitRequested) {
         douyin.exitLiveRoom();
       }
       return;
     }
+    if (!ensureDouyinForeground("live", "before_full_live_ocr")) {
+      return;
+    }
     floatyControl.compact("直播OCR采集中");
     var fullScreenData = douyin.extractScreen();
     floatyControl.expand("直播OCR完成");
     fullScreenData.sceneType = "live";
+    fullScreenData.liveReadonly = liveRoomSample;
     var fullMatchResult = matcher.evaluate(fullScreenData.combinedText || text);
     candidateService.collectCandidate(screenData, matchResult, {
       fullScreenData: fullScreenData,
       fullMatchResult: fullMatchResult,
-      collectComments: false
+      collectComments: false,
+      liveRoomSample: liveRoomSample
     });
     logger.info("直播间采集完成，准备退出", {
       liveRoomEnteredCount: counters.liveRoomEnteredCount,
@@ -497,7 +623,7 @@ function createPhaseRunner(context) {
       lastMessage: (sceneType === "live" ? "直播阶段" : "视频阶段") + "开始"
     });
 
-    if (sceneType === "live") {
+    if (sceneType === "live" && config.task.liveCommentDirectTest !== true && !isLiveCommentPriorityRunning()) {
       logger.info("直播阶段启动前恢复页面上下文");
       douyin.enterLiveFeed();
     }

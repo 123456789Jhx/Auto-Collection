@@ -1,16 +1,24 @@
-"auto";
-
 function getScriptDir() {
   var candidates = [
+    "/storage/emulated/0/燎原星火",
+    "/sdcard/燎原星火",
+    "/storage/emulated/0/Download/燎原星火",
+    "/sdcard/Download/燎原星火",
     "/storage/emulated/0/AgriVideoCollector",
     "/sdcard/AgriVideoCollector",
     "/storage/emulated/0/Download/AgriVideoCollector",
     "/sdcard/Download/AgriVideoCollector"
   ];
 
+  function hasRequiredFiles(dir) {
+    return dir &&
+      files.exists(files.join(dir, "main.module.js")) &&
+      files.exists(files.join(dir, "core/accessibility.js"));
+  }
+
   try {
     var cwd = files.cwd();
-    if (cwd && files.exists(files.join(cwd, "main.module.js"))) {
+    if (hasRequiredFiles(cwd)) {
       return cwd;
     }
   } catch (error) {
@@ -21,20 +29,22 @@ function getScriptDir() {
     var source = engine && engine.getSource && engine.getSource();
     var sourcePath = source && source.toString && source.toString();
     if (sourcePath && sourcePath.indexOf("/") >= 0) {
-      return files.dirname(sourcePath);
+      var sourceDir = files.dirname(sourcePath);
+      if (hasRequiredFiles(sourceDir)) {
+        return sourceDir;
+      }
     }
   } catch (error2) {
   }
 
   for (var i = 0; i < candidates.length; i++) {
-    if (files.exists(files.join(candidates[i], "main.module.js"))) {
+    if (hasRequiredFiles(candidates[i])) {
       return candidates[i];
     }
   }
 
-  return "/storage/emulated/0/AgriVideoCollector";
+  return "/storage/emulated/0/燎原星火";
 }
-
 var SCRIPT_DIR = getScriptDir();
 
 function engineSourceText(engine) {
@@ -81,10 +91,4 @@ function hasOtherMainEngine() {
   return false;
 }
 
-if (hasOtherMainEngine()) {
-  log("Agri collector main is already running, skip duplicate start.");
-  toast("Agri collector is already running");
-  exit();
-} else {
-  require(files.join(SCRIPT_DIR, "main.module.js"));
-}
+require(files.join(SCRIPT_DIR, "main.module.js"));

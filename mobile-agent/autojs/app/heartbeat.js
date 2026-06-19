@@ -52,25 +52,25 @@ function createHeartbeatService(context) {
 
   function reportImmediateHeartbeat(sceneType, status, message) {
     var heartbeatStatus = status || (floatyControl.state.paused ? "paused" : "running");
-    var isAgentIdle = heartbeatStatus === "idle" || heartbeatStatus === "stopped";
-    var startedAt = !isAgentIdle && counters.phaseStartedAt ? new Date(counters.phaseStartedAt).getTime() : 0;
+    var isActiveTask = heartbeatStatus === "running";
+    var startedAt = isActiveTask && counters.phaseStartedAt ? new Date(counters.phaseStartedAt).getTime() : 0;
     var payload = {
-      sceneType: isAgentIdle ? "" : sceneType || counters.currentPhase || "",
-      elapsedMinutes: startedAt && !isNaN(startedAt) ? Math.max(0, Math.round((Date.now() - startedAt) / 60000)) : 0,
+      sceneType: isActiveTask ? sceneType || counters.currentPhase || "" : "",
+      elapsedMinutes: isActiveTask && startedAt && !isNaN(startedAt) ? Math.max(0, Math.round((Date.now() - startedAt) / 60000)) : 0,
       remainingMinutes: null,
       expectedEndAt: null,
-      plannedVideoMinutes: counters.plannedVideoMinutes || 0,
-      plannedLiveMinutes: counters.plannedLiveMinutes || 0,
-      videoElapsedMinutes: counters.videoElapsedMinutes || 0,
-      videoRemainingMinutes: counters.videoRemainingMinutes,
-      liveElapsedMinutes: counters.liveElapsedMinutes || 0,
-      liveRemainingMinutes: counters.liveRemainingMinutes,
-      viewedCount: counters.viewedCount,
-      liveViewedCount: counters.liveViewedCount,
-      liveRoomEnteredCount: counters.liveRoomEnteredCount,
-      liveCandidateCount: counters.liveCandidateCount,
-      liveRejectedCount: counters.liveRejectedCount,
-      capturedCount: counters.capturedCount,
+      plannedVideoMinutes: isActiveTask ? counters.plannedVideoMinutes || 0 : 0,
+      plannedLiveMinutes: isActiveTask ? counters.plannedLiveMinutes || 0 : 0,
+      videoElapsedMinutes: isActiveTask ? counters.videoElapsedMinutes || 0 : 0,
+      videoRemainingMinutes: isActiveTask ? counters.videoRemainingMinutes : null,
+      liveElapsedMinutes: isActiveTask ? counters.liveElapsedMinutes || 0 : 0,
+      liveRemainingMinutes: isActiveTask ? counters.liveRemainingMinutes : null,
+      viewedCount: isActiveTask ? counters.viewedCount : 0,
+      liveViewedCount: isActiveTask ? counters.liveViewedCount : 0,
+      liveRoomEnteredCount: isActiveTask ? counters.liveRoomEnteredCount : 0,
+      liveCandidateCount: isActiveTask ? counters.liveCandidateCount : 0,
+      liveRejectedCount: isActiveTask ? counters.liveRejectedCount : 0,
+      capturedCount: isActiveTask ? counters.capturedCount : 0,
       paused: floatyControl.state.paused,
       stopRequested: floatyControl.state.stopRequested,
       status: heartbeatStatus,

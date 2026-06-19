@@ -10,9 +10,11 @@ function createFloatyControl(config, logger) {
     exitRequested: false,
     manualOverride: false,
     lastManualAction: "",
+    liveCommentExecutionEnabled: false,
+    liveCommentControlStatus: "stopped",
     viewedCount: 0,
     capturedCount: 0,
-    lastMessage: "待启动",
+    lastMessage: "\u5f85\u542f\u52a8",
     compact: false
   };
 
@@ -23,57 +25,26 @@ function createFloatyControl(config, logger) {
       return;
     }
     ui.run(function () {
-      window.toggle.setText(state.running && !state.paused ? "||" : "▶");
+      var text = "\u540e\u53f0\u63a7\u5236";
+      if (state.running && !state.paused) {
+        text = "\u8fd0\u884c\u4e2d";
+      } else if (state.paused) {
+        text = "\u5df2\u6682\u505c";
+      } else if (state.stopRequested || state.exitRequested) {
+        text = "\u5df2\u505c\u6b62";
+      }
+      window.status.setText(text);
     });
   }
 
   function create() {
     window = floaty.window(
-      <horizontal bg="#AA222222" padding="4">
-        <button id="toggle" text="▶" w="46" h="42" textSize="18sp" />
-        <button id="stop" text="■" w="46" h="42" textSize="18sp" />
+      <horizontal bg="#AA222222" padding="6">
+        <text id="status" text="后台控制" w="96" h="36" gravity="center" textColor="#ffffff" textSize="13sp" />
       </horizontal>
     );
 
     moveToDefaultPosition();
-
-    window.toggle.click(function () {
-      if (state.running && !state.paused) {
-        state.paused = true;
-        state.manualOverride = true;
-        state.lastManualAction = "pause";
-        state.lastMessage = "已暂停";
-      } else {
-        state.running = true;
-        state.paused = false;
-        state.stopRequested = false;
-        state.exitRequested = false;
-        state.manualOverride = true;
-        state.lastManualAction = "start";
-        state.lastMessage = "运行中";
-      }
-      state.lastMessage = state.paused ? "已暂停" : "运行中";
-      logger.info("悬浮窗切换运行状态", {
-        running: state.running,
-        paused: state.paused,
-        manualOverride: state.manualOverride,
-        lastManualAction: state.lastManualAction
-      });
-      renderStatus();
-    });
-
-    window.stop.click(function () {
-      state.stopRequested = true;
-      state.exitRequested = true;
-      state.running = false;
-      state.paused = false;
-      state.manualOverride = true;
-      state.lastManualAction = "stop";
-      state.lastMessage = "停止中";
-      logger.info("悬浮窗请求停止并退出脚本");
-      renderStatus();
-    });
-
     renderStatus();
   }
 
@@ -92,7 +63,7 @@ function createFloatyControl(config, logger) {
       window.setPosition(Math.floor(x), Math.floor(y));
       return true;
     } catch (error) {
-      logger.warn("悬浮窗移动失败", { message: String(error) });
+      logger.warn("floaty move failed", { message: String(error) });
       return false;
     }
   }
@@ -105,7 +76,7 @@ function createFloatyControl(config, logger) {
     var screenWidth = autojsUtils.getScreenSize().width;
     var x = Math.max(20, screenWidth - 140);
     var y = 120;
-    logger.info("悬浮窗避让关键点击区域", { reason: reason || "", x: x, y: y });
+    logger.info("floaty moved to safe corner", { reason: reason || "", x: x, y: y });
     return setPosition(x, y);
   }
 
@@ -145,7 +116,7 @@ function createFloatyControl(config, logger) {
         window.close();
       }
     } catch (error) {
-      logger.warn("悬浮窗关闭失败", { message: String(error) });
+      logger.warn("floaty close failed", { message: String(error) });
     }
     window = null;
   }

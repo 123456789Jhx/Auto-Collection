@@ -1,10 +1,15 @@
 {
-  "name": "AgriVideoCollector",
+  "name": "燎原星火",
   "main": "launcher.js",
-  "versionName": "0.1.10",
-  "versionCode": 11,
+  "versionName": "0.1.x",
+  "versionCode": 33,
   "packageName": "com.agri.video.collector",
   "description": "Agri video collector mobile agent",
+  "build": {
+    "build_id": "AGRI-20260618114441",
+    "build_number": 27,
+    "build_time": 1781754281992
+  },
   "launchConfig": {
     "hideLogs": false
   },

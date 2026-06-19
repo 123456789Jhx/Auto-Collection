@@ -35,7 +35,12 @@ function isInvalidTaskContext(text) {
   if (!source) {
     return false;
   }
+  if (isSystemSettingsContext(source)) {
+    return true;
+  }
   var strongInvalidWords = [
+    "已下载的服务",
+    "由燎原星火提供",
     "支付成功",
     "确认支付",
     "提交订单",
@@ -68,6 +73,19 @@ function isInvalidTaskContext(text) {
   }
 
   return isPublishContext(source) || isSearchContext(source);
+}
+
+function isSystemSettingsContext(text) {
+  if (/已下载的服务|由燎原星火提供|由AgriVideoCollector提供/.test(text)) {
+    return true;
+  }
+  if (/(燎原星火|AgriVideoCollector)/.test(text) && /无障碍|辅助功能|应用信息|权限|强行停止|卸载/.test(text)) {
+    return true;
+  }
+  if (/开发者选项|USB 调试|USB安装|撤消 USB 调试授权/.test(text)) {
+    return true;
+  }
+  return false;
 }
 
 function isPublishContext(text) {

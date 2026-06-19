@@ -94,3 +94,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\package-autojs.ps1
 2. 不采集非公开内容。
 3. 不做自动点赞、评论、关注、私信等互动功能。
 4. 不承诺平台推荐、标签或账号权重结果，只记录脚本实际运行证据。
+
+## P3 扩展配置
+
+`config.js` 中的 `p3Extensions` 只用于记录后续扩展的硬边界，默认全部关闭。
+
+1. `liveLike.enabled` 默认 `false`，点赞不进入当前采集主链路。
+2. `authorizedFollow.enabled` 默认 `false`，关注只能作为员工授权后的独立任务。
+3. `linkage.allowM1Input`、`linkage.allowM2Input` 和 `linkage.allowM3OutputToMaterialPool` 默认 `false`，M1/M2/M3 联动需要先完成后台任务和审计设计。
+4. 任何 P3 扩展都不能绕过人工授权、频率限制、日志审计和风控停机规则。
