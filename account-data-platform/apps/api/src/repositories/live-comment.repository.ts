@@ -1,5 +1,5 @@
 import { collectorDevices, liveCommentActions } from "@pkg/db/schema";
-import { and, count, desc, eq, gte, ilike, isNull, lt, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
 import { config } from "../config";
 import { db } from "./db";
 
