@@ -1,4 +1,4 @@
-# Auto Collection
+﻿# Auto Collection
 
 农业内容采集脚本与设备监控后台，用于小范围 Android 设备运行 AutoX.js 采集脚本，并在后台查看设备状态、采集记录、心跳、日志和远程控制结果。
 
@@ -24,11 +24,11 @@
 ## 成果入口
 
 - 线上后台：http://106.54.41.106:18080
-- 项目说明：[docs/overview.md](docs/overview.md)
-- 验收口径：[docs/acceptance.md](docs/acceptance.md)
-- 部署说明：[docs/deployment.md](docs/deployment.md)
-- 开发排期：[docs/schedules/development-plan.md](docs/schedules/development-plan.md)
-- 成果证据清单：[docs/evidence/README.md](docs/evidence/README.md)
+- 项目说明：[docs/当前入口/项目说明.md](docs/当前入口/项目说明.md)
+- 验收口径：[docs/当前入口/验收口径.md](docs/当前入口/验收口径.md)
+- 部署说明：[docs/当前入口/部署说明.md](docs/当前入口/部署说明.md)
+- 开发排期：[docs/????/????????.md](docs/????/????????.md)
+- 成果证据清单：[docs/????/??????.md](docs/????/??????.md)
 - 手机端说明：[mobile-agent/autojs/README.md](mobile-agent/autojs/README.md)
 - 后台工程说明：[account-data-platform/README.md](account-data-platform/README.md)
 
@@ -58,7 +58,7 @@ bun run dev
 powershell -ExecutionPolicy Bypass -File .\scripts\package-autojs-apk.ps1
 ```
 
-生产部署参考：[docs/deployment.md](docs/deployment.md)。
+生产部署参考：[docs/当前入口/部署说明.md](docs/当前入口/部署说明.md)。
 
 ## 验收口径
 
@@ -85,3 +85,4 @@ powershell -ExecutionPolicy Bypass -File .\scripts\package-autojs-apk.ps1
 - 验收材料：65
 - 截图和录屏证据：20
 - 商业化沉淀：40
+
