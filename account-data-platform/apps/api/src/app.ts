@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { adminRoutes } from "./routes/admin";
+import { downloadRoutes } from "./routes/downloads";
 import { healthRoutes } from "./routes/health";
 import { mobileRoutes } from "./routes/mobile";
 
@@ -11,6 +12,7 @@ app.use("*", logger());
 app.use("*", cors());
 
 app.route("/", healthRoutes);
+app.route("/downloads", downloadRoutes);
 app.route("/api/v1/mobile", mobileRoutes);
 app.route("/api/v1/admin", adminRoutes);
 

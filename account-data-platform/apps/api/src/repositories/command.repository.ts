@@ -94,7 +94,8 @@ export async function findPendingCommandsByDeviceCode(deviceCode: string, limit 
 export async function updateMobileCommandStatus(
   commandId: string,
   status: "FETCHED" | "DONE" | "FAILED" | "IGNORED",
-  values: Partial<typeof mobileCommands.$inferInsert> = {}
+  values: Partial<typeof mobileCommands.$inferInsert> = {},
+  expectedDeviceId?: string
 ) {
   const patch: Partial<typeof mobileCommands.$inferInsert> = {
     ...values,
@@ -108,6 +109,10 @@ export async function updateMobileCommandStatus(
     patch.acknowledgedAt = new Date();
   }
 
-  const [command] = await db.update(mobileCommands).set(patch).where(eq(mobileCommands.id, commandId)).returning();
+  const whereClause = expectedDeviceId
+    ? and(eq(mobileCommands.tenantId, config.tenantId), eq(mobileCommands.id, commandId), eq(mobileCommands.deviceId, expectedDeviceId), isNull(mobileCommands.deletedAt))
+    : and(eq(mobileCommands.tenantId, config.tenantId), eq(mobileCommands.id, commandId), isNull(mobileCommands.deletedAt));
+
+  const [command] = await db.update(mobileCommands).set(patch).where(whereClause).returning();
   return command;
 }

@@ -3,10 +3,11 @@ import { parseOptionalDate } from "../lib/date";
 import { createHeartbeat } from "../repositories/heartbeat.repository";
 import { createRuntimeLog } from "../repositories/log.repository";
 import { upsertDeviceLogFile } from "../repositories/log-file.repository";
+import { createLiveCommentAction } from "../repositories/live-comment.repository";
 import { createCollectionRecord } from "../repositories/record.repository";
-import { findCurrentTask, findDeviceTaskConfig, findTaskByCode } from "../repositories/task.repository";
-import { registerDeviceByToken, resolveDeviceByToken } from "../repositories/device.repository";
-import type { MobileCollectionRecordPayload, MobileHeartbeatPayload, MobileLogFilePayload, MobileRuntimeLogPayload } from "@pkg/types";
+import { findCurrentTask, findDeviceTaskConfig, findTaskByCode, resolveTaskConfig } from "../repositories/task.repository";
+import { findDeviceByCode, findDeviceByToken, registerDeviceByToken, resolveDeviceByToken } from "../repositories/device.repository";
+import type { MobileCollectionRecordPayload, MobileHeartbeatPayload, MobileLiveCommentActionPayload, MobileLogFilePayload, MobileRuntimeLogPayload } from "@pkg/types";
 
 async function resolveMobileDevice(values: {
   deviceId: string;
@@ -32,13 +33,68 @@ function isGenericDeviceId(deviceId: string) {
   return !normalized || normalized === "android_001" || normalized === "unknown";
 }
 
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 20);
+}
+
+function buildFollowedAccounts(
+  followedConfigs: Array<{
+    config: {
+      followedAccountName?: string | null;
+      followedAccountId?: string | null;
+      followedAliases?: unknown;
+    };
+    deviceCode?: string | null;
+    deviceName?: string | null;
+  }>,
+  liveCommentConfig: Record<string, unknown>
+) {
+  const accounts = followedConfigs
+    .map((item) => {
+      const aliasNames = normalizeStringList(item.config.followedAliases);
+      const accountName = (item.config.followedAccountName || item.deviceName || "").trim();
+      const accountId = (item.config.followedAccountId || item.deviceCode || "").trim();
+      if (!accountName && !accountId && aliasNames.length === 0) {
+        return null;
+      }
+      return { accountName, accountId, aliasNames };
+    })
+    .filter((item): item is { accountName: string; accountId: string; aliasNames: string[] } => !!item);
+
+  if (accounts.length > 0) {
+    return accounts;
+  }
+
+  const names = normalizeStringList(liveCommentConfig.leaderAccountNames);
+  const ids = normalizeStringList(liveCommentConfig.leaderAccountIds);
+  return names.map((accountName, index) => ({
+    accountName,
+    accountId: ids[index] || "",
+    aliasNames: []
+  }));
+}
+
 export async function getCurrentTask(deviceId: string, platform: string, clientIp?: string, deviceToken?: string) {
   const device = await resolveMobileDevice({ deviceId, deviceToken, platform, clientIp });
   const result = await findDeviceTaskConfig(device.deviceCode, platform);
   const task = result.task ?? (await findCurrentTask(platform));
-  const taskConfig = result.config ?? task;
+  const taskConfig = resolveTaskConfig(task, result.config);
+  const liveCommentConfig = (taskConfig.liveCommentConfig ?? {}) as Record<string, unknown>;
+  const followedAccounts = buildFollowedAccounts(result.followedConfigs ?? [], liveCommentConfig);
+  const leaderAccountNames = followedAccounts.flatMap((account) => [account.accountName, ...(account.aliasNames || [])]).filter(Boolean);
+  const leaderAccountIds = followedAccounts.map((account) => account.accountId).filter(Boolean);
+  const effectiveLiveCommentConfig = {
+    ...liveCommentConfig,
+    groupName: taskConfig.liveCommentGroup ?? liveCommentConfig.groupName,
+    leaderAccountNames,
+    leaderAccountIds
+  };
+
   return {
     taskId: task.taskCode,
+    templateCode: task.taskCode,
+    deviceCode: device.deviceCode,
     platform: task.platform,
     mode: task.mode,
     searchKeywords: task.searchKeywords,
@@ -50,6 +106,14 @@ export async function getCurrentTask(deviceId: string, platform: string, clientI
     autoStart: taskConfig.autoStart,
     collectComments: taskConfig.collectComments,
     commentLimit: taskConfig.commentLimit,
+    liveCommentRole: taskConfig.liveCommentRole,
+    liveCommentGroup: taskConfig.liveCommentGroup,
+    liveCommentMode: taskConfig.liveCommentMode,
+    accountProfile: result.device?.accountProfile ?? null,
+    liveCommentBotConfig: taskConfig.liveCommentBotConfig,
+    followedAccounts,
+    liveCommentConfig: effectiveLiveCommentConfig,
+    p3ExtensionsConfig: taskConfig.p3ExtensionsConfig ?? null,
     heartbeatMinutes: taskConfig.heartbeatMinutes,
     configSource: result.config ? "device" : "task"
   };
@@ -102,7 +166,7 @@ export async function saveHeartbeat(payload: MobileHeartbeatPayload, clientIp?: 
     capturedCount: payload.capturedCount,
     lastMessage: payload.lastMessage,
     expectedEndAt: parseOptionalDate(payload.expectedEndAt ?? undefined),
-    rawPayload: payload.rawPayload,
+    rawPayload: { ...(payload.rawPayload ?? {}), appVersion: payload.appVersion },
     reportedAt: parseOptionalDate(payload.reportedAt) ?? new Date(),
     createdBy: "mobile_agent",
     updatedBy: "mobile_agent"
@@ -123,6 +187,36 @@ export async function saveRuntimeLog(payload: MobileRuntimeLogPayload, clientIp?
     contextJson: sanitizeRuntimeContext(payload.context),
     stopReason: payload.stopReason ?? undefined,
     reportedAt: parseOptionalDate(payload.reportedAt),
+    createdBy: "mobile_agent",
+    updatedBy: "mobile_agent"
+  });
+}
+
+export async function saveLiveCommentAction(payload: MobileLiveCommentActionPayload, clientIp?: string, deviceToken?: string) {
+  const [task, device] = await Promise.all([
+    payload.taskId ? findTaskByCode(payload.taskId) : null,
+    resolveMobileDevice({ deviceId: payload.deviceId, deviceToken, platform: payload.platform, clientIp })
+  ]);
+
+  return createLiveCommentAction({
+    tenantId: config.tenantId,
+    taskId: task?.id,
+    deviceId: device.id,
+    triggerEventId: payload.triggerEventId,
+    platform: payload.platform,
+    roomName: payload.roomName,
+    leaderAccountName: payload.leaderAccountName,
+    triggerText: payload.triggerText,
+    matchedKeywords: payload.matchedKeywords,
+    replyText: payload.replyText,
+    plannedDelayMs: payload.plannedDelayMs,
+    status: payload.status,
+    skipReason: payload.skipReason,
+    failureReason: payload.failureReason,
+    rawPayload: payload.rawPayload,
+    plannedAt: parseOptionalDate(payload.plannedAt),
+    sentAt: parseOptionalDate(payload.sentAt),
+    reportedAt: parseOptionalDate(payload.reportedAt) ?? new Date(),
     createdBy: "mobile_agent",
     updatedBy: "mobile_agent"
   });
@@ -209,12 +303,27 @@ export async function saveLogFile(payload: MobileLogFilePayload, clientIp?: stri
 export async function registerDeviceToken(payload: {
   deviceId: string;
   deviceToken: string;
+  registrationSecret?: string;
   platform?: string;
   appVersion?: string;
   deviceInfo?: Record<string, unknown>;
 }, clientIp?: string) {
   if (!payload.deviceToken || payload.deviceToken.length < 32) {
     throw new Error("INVALID_DEVICE_TOKEN");
+  }
+
+  const existingDevice = await findDeviceByToken(payload.deviceToken);
+  if (!existingDevice && config.mobileRegistrationSecret && payload.registrationSecret !== config.mobileRegistrationSecret) {
+    throw new Error("REGISTRATION_SECRET_INVALID");
+  }
+  if (existingDevice && !isGenericDeviceId(payload.deviceId) && existingDevice.deviceCode !== payload.deviceId) {
+    throw new Error("DEVICE_CODE_MISMATCH");
+  }
+  if (!existingDevice && !isGenericDeviceId(payload.deviceId)) {
+    const boundDevice = await findDeviceByCode(payload.deviceId);
+    if (boundDevice && boundDevice.deviceToken && boundDevice.deviceToken !== payload.deviceToken) {
+      throw new Error("DEVICE_CODE_CONFLICT");
+    }
   }
 
   const device = await registerDeviceByToken({
@@ -227,6 +336,7 @@ export async function registerDeviceToken(payload: {
 
   return {
     deviceCode: device.deviceCode,
+    deviceId: device.deviceCode,
     bound: true,
     status: "VERIFIED"
   };

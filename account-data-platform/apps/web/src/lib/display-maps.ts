@@ -65,7 +65,7 @@ export function commandText(value?: string | null) {
   const map: Record<string, string> = {
     START: "启动/继续任务",
     PAUSE: "暂停",
-    RESUME: "启动/继续任务",
+    RESUME: "恢复",
     STOP: "关闭脚本",
     REFRESH_CONFIG: "刷新配置",
     STATUS: "查询状态",

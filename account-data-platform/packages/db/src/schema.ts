@@ -32,6 +32,7 @@ export const collectorDevices = pgTable(
     lastIp: varchar("last_ip", { length: 64 }),
     lastRegion: varchar("last_region", { length: 100 }),
     remark: varchar("remark", { length: 500 }),
+    accountProfile: jsonb("account_profile").$type<Record<string, unknown>>(),
     platform: varchar("platform", { length: 32 }),
     appVersion: varchar("app_version", { length: 64 }),
     targetVersion: varchar("target_version", { length: 64 }),
@@ -88,6 +89,9 @@ export const collectionTasks = pgTable(
     autoStart: boolean("auto_start").notNull().default(false),
     collectComments: boolean("collect_comments").notNull().default(true),
     commentLimit: integer("comment_limit").notNull().default(10),
+    liveCommentConfig: jsonb("live_comment_config").$type<Record<string, unknown>>(),
+    liveCommentBotConfig: jsonb("live_comment_bot_config").$type<Record<string, unknown>>(),
+    p3ExtensionsConfig: jsonb("p3_extensions_config").$type<Record<string, unknown>>(),
     heartbeatMinutes: integer("heartbeat_minutes").notNull().default(1),
     status: varchar("status", { length: 32 }).notNull().default("ENABLED"),
     ...auditColumns
@@ -111,12 +115,22 @@ export const deviceTaskConfigs = pgTable(
     autoStart: boolean("auto_start").notNull().default(false),
     collectComments: boolean("collect_comments").notNull().default(true),
     commentLimit: integer("comment_limit").notNull().default(10),
+    liveCommentRole: varchar("live_comment_role", { length: 32 }).notNull().default("none"),
+    liveCommentGroup: varchar("live_comment_group", { length: 16 }),
+    followedAccountName: varchar("followed_account_name", { length: 100 }),
+    followedAccountId: varchar("followed_account_id", { length: 100 }),
+    followedAliases: jsonb("followed_aliases").$type<string[]>(),
+    liveCommentMode: varchar("live_comment_mode", { length: 32 }).notNull().default("agri_chatbot"),
+    liveCommentBotConfig: jsonb("live_comment_bot_config").$type<Record<string, unknown>>(),
+    liveCommentConfig: jsonb("live_comment_config").$type<Record<string, unknown>>(),
+    p3ExtensionsConfig: jsonb("p3_extensions_config").$type<Record<string, unknown>>(),
     heartbeatMinutes: integer("heartbeat_minutes").notNull().default(1),
     ...auditColumns
   },
   (table) => [
     uniqueIndex("uniq_device_task_configs_tenant_device_task").on(table.tenantId, table.deviceId, table.taskId),
-    index("idx_device_task_configs_tenant_device").on(table.tenantId, table.deviceId)
+    index("idx_device_task_configs_tenant_device").on(table.tenantId, table.deviceId),
+    index("idx_device_task_configs_tenant_task_live_comment_role").on(table.tenantId, table.taskId, table.liveCommentRole)
   ]
 );
 
@@ -236,6 +250,36 @@ export const mobileCommands = pgTable(
   ]
 );
 
+export const liveCommentActions = pgTable(
+  "live_comment_actions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    taskId: uuid("task_id").references(() => collectionTasks.id),
+    deviceId: uuid("device_id").references(() => collectorDevices.id),
+    triggerEventId: varchar("trigger_event_id", { length: 128 }),
+    platform: varchar("platform", { length: 32 }).notNull().default("douyin"),
+    roomName: varchar("room_name", { length: 200 }),
+    leaderAccountName: varchar("leader_account_name", { length: 200 }),
+    triggerText: text("trigger_text"),
+    matchedKeywords: jsonb("matched_keywords").$type<string[]>(),
+    replyText: text("reply_text").notNull(),
+    plannedDelayMs: integer("planned_delay_ms"),
+    status: varchar("status", { length: 32 }).notNull(),
+    skipReason: varchar("skip_reason", { length: 200 }),
+    failureReason: varchar("failure_reason", { length: 500 }),
+    rawPayload: jsonb("raw_payload").$type<Record<string, unknown>>(),
+    plannedAt: timestamp("planned_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    reportedAt: timestamp("reported_at", { withTimezone: true }),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_live_comment_actions_tenant_device_created_at").on(table.tenantId, table.deviceId, table.createdAt),
+    index("idx_live_comment_actions_tenant_status").on(table.tenantId, table.status),
+    index("idx_live_comment_actions_tenant_task").on(table.tenantId, table.taskId)
+  ]
+);
+
 export const agentUpdateEvents = pgTable(
   "agent_update_events",
   {
@@ -262,6 +306,7 @@ export const collectorDevicesRelations = relations(collectorDevices, ({ many }) 
   logs: many(runtimeLogs),
   logFiles: many(deviceLogFiles),
   commands: many(mobileCommands),
+  liveCommentActions: many(liveCommentActions),
   updateEvents: many(agentUpdateEvents),
   taskConfigs: many(deviceTaskConfigs)
 }));
@@ -272,6 +317,7 @@ export const collectionTasksRelations = relations(collectionTasks, ({ many }) =>
   logs: many(runtimeLogs),
   logFiles: many(deviceLogFiles),
   commands: many(mobileCommands),
+  liveCommentActions: many(liveCommentActions),
   deviceConfigs: many(deviceTaskConfigs)
 }));
 

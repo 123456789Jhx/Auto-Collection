@@ -1,0 +1,30 @@
+name: auto-collection-dev
+
+services:
+  web:
+    image: oven/bun:1.3.14
+    container_name: auto-collection-web-dev
+    working_dir: /app
+    command: sh -c "bun install && bun --filter @app/web dev"
+    environment:
+      NODE_ENV: development
+      WEB_PORT: ${WEB_PORT:-3020}
+      VITE_API_BASE_URL_DEV: ${VITE_API_BASE_URL_DEV:-http://106.54.41.106/api/v1}
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://106.54.41.106/api/v1}
+      VITE_API_PROXY_TARGET: ${VITE_API_PROXY_TARGET:-http://106.54.41.106}
+    ports:
+      - "${WEB_BIND_HOST:-0.0.0.0}:${WEB_PORT:-3020}:3020"
+    volumes:
+      - .:/app
+      - auto_collection_dev_node_modules:/app/node_modules
+      - auto_collection_dev_web_node_modules:/app/apps/web/node_modules
+      - auto_collection_dev_api_node_modules:/app/apps/api/node_modules
+      - auto_collection_dev_db_node_modules:/app/packages/db/node_modules
+      - auto_collection_dev_types_node_modules:/app/packages/types/node_modules
+
+volumes:
+  auto_collection_dev_node_modules:
+  auto_collection_dev_web_node_modules:
+  auto_collection_dev_api_node_modules:
+  auto_collection_dev_db_node_modules:
+  auto_collection_dev_types_node_modules:

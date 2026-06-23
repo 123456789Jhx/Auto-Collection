@@ -51,7 +51,7 @@ export async function getCommands() {
 
 async function resolveCommandDevice(deviceCode: string, deviceToken?: string) {
   if (deviceToken) {
-    return resolveDeviceByToken({ deviceToken });
+    return resolveDeviceByToken({ deviceToken, expectedDeviceCode: deviceCode });
   }
 
   const device = await findDeviceByCode(deviceCode);
@@ -78,9 +78,13 @@ export async function pollCommands(deviceCode: string, deviceToken?: string) {
 }
 
 export async function acknowledgeCommand(commandId: string, payload: MobileCommandAckPayload, deviceToken?: string) {
-  await resolveCommandDevice(payload.deviceId, deviceToken);
-  return updateMobileCommandStatus(commandId, payload.status, {
+  const device = await resolveCommandDevice(payload.deviceId, deviceToken);
+  const command = await updateMobileCommandStatus(commandId, payload.status, {
     resultJson: payload.result,
     updatedBy: "mobile_agent"
-  });
+  }, device.id);
+  if (!command) {
+    throw new Error("COMMAND_NOT_FOUND");
+  }
+  return command;
 }

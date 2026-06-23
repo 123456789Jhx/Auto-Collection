@@ -91,4 +91,12 @@ function hasOtherMainEngine() {
   return false;
 }
 
+if (hasOtherMainEngine()) {
+  try {
+    toast("Agent already running");
+  } catch (error) {
+  }
+  exit();
+}
+
 require(files.join(SCRIPT_DIR, "main.module.js"));

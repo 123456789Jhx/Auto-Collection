@@ -6,14 +6,17 @@ import { db } from "./db";
 export async function createHeartbeat(values: typeof deviceHeartbeats.$inferInsert) {
   const [heartbeat] = await db.insert(deviceHeartbeats).values(values).returning();
   if (values.deviceId) {
-    await db
-      .update(collectorDevices)
-      .set({
-        status: values.status,
-        lastHeartbeatAt: values.reportedAt ?? new Date(),
-        updatedAt: new Date()
-      })
-      .where(eq(collectorDevices.id, values.deviceId));
+    const patch: Partial<typeof collectorDevices.$inferInsert> = {
+      status: values.status,
+      lastHeartbeatAt: values.reportedAt ?? new Date(),
+      updatedAt: new Date()
+    };
+    const rawPayload = values.rawPayload as Record<string, unknown> | null | undefined;
+    const appVersion = rawPayload && typeof rawPayload.appVersion === "string" ? rawPayload.appVersion : undefined;
+    if (appVersion) {
+      patch.appVersion = appVersion;
+    }
+    await db.update(collectorDevices).set(patch).where(eq(collectorDevices.id, values.deviceId));
   }
   return heartbeat;
 }
@@ -113,6 +116,7 @@ export async function getDeviceDailyProgressSummaries(deviceCode: string, limit 
     .where(and(
       eq(deviceHeartbeats.tenantId, config.tenantId),
       eq(collectorDevices.deviceCode, deviceCode),
+      eq(deviceHeartbeats.status, "running"),
       isNull(deviceHeartbeats.deletedAt)
     ))
     .groupBy(sql`to_char(${deviceHeartbeats.reportedAt}, 'YYYY-MM-DD')`)

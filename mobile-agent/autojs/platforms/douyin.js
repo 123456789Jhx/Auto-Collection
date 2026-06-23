@@ -22,6 +22,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
   }
 
   function dismissStartupPopups() {
+    autojsUtils.clickIfExists(text("以后再说").clickable(true), 800, logger);
+    autojsUtils.clickIfExists(text("暂不").clickable(true), 800, logger);
+    autojsUtils.clickIfExists(text("取消").clickable(true), 800, logger);
     autojsUtils.clickIfExists(textMatches(".*(允许).*").clickable(true), 800, logger);
 
     var starCardNode =
@@ -112,14 +115,32 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function openSearch(keyword) {
     logger.info("尝试进入抖音搜索", { keyword: keyword });
-    ensureDouyinForeground();
+    if (!ensureDouyinForeground()) {
+      openApp();
+      if (!ensureDouyinForeground()) {
+        logger.warn("open search skipped: douyin not in foreground", {
+          keyword: keyword,
+          currentPackage: currentPackage && currentPackage()
+        });
+        return false;
+      }
+    }
     avoidFloaty("open_search");
     var previousSearchKeyword = activeSearchKeyword;
+    var initialText = extractVisibleText();
     logger.info("搜索流程诊断：初始屏幕状态", {
       keyword: keyword,
       screen: autojsUtils.describeScreenSize(),
-      textSample: extractVisibleText().slice(0, 180)
+      textSample: initialText.slice(0, 180)
     });
+    if (isSearchResultPage(initialText) && initialText.indexOf(keyword) >= 0) {
+      activeSearchKeyword = keyword || previousSearchKeyword;
+      logger.info("搜索流程诊断：已在目标关键词搜索结果页，复用当前结果", {
+        keyword: keyword,
+        textSample: initialText.slice(0, 220)
+      });
+      return true;
+    }
 
     var searchNode =
       autojsUtils.waitForElement(desc("搜索"), 1200, null, logger) ||
@@ -149,6 +170,31 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       activeSearchKeyword = previousSearchKeyword;
       return false;
     }
+    autojsUtils.sleepRandom(300, 500);
+    if (!isSearchKeywordVisible(keyword)) {
+      var inputNode = findSearchInputNode();
+      if (inputNode && inputNode.setText) {
+        try {
+          inputNode.setText(keyword);
+          autojsUtils.sleepRandom(300, 500);
+        } catch (setTextError) {
+          logger.warn("search input direct setText failed", {
+            keyword: keyword,
+            source: source || "",
+            message: String(setTextError)
+          });
+        }
+      }
+    }
+    if (!isSearchKeywordVisible(keyword)) {
+      logger.warn("search keyword not visible after input", {
+        keyword: keyword,
+        source: source || "",
+        textSample: extractVisibleText().slice(0, 220)
+      });
+      activeSearchKeyword = previousSearchKeyword;
+      return false;
+    }
     activeSearchKeyword = keyword || previousSearchKeyword;
     autojsUtils.sleepRandom(500, 800);
     logger.info("搜索流程诊断：关键词已输入", {
@@ -159,6 +205,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     });
 
     submitSearchKeyword(keyword);
+    dismissStartupPopups();
     var submittedText = extractVisibleText();
     var submittedState = detectSearchPageState(submittedText);
     logger.info("搜索流程诊断：提交后页面状态", {
@@ -264,16 +311,15 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     var bounds = searchNode && searchNode.bounds && searchNode.bounds();
     var visibleText = extractVisibleText();
     if (isTopSearchSubmitButton(bounds) && isSearchInputAlreadyVisible(visibleText)) {
-      var screen = autojsUtils.getScreenSize(bounds);
-      var x = Math.floor(screen.width * 0.38);
-      var y = bounds.centerY();
-      logger.info("搜索入口命中顶部提交按钮，改点左侧输入框", {
-        bounds: autojsUtils.formatBounds(bounds),
-        x: x,
-        y: y,
-        screen: autojsUtils.describeScreenSize(bounds)
-      });
-      return autojsUtils.clickPoint(x, y, logger, "search_input_focus");
+      var inputNode = findSearchInputNode();
+      if (inputNode) {
+        logger.info("搜索入口命中顶部提交按钮，改点真实输入框", {
+          bounds: autojsUtils.formatBounds(bounds),
+          inputBounds: autojsUtils.formatBounds(inputNode.bounds && inputNode.bounds()),
+          screen: autojsUtils.describeScreenSize(bounds)
+        });
+        return autojsUtils.safeClick(inputNode, 3, logger);
+      }
     }
     return autojsUtils.safeClick(searchNode, 3, logger);
   }
@@ -281,11 +327,48 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
   function isSearchInputAlreadyVisible(visibleText) {
     var lines = screenRecognizer.normalizeVisibleLines(visibleText);
     return (
+      !!findSearchInputNode() ||
       screenRecognizer.hasLineInFirst(lines, "搜索", 8) ||
-      screenRecognizer.hasSearchTabCluster(visibleText) ||
       /相关搜索|筛选|最近看过/.test(visibleText || "") ||
       !!(activeSearchKeyword && visibleText && visibleText.indexOf(activeSearchKeyword) >= 0)
     );
+  }
+
+  function findSearchInputNode() {
+    var selectors = [
+      className("android.widget.EditText"),
+      idContains("et_search"),
+      idContains("search_kw"),
+      idContains("search_edit"),
+      descContains("搜索框")
+    ];
+    for (var i = 0; i < selectors.length; i++) {
+      var node = null;
+      try {
+        node = selectors[i].findOne(300);
+      } catch (error) {
+        node = null;
+      }
+      if (!node || !node.bounds) {
+        continue;
+      }
+      var bounds = node.bounds();
+      var screen = autojsUtils.getScreenSize(bounds);
+      var maxInputBottom = Math.max(220, Math.floor(screen.height * 0.18));
+      if (bounds && bounds.bottom > 0 && bounds.bottom <= maxInputBottom && bounds.width() > screen.width * 0.28) {
+        return node;
+      }
+    }
+    return null;
+  }
+
+  function isSearchKeywordVisible(keyword) {
+    keyword = String(keyword || "").trim();
+    if (!keyword) {
+      return false;
+    }
+    var visibleText = extractVisibleText();
+    return !!(visibleText && visibleText.indexOf(keyword) >= 0);
   }
 
   function submitSearchKeyword(keyword) {
@@ -775,6 +858,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       return false;
     }
 
+    switchTargetLiveSearchTab("\u7efc\u5408", keyword, 0);
+
     for (var attempt = 1; attempt <= 4; attempt++) {
       if (isLiveRoomVisible()) {
         if (confirmTargetLiveRoom(keyword, targetKeywords, attempt, "already_in_live_room")) {
@@ -794,6 +879,17 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         return true;
       }
 
+      if (attempt === 1 && switchTargetLiveSearchTab("用户", keyword, attempt)) {
+        continue;
+      }
+      if (attempt === 2 && switchTargetLiveSearchTab("直播", keyword, attempt)) {
+        continue;
+      }
+
+      if (attempt === 3 && switchTargetLiveSearchTab("\u7efc\u5408", keyword, attempt)) {
+        continue;
+      }
+
       if (attempt < 4) {
         logger.warn("target live search entry not found, scroll search results", {
           attempt: attempt,
@@ -811,6 +907,65 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       textSample: extractVisibleText().slice(0, 220)
     });
     return false;
+  }
+
+  function switchTargetLiveSearchTab(tabName, keyword, attempt) {
+    var tabNode = findSearchResultTab(tabName);
+    if (!tabNode) {
+      logger.warn("target live search tab not found", {
+        tabName: tabName,
+        keyword: keyword,
+        attempt: attempt,
+        textSample: extractVisibleText().slice(0, 180)
+      });
+      return false;
+    }
+    logger.info("target live search switch tab", {
+      tabName: tabName,
+      keyword: keyword,
+      attempt: attempt,
+      bounds: autojsUtils.formatBounds(tabNode.bounds && tabNode.bounds())
+    });
+    autojsUtils.safeClick(tabNode, 3, logger);
+    autojsUtils.sleepRandom(1400, 2200);
+    return true;
+  }
+
+  function findSearchResultTab(tabName) {
+    var nodes = [];
+    pushFoundNodes(nodes, text(tabName));
+    pushFoundNodes(nodes, desc(tabName));
+    pushFoundNodes(nodes, textContains(tabName));
+    pushFoundNodes(nodes, descContains(tabName));
+    var screen = autojsUtils.getScreenSize();
+    var best = null;
+    var bestScore = -1;
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var bounds = node && node.bounds && node.bounds();
+      if (!bounds) {
+        continue;
+      }
+      var centerY = bounds.centerY();
+      if (centerY < screen.height * 0.06 || centerY > screen.height * 0.28) {
+        continue;
+      }
+      var ownText = getNodeOwnText(node);
+      var score = 0;
+      if (ownText === tabName) {
+        score += 40;
+      } else if (ownText.indexOf(tabName) >= 0) {
+        score += 20;
+      }
+      if (bounds.width() >= 40 && bounds.width() <= screen.width * 0.35) {
+        score += 10;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = node;
+      }
+    }
+    return bestScore >= 20 ? best : null;
   }
 
   function buildTargetRoomKeywords(targetRoom, fallbackKeyword) {
@@ -943,7 +1098,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
     var currentText = extractVisibleText();
     if (containsLiveEntryText(currentText) && containsAnyTargetKeyword(currentText, targetKeywords)) {
-      if (clickTargetLiveSearchCardFallback(entry, keyword, attempt, currentText)) {
+      if (clickTargetLiveSearchCardFallback(entry, keyword, targetKeywords, attempt, currentText)) {
         return true;
       }
     }
@@ -977,7 +1132,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return false;
   }
 
-  function clickTargetLiveSearchCardFallback(entry, keyword, attempt, visibleText) {
+  function clickTargetLiveSearchCardFallback(entry, keyword, targetKeywords, attempt, visibleText) {
     var screen = autojsUtils.getScreenSize();
     var bounds = entry && entry.bounds;
     var anchorY = bounds && bounds.bottom ? bounds.bottom : Math.floor(screen.height * 0.35);

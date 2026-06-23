@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 3020",
-    "build": "tsc --noEmit && vite build",
+    "build": "bun run build:prod",
+    "build:dev": "tsc --noEmit && vite build --mode development",
+    "build:prod": "tsc --noEmit && vite build --mode production",
     "preview": "vite preview --host 0.0.0.0 --port 3020",
     "typecheck": "tsc --noEmit"
   },

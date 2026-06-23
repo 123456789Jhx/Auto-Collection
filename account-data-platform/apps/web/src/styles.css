@@ -13,6 +13,36 @@ body {
   min-height: 100vh;
 }
 
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #eef2f7;
+}
+
+.login-panel {
+  width: min(420px, 100%);
+  padding: 28px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12);
+}
+
+.login-brand {
+  margin-bottom: 22px;
+}
+
+.login-brand .ant-typography {
+  margin-top: 0;
+}
+
+.login-alert {
+  margin-bottom: 16px;
+}
+
 .sidebar {
   background: #17212b;
 }

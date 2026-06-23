@@ -446,9 +446,12 @@ function createCollectorApp(context) {
     }
     var liveCommentPriority = !!context.liveCommentPriorityRequested ||
       floatyControl.state.liveCommentControlStatus === "running";
+    var mustVerifyTargetLiveRoom = (liveCommentPriority || config.task.liveCommentDirectTest === true) &&
+      shouldEnterTargetLiveRoom();
     var alreadyInLiveRoom = false;
     try {
-      alreadyInLiveRoom = config.task.liveCommentDirectTest === true &&
+      alreadyInLiveRoom = !mustVerifyTargetLiveRoom &&
+        config.task.liveCommentDirectTest === true &&
         douyin.isForeground && douyin.isForeground() &&
         douyin.isLiveRoomVisible && douyin.isLiveRoomVisible();
     } catch (error) {

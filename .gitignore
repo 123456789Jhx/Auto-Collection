@@ -16,6 +16,7 @@ account-data-platform/**/*.tsbuildinfo
 account-data-platform/.env
 account-data-platform/.env.*
 !account-data-platform/.env.example
+!account-data-platform/.env.development.example
 !account-data-platform/.env.production.example
 
 # Runtime collection outputs

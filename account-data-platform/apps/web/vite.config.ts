@@ -1,15 +1,23 @@
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
+import { defineConfig, loadEnv } from "vite";
 
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    port: 3020,
-    proxy: {
-      "/api": {
-        target: "http://localhost:3010",
-        changeOrigin: true
+const envDir = fileURLToPath(new URL("../..", import.meta.url));
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, envDir, "");
+
+  return {
+    envDir,
+    plugins: [react()],
+    server: {
+      port: Number(env.WEB_PORT ?? 3020),
+      proxy: {
+        "/api": {
+          target: env.VITE_API_PROXY_TARGET ?? "http://localhost:3010",
+          changeOrigin: true
+        }
       }
     }
-  }
+  };
 });

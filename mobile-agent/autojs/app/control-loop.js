@@ -441,7 +441,14 @@ function createControlLoop(context) {
       return;
     }
     if (commandType === "STOP") {
+      context.liveCommentPriorityRequested = false;
+      counters.lastStopReason = "backend_live_comment_stop";
       floatyControl.update({
+        running: false,
+        paused: true,
+        stopRequested: true,
+        exitRequested: false,
+        manualOverride: true,
         liveCommentControlStatus: "stopped",
         liveCommentExecutionEnabled: false,
         lastManualAction: "backend_live_comment_stop",
@@ -449,6 +456,10 @@ function createControlLoop(context) {
       });
       logCommandApplied(command, "INFO", {
         taskType: payload.taskType,
+        running: false,
+        paused: true,
+        stopRequested: true,
+        exitRequested: false,
         liveCommentControlStatus: "stopped",
         liveCommentExecutionEnabled: false
       });

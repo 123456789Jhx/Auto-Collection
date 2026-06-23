@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+export const adminLoginSchema = z.object({
+  username: z.string().trim().min(1),
+  password: z.string().min(1)
+});
+
+export type AdminLoginPayload = z.infer<typeof adminLoginSchema>;
+
 export const createTaskSchema = z
   .object({
     taskCode: z.string().min(1),
@@ -28,6 +35,79 @@ export const createTaskSchema = z
 
 export type CreateTaskPayload = z.infer<typeof createTaskSchema>;
 
+export const liveCommentConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    executeEnabled: z.boolean().optional(),
+    manualExecutionApproved: z.boolean().optional(),
+    groupName: z.enum(["A", "B", "C"]).optional(),
+    leaderAccountNames: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+    leaderAccountIds: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+    triggerKeywords: z.array(z.string().trim().min(1).max(30)).max(50).optional(),
+    replyPools: z
+      .object({
+        A: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
+        B: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
+        C: z.array(z.string().trim().min(1).max(80)).max(30).optional()
+      })
+      .strict()
+      .optional(),
+    sendDelayMinMs: z.number().int().min(500).max(60000).optional(),
+    sendDelayMaxMs: z.number().int().min(500).max(120000).optional(),
+    perDeviceCooldownSeconds: z.number().int().min(10).max(3600).optional(),
+    localCommentCacheSize: z.number().int().min(20).max(2000).optional(),
+    maxConsecutiveSendFailures: z.number().int().min(1).max(10).optional(),
+    perTaskMaxComments: z.number().int().min(1).max(500).optional(),
+    lowConfidenceAction: z.enum(["log_only", "skip"]).optional()
+  })
+  .strict()
+  .refine((data) => data.sendDelayMinMs === undefined || data.sendDelayMaxMs === undefined || data.sendDelayMaxMs >= data.sendDelayMinMs, {
+    message: "sendDelayMaxMs must be greater than or equal to sendDelayMinMs",
+    path: ["sendDelayMaxMs"]
+  });
+
+export type LiveCommentConfigPayload = z.infer<typeof liveCommentConfigSchema>;
+
+export const liveCommentRoleSchema = z.enum(["none", "followed", "follower"]);
+export const liveCommentGroupSchema = z.enum(["A", "B", "C"]);
+export const liveCommentModeSchema = z.enum(["off", "target_follow", "agri_chatbot"]);
+
+export const p3ExtensionsConfigSchema = z
+  .object({
+    liveLike: z
+      .object({
+        enabled: z.literal(false).optional(),
+        manualExecutionApproved: z.literal(false).optional(),
+        maxLikesPerLiveRoom: z.number().int().min(0).max(3).optional(),
+        minIntervalSeconds: z.number().int().min(30).max(3600).optional(),
+        requireManualApproval: z.literal(true).optional()
+      })
+      .strict()
+      .optional(),
+    authorizedFollow: z
+      .object({
+        enabled: z.literal(false).optional(),
+        manualExecutionApproved: z.literal(false).optional(),
+        requireEmployeeAuthorization: z.literal(true).optional(),
+        targetAccountId: z.string().trim().max(100).optional(),
+        targetAccountName: z.string().trim().max(100).optional(),
+        independentTaskOnly: z.literal(true).optional()
+      })
+      .strict()
+      .optional(),
+    linkage: z
+      .object({
+        allowM1Input: z.literal(false).optional(),
+        allowM2Input: z.literal(false).optional(),
+        allowM3OutputToMaterialPool: z.literal(false).optional()
+      })
+      .strict()
+      .optional()
+  })
+  .strict();
+
+export type P3ExtensionsConfigPayload = z.infer<typeof p3ExtensionsConfigSchema>;
+
 export const updateTaskSchema = z
   .object({
     videoMinutesMin: z.number().int().min(120).optional(),
@@ -37,7 +117,10 @@ export const updateTaskSchema = z
     autoStart: z.boolean().optional(),
     collectComments: z.boolean().optional(),
     commentLimit: z.number().int().min(0).max(50).optional(),
-    heartbeatMinutes: z.number().int().min(1).max(60).optional()
+    heartbeatMinutes: z.number().int().min(1).max(60).optional(),
+    liveCommentConfig: liveCommentConfigSchema.optional(),
+    liveCommentBotConfig: z.record(z.unknown()).nullable().optional(),
+    p3ExtensionsConfig: p3ExtensionsConfigSchema.optional()
   })
   .refine((data) => data.videoMinutesMin === undefined || data.videoMinutesMax === undefined || data.videoMinutesMax >= data.videoMinutesMin, {
     message: "videoMinutesMax must be greater than or equal to videoMinutesMin",
@@ -50,7 +133,18 @@ export const updateTaskSchema = z
 
 export type UpdateTaskPayload = z.infer<typeof updateTaskSchema>;
 
-export const updateDeviceTaskConfigSchema = updateTaskSchema;
+export const updateDeviceTaskConfigSchema = z.intersection(
+  updateTaskSchema,
+  z.object({
+    liveCommentRole: liveCommentRoleSchema.optional(),
+    liveCommentGroup: liveCommentGroupSchema.nullable().optional(),
+    followedAccountName: z.string().trim().max(100).nullable().optional(),
+    followedAccountId: z.string().trim().max(100).nullable().optional(),
+    followedAliases: z.array(z.string().trim().min(1).max(100)).max(20).nullable().optional(),
+    liveCommentMode: liveCommentModeSchema.optional(),
+    liveCommentBotConfig: z.record(z.unknown()).nullable().optional()
+  })
+);
 
 export type UpdateDeviceTaskConfigPayload = z.infer<typeof updateDeviceTaskConfigSchema>;
 
@@ -58,7 +152,8 @@ export const updateDeviceSchema = z.object({
   deviceName: z.string().trim().min(1).max(100).optional(),
   enabled: z.boolean().optional(),
   remark: z.string().trim().max(500).optional(),
-  lastRegion: z.string().trim().max(100).optional()
+  lastRegion: z.string().trim().max(100).optional(),
+  accountProfile: z.record(z.unknown()).nullable().optional()
 });
 
 export type UpdateDevicePayload = z.infer<typeof updateDeviceSchema>;

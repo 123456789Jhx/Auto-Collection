@@ -3,6 +3,8 @@ import { deviceStatusSchema, runtimeLogLevelSchema, sceneTypeSchema } from "../d
 
 export const mobileTaskConfigSchema = z.object({
   taskId: z.string(),
+  templateCode: z.string().optional(),
+  deviceCode: z.string().optional(),
   platform: z.string(),
   mode: z.enum(["search", "feed"]),
   searchKeywords: z.array(z.string()),
@@ -14,7 +16,21 @@ export const mobileTaskConfigSchema = z.object({
   autoStart: z.boolean(),
   collectComments: z.boolean(),
   commentLimit: z.number().int(),
-  heartbeatMinutes: z.number().int()
+  heartbeatMinutes: z.number().int(),
+  liveCommentRole: z.enum(["none", "followed", "follower"]).optional(),
+  liveCommentGroup: z.enum(["A", "B", "C"]).nullable().optional(),
+  liveCommentMode: z.enum(["off", "target_follow", "agri_chatbot"]).optional(),
+  accountProfile: z.record(z.unknown()).nullable().optional(),
+  liveCommentBotConfig: z.record(z.unknown()).nullable().optional(),
+  followedAccounts: z
+    .array(z.object({
+      accountName: z.string().optional(),
+      accountId: z.string().optional(),
+      aliasNames: z.array(z.string()).optional()
+    }))
+    .optional(),
+  liveCommentConfig: z.record(z.unknown()).nullable().optional(),
+  p3ExtensionsConfig: z.record(z.unknown()).nullable().optional()
 });
 
 export const mobileCollectionRecordSchema = z.object({
@@ -74,6 +90,26 @@ export const mobileRuntimeLogSchema = z.object({
   reportedAt: z.string().optional()
 });
 
+export const mobileLiveCommentActionSchema = z.object({
+  taskId: z.string().optional(),
+  deviceId: z.string(),
+  platform: z.string().default("douyin"),
+  triggerEventId: z.string().optional(),
+  roomName: z.string().optional(),
+  leaderAccountName: z.string().optional(),
+  triggerText: z.string().optional(),
+  matchedKeywords: z.array(z.string()).optional(),
+  replyText: z.string().min(1),
+  plannedDelayMs: z.number().int().nonnegative().optional(),
+  status: z.enum(["planned", "sent", "failed", "skipped"]),
+  skipReason: z.string().optional(),
+  failureReason: z.string().optional(),
+  rawPayload: z.record(z.unknown()).optional(),
+  plannedAt: z.string().optional(),
+  sentAt: z.string().optional(),
+  reportedAt: z.string().optional()
+});
+
 export const mobileLogFileSchema = z.object({
   taskId: z.string().optional(),
   deviceId: z.string(),
@@ -94,6 +130,7 @@ export type MobileTaskConfig = z.infer<typeof mobileTaskConfigSchema>;
 export type MobileCollectionRecordPayload = z.infer<typeof mobileCollectionRecordSchema>;
 export type MobileHeartbeatPayload = z.infer<typeof mobileHeartbeatSchema>;
 export type MobileRuntimeLogPayload = z.infer<typeof mobileRuntimeLogSchema>;
+export type MobileLiveCommentActionPayload = z.infer<typeof mobileLiveCommentActionSchema>;
 export type MobileLogFilePayload = z.infer<typeof mobileLogFileSchema>;
 export type MobileCommandAckPayload = z.infer<typeof mobileCommandAckSchema>;
 export type MobileAgentUpdateEventPayload = z.infer<typeof mobileAgentUpdateEventSchema>;

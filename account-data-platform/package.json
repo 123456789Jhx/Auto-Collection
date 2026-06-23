@@ -11,6 +11,8 @@
     "dev": "bun run --filter '*' dev",
     "dev:web": "bun --filter @app/web dev",
     "dev:api": "bun --filter @app/api dev",
+    "compose:dev": "docker compose --env-file .env.development -f docker-compose.development.yml up",
+    "compose:prod": "docker compose --env-file .env.production -f docker-compose.production.yml up -d --build",
     "build": "bun run build:web && bun run build:api",
     "build:web": "bun --filter @app/web build",
     "build:api": "bun --filter @app/api build",

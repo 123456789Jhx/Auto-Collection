@@ -50,6 +50,7 @@ export async function resolveDeviceByToken(values: {
   platform?: string;
   appVersion?: string;
   lastIp?: string;
+  expectedDeviceCode?: string;
 }) {
   const device = await findDeviceByToken(values.deviceToken);
   if (!device) {
@@ -57,6 +58,9 @@ export async function resolveDeviceByToken(values: {
   }
   if (!device.enabled) {
     throw new Error("DEVICE_DISABLED");
+  }
+  if (values.expectedDeviceCode && device.deviceCode !== values.expectedDeviceCode) {
+    throw new Error("DEVICE_TOKEN_MISMATCH");
   }
   return (await updateDeviceRuntimeMetadata(device.id, values)) ?? device;
 }
@@ -94,6 +98,68 @@ export async function upsertDevice(deviceCode: string, platform?: string, appVer
 
 function tokenSuffix(deviceToken: string, length = 10) {
   return deviceToken.replace(/[^a-zA-Z0-9]/g, "").slice(0, length).toLowerCase() || "unknown";
+}
+
+function stableIndex(value: string, size: number) {
+  const source = value || "device";
+  let hash = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = ((hash << 5) - hash) + source.charCodeAt(index);
+    hash |= 0;
+  }
+  return Math.abs(hash) % size;
+}
+
+function defaultAccountProfile(deviceCode: string) {
+  const profiles = [
+    {
+      profileName: "桂北水稻种植户",
+      region: { province: "广西", city: "桂林", county: "全州", villageStyle: "丘陵水田" },
+      identity: { role: "种植户", years: 8, ageRange: "35-45", tone: "朴实、自然、懂田间管理" },
+      products: [{ name: "水稻", scale: "几十亩", season: "早稻/晚稻", topics: ["育秧", "病虫害", "水肥管理"] }],
+      interests: ["水稻病虫害", "农机", "肥料使用", "增产经验"]
+    },
+    {
+      profileName: "鲁中大棚蔬菜种植户",
+      region: { province: "山东", city: "潍坊", county: "寿光", villageStyle: "设施农业区" },
+      identity: { role: "蔬菜种植户", years: 10, ageRange: "35-50", tone: "务实、爱交流种植细节" },
+      products: [{ name: "大棚蔬菜", scale: "多个棚", season: "全年轮作", topics: ["控温", "病害", "水肥一体化"] }],
+      interests: ["大棚管理", "蔬菜病害", "肥水管理", "行情"]
+    },
+    {
+      profileName: "豫东小麦玉米种植户",
+      region: { province: "河南", city: "周口", county: "太康", villageStyle: "平原粮食区" },
+      identity: { role: "种植户", years: 12, ageRange: "40-55", tone: "直接、接地气、关心产量" },
+      products: [{ name: "小麦/玉米", scale: "百亩左右", season: "麦玉轮作", topics: ["除草", "追肥", "收割"] }],
+      interests: ["小麦管理", "玉米高产", "除草剂", "农机"]
+    },
+    {
+      profileName: "川西果园种植户",
+      region: { province: "四川", city: "眉山", county: "丹棱", villageStyle: "果园产区" },
+      identity: { role: "果农", years: 7, ageRange: "30-45", tone: "温和、喜欢问经验" },
+      products: [{ name: "柑橘", scale: "几十亩果园", season: "秋冬采收", topics: ["修剪", "病虫害", "膨果"] }],
+      interests: ["果树修剪", "病虫害", "水肥", "品质提升"]
+    },
+    {
+      profileName: "黑龙江大豆玉米种植户",
+      region: { province: "黑龙江", city: "绥化", county: "海伦", villageStyle: "东北旱田区" },
+      identity: { role: "种植户", years: 9, ageRange: "35-50", tone: "爽快、关注机械化和天气" },
+      products: [{ name: "大豆/玉米", scale: "几百亩", season: "春播秋收", topics: ["播种", "除草", "机械收获"] }],
+      interests: ["大豆种植", "玉米管理", "农机", "天气"]
+    }
+  ];
+  return {
+    ...profiles[stableIndex(deviceCode, profiles.length)],
+    speakingStyle: {
+      length: "short",
+      emojiAllowed: false,
+      questionRatio: 0.4
+    },
+    forbiddenClaims: ["夸大收益", "保证效果", "诱导私信", "售卖农资", "卖课"],
+    status: "enabled",
+    generatedBy: "system_default",
+    generatedAt: new Date().toISOString()
+  };
 }
 
 async function allocateDeviceCode(preferredCode: string, deviceToken: string) {
@@ -153,11 +219,12 @@ export async function upsertDeviceByToken(values: {
     .values({
       tenantId: config.tenantId,
       deviceCode,
-      deviceName: values.deviceName || "设备-" + suffix,
+      deviceName: values.deviceName || "Device-" + suffix,
       deviceToken: values.deviceToken,
       platform: values.platform,
       appVersion: values.appVersion,
       lastIp: values.lastIp,
+      accountProfile: defaultAccountProfile(deviceCode),
       status: "offline",
       remark: "registered: " + new Date().toISOString()
     })
@@ -175,6 +242,10 @@ export async function registerDeviceByToken(values: {
 }) {
   const existingByToken = await findDeviceByToken(values.deviceToken);
   if (existingByToken) {
+    const preferredCode = (values.preferredDeviceCode || "").trim();
+    if (preferredCode && existingByToken.deviceCode !== preferredCode) {
+      throw new Error("DEVICE_CODE_MISMATCH");
+    }
     return (await updateDeviceRuntimeMetadata(existingByToken.id, values)) ?? existingByToken;
   }
 
@@ -207,11 +278,12 @@ export async function registerDeviceByToken(values: {
     .values({
       tenantId: config.tenantId,
       deviceCode,
-      deviceName: values.deviceName || "设备-" + suffix,
+      deviceName: values.deviceName || "Device-" + suffix,
       deviceToken: values.deviceToken,
       platform: values.platform,
       appVersion: values.appVersion,
       lastIp: values.lastIp,
+      accountProfile: defaultAccountProfile(deviceCode),
       status: "offline",
       remark: "registered: " + new Date().toISOString()
     })

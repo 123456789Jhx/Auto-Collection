@@ -1,11 +1,11 @@
-import { mobileAgentUpdateEventSchema, mobileCollectionRecordSchema, mobileCommandAckSchema, mobileHeartbeatSchema, mobileLogFileSchema, mobileRuntimeLogSchema } from "@pkg/types";
+import { mobileAgentUpdateEventSchema, mobileCollectionRecordSchema, mobileCommandAckSchema, mobileHeartbeatSchema, mobileLiveCommentActionSchema, mobileLogFileSchema, mobileRuntimeLogSchema } from "@pkg/types";
 import { Hono } from "hono";
 import { savedResponse } from "../lib/response";
 import { validationError } from "../lib/validation";
 import { mobileAuth } from "../middleware/mobile-auth";
 import { acknowledgeCommand, pollCommands } from "../services/command.service";
 import { getAgentVersionCheck, saveAgentUpdateEvent } from "../services/agent-version.service";
-import { getCurrentTask, registerDeviceToken, saveCollectionRecord, saveHeartbeat, saveLogFile, saveRuntimeLog } from "../services/mobile.service";
+import { getCurrentTask, registerDeviceToken, saveCollectionRecord, saveHeartbeat, saveLiveCommentAction, saveLogFile, saveRuntimeLog } from "../services/mobile.service";
 
 type MobileVariables = {
   mobileBody: Record<string, unknown>;
@@ -52,6 +52,7 @@ mobileRoutes.post("/device-token/register", async (c) => {
     const result = await registerDeviceToken({
       deviceId: String(body.deviceId || ""),
       deviceToken: String(body.deviceToken || ""),
+      registrationSecret: c.req.header("x-registration-secret") || (typeof body.registrationSecret === "string" ? body.registrationSecret : undefined),
       platform: typeof body.platform === "string" ? body.platform : undefined,
       appVersion: typeof body.appVersion === "string" ? body.appVersion : undefined,
       deviceInfo: body.deviceInfo && typeof body.deviceInfo === "object" ? body.deviceInfo as Record<string, unknown> : undefined
@@ -73,8 +74,17 @@ mobileRoutes.post("/device-token/register", async (c) => {
     if (message === "DEVICE_TOKEN_CONFLICT") {
       return c.json({ error: { code: "DEVICE_TOKEN_CONFLICT", message: "Device token does not match bound token", details: {} } }, 409);
     }
+    if (message === "DEVICE_CODE_MISMATCH") {
+      return c.json({ error: { code: "DEVICE_CODE_MISMATCH", message: "Device token is already bound to another device code", details: {} } }, 409);
+    }
+    if (message === "DEVICE_CODE_CONFLICT") {
+      return c.json({ error: { code: "DEVICE_CODE_CONFLICT", message: "Device code is already bound to another phone", details: {} } }, 409);
+    }
     if (message === "DEVICE_ID_NOT_UNIQUE") {
       return c.json({ error: { code: "DEVICE_ID_NOT_UNIQUE", message: "Device ID must be unique. Upgrade the mobile agent.", details: {} } }, 409);
+    }
+    if (message === "REGISTRATION_SECRET_INVALID") {
+      return c.json({ error: { code: "REGISTRATION_SECRET_INVALID", message: "Mobile registration secret is invalid", details: {} } }, 403);
     }
     return c.json({ error: { code: "INVALID_DEVICE_TOKEN", message: "Invalid device token registration payload", details: {} } }, 400);
   }
@@ -151,6 +161,25 @@ mobileRoutes.post("/runtime-logs", async (c) => {
   return c.json(savedResponse(log.id, log.createdAt));
 });
 
+mobileRoutes.post("/live-comment-actions", async (c) => {
+  const body = mobileBody(c);
+  const parsed = mobileLiveCommentActionSchema.safeParse(body);
+  if (!parsed.success) {
+    logValidationError("/live-comment-actions", body, parsed.error);
+    return validationError(c, parsed.error);
+  }
+  const action = await saveLiveCommentAction(parsed.data, clientIp(c), deviceToken(c));
+  mobileLog("live_comment_action_saved", {
+    deviceId: parsed.data.deviceId,
+    taskId: parsed.data.taskId,
+    status: parsed.data.status,
+    actionId: action.id,
+    createdAt: action.createdAt,
+    clientIp: clientIp(c)
+  });
+  return c.json(savedResponse(action.id, action.createdAt));
+});
+
 mobileRoutes.post("/log-files", async (c) => {
   const body = mobileBody(c);
   const parsed = mobileLogFileSchema.safeParse(body);
@@ -192,7 +221,16 @@ mobileRoutes.post("/commands/:id/ack", async (c) => {
     logValidationError(`/commands/${c.req.param("id")}/ack`, body, parsed.error);
     return validationError(c, parsed.error);
   }
-  const command = await acknowledgeCommand(c.req.param("id"), parsed.data, deviceToken(c));
+  let command: Awaited<ReturnType<typeof acknowledgeCommand>>;
+  try {
+    command = await acknowledgeCommand(c.req.param("id"), parsed.data, deviceToken(c));
+  } catch (error) {
+    const message = String(error instanceof Error ? error.message : error);
+    if (message === "COMMAND_NOT_FOUND") {
+      return c.json({ error: { code: "COMMAND_NOT_FOUND", message: "Command does not belong to this device or no longer exists", details: {} } }, 404);
+    }
+    throw error;
+  }
   mobileLog("command_acknowledged", {
     commandId: command.id,
     deviceId: parsed.data.deviceId,

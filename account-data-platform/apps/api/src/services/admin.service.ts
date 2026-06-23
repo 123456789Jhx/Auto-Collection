@@ -4,8 +4,9 @@ import { listDevices, updateDeviceByCode } from "../repositories/device.reposito
 import { getDeviceDailyProgressSummaries, listDeviceHeartbeats, listLatestHeartbeats, listLatestHeartbeatsByDeviceIds } from "../repositories/heartbeat.repository";
 import { countRuntimeLogs, getLogDateSummaries, getLogDeviceSummaries, listRuntimeLogs } from "../repositories/log.repository";
 import { getDeviceLogFile, getLogFileDeviceSummaries, listDeviceLogFileDates, listDeviceLogFiles } from "../repositories/log-file.repository";
+import { getLiveCommentDeviceSummaries, listLiveCommentActions } from "../repositories/live-comment.repository";
 import { countCollectionRecords, getRecordDateSummaries, getRecordDeviceSummaries, getSceneCountsSince, listCollectionRecords } from "../repositories/record.repository";
-import { findDeviceTaskConfig, listTasks, updateTask, upsertDeviceTaskConfig } from "../repositories/task.repository";
+import { findDeviceTaskConfig, listTasks, resolveTaskConfig, updateTask, upsertDeviceTaskConfig } from "../repositories/task.repository";
 import { createCommand } from "./command.service";
 import { listResponse } from "../lib/response";
 import { parseOptionalDate } from "../lib/date";
@@ -77,15 +78,16 @@ export async function getOverview() {
     const heartbeat = latestHeartbeatByDeviceId.get(device.id);
     const rawPayload = heartbeat?.rawPayload ?? {};
     const todayProgress = todayProgressByDeviceCode.get(device.deviceCode);
-    const currentTask = heartbeat?.sceneType === "video" || heartbeat?.sceneType === "live" ? heartbeat.sceneType : "none";
-    const rawVideoElapsed = numberFromRaw(rawPayload, "videoElapsedMinutes") ?? (heartbeat?.sceneType === "video" ? heartbeat.elapsedMinutes ?? 0 : 0);
-    const rawLiveElapsed = numberFromRaw(rawPayload, "liveElapsedMinutes") ?? (heartbeat?.sceneType === "live" ? heartbeat.elapsedMinutes ?? 0 : 0);
+    const isActiveHeartbeat = heartbeat?.status === "running";
+    const currentTask = isActiveHeartbeat && (heartbeat?.sceneType === "video" || heartbeat?.sceneType === "live") ? heartbeat.sceneType : "none";
+    const rawVideoElapsed = isActiveHeartbeat ? numberFromRaw(rawPayload, "videoElapsedMinutes") ?? (heartbeat?.sceneType === "video" ? heartbeat.elapsedMinutes ?? 0 : 0) : 0;
+    const rawLiveElapsed = isActiveHeartbeat ? numberFromRaw(rawPayload, "liveElapsedMinutes") ?? (heartbeat?.sceneType === "live" ? heartbeat.elapsedMinutes ?? 0 : 0) : 0;
     const videoElapsed = Math.max(Number(rawVideoElapsed ?? 0), Number(todayProgress?.maxVideoElapsedMinutes ?? 0));
     const liveElapsed = Math.max(Number(rawLiveElapsed ?? 0), Number(todayProgress?.maxLiveElapsedMinutes ?? 0));
-    const videoPlanned = numberFromRaw(rawPayload, "plannedVideoMinutes") ?? todayProgress?.maxVideoPlannedMinutes;
-    const livePlanned = numberFromRaw(rawPayload, "plannedLiveMinutes") ?? todayProgress?.maxLivePlannedMinutes;
-    const rawVideoRemaining = numberFromRaw(rawPayload, "videoRemainingMinutes") ?? (heartbeat?.sceneType === "video" ? heartbeat.remainingMinutes ?? null : null);
-    const rawLiveRemaining = numberFromRaw(rawPayload, "liveRemainingMinutes") ?? (heartbeat?.sceneType === "live" ? heartbeat.remainingMinutes ?? null : null);
+    const videoPlanned = isActiveHeartbeat ? numberFromRaw(rawPayload, "plannedVideoMinutes") ?? todayProgress?.maxVideoPlannedMinutes : todayProgress?.maxVideoPlannedMinutes;
+    const livePlanned = isActiveHeartbeat ? numberFromRaw(rawPayload, "plannedLiveMinutes") ?? todayProgress?.maxLivePlannedMinutes : todayProgress?.maxLivePlannedMinutes;
+    const rawVideoRemaining = isActiveHeartbeat ? numberFromRaw(rawPayload, "videoRemainingMinutes") ?? (heartbeat?.sceneType === "video" ? heartbeat.remainingMinutes ?? null : null) : null;
+    const rawLiveRemaining = isActiveHeartbeat ? numberFromRaw(rawPayload, "liveRemainingMinutes") ?? (heartbeat?.sceneType === "live" ? heartbeat.remainingMinutes ?? null : null) : null;
     const videoRemaining = videoPlanned && videoPlanned > 0 ? Math.max(0, Number(videoPlanned) - videoElapsed) : rawVideoRemaining;
     const liveRemaining = livePlanned && livePlanned > 0 ? Math.max(0, Number(livePlanned) - liveElapsed) : rawLiveRemaining;
     return {
@@ -101,9 +103,9 @@ export async function getOverview() {
       liveRemainingMinutes: liveRemaining,
       plannedLiveMinutes: livePlanned,
       remainingMinutes: heartbeat?.remainingMinutes ?? null,
-      viewedCount: Math.max(Number(heartbeat?.viewedCount ?? 0), Number(todayProgress?.maxViewedCount ?? 0)),
-      liveViewedCount: Math.max(Number(heartbeat?.liveViewedCount ?? 0), Number(todayProgress?.maxLiveViewedCount ?? 0)),
-      capturedCount: Math.max(Number(heartbeat?.capturedCount ?? 0), Number(todayProgress?.maxCapturedCount ?? 0)),
+      viewedCount: Math.max(isActiveHeartbeat ? Number(heartbeat?.viewedCount ?? 0) : 0, Number(todayProgress?.maxViewedCount ?? 0)),
+      liveViewedCount: Math.max(isActiveHeartbeat ? Number(heartbeat?.liveViewedCount ?? 0) : 0, Number(todayProgress?.maxLiveViewedCount ?? 0)),
+      capturedCount: Math.max(isActiveHeartbeat ? Number(heartbeat?.capturedCount ?? 0) : 0, Number(todayProgress?.maxCapturedCount ?? 0)),
       lastHeartbeatAt: heartbeat?.reportedAt ?? device.lastHeartbeatAt,
       heartbeat
     };
@@ -128,7 +130,7 @@ export async function getDevices() {
   return devices.map((device) => {
     const latestHeartbeat = heartbeatByDeviceId.get(device.id);
     const deviceStatus = mapDeviceStatus(device);
-    const activeTask = deviceStatus.effectiveStatus !== "offline" && (latestHeartbeat?.sceneType === "video" || latestHeartbeat?.sceneType === "live");
+    const activeTask = latestHeartbeat?.status === "running" && (latestHeartbeat.sceneType === "video" || latestHeartbeat.sceneType === "live");
     return hideDeviceSecret({
       ...deviceStatus,
       currentTask: activeTask ? latestHeartbeat.sceneType : "none",
@@ -327,7 +329,7 @@ export async function updateTaskConfig(taskId: string, payload: UpdateTaskPayloa
 
 export async function getDeviceTaskConfig(deviceCode: string, platform = "douyin") {
   const result = await findDeviceTaskConfig(deviceCode, platform);
-  const source = result.config ?? result.task;
+  const source = resolveTaskConfig(result.task, result.config);
   return {
     deviceCode,
     platform: result.task.platform,
@@ -341,6 +343,16 @@ export async function getDeviceTaskConfig(deviceCode: string, platform = "douyin
     autoStart: source.autoStart,
     collectComments: source.collectComments,
     commentLimit: source.commentLimit,
+    liveCommentRole: source.liveCommentRole,
+    liveCommentGroup: source.liveCommentGroup,
+    liveCommentMode: source.liveCommentMode,
+    liveCommentBotConfig: source.liveCommentBotConfig,
+    accountProfile: result.device?.accountProfile ?? null,
+    followedAccountName: source.followedAccountName,
+    followedAccountId: source.followedAccountId,
+    followedAliases: source.followedAliases,
+    liveCommentConfig: source.liveCommentConfig ?? null,
+    p3ExtensionsConfig: source.p3ExtensionsConfig ?? null,
     heartbeatMinutes: source.heartbeatMinutes
   };
 }
@@ -360,4 +372,40 @@ export async function updateDeviceTaskConfig(deviceCode: string, payload: Update
     expiresInSeconds: 3600
   });
   return getDeviceTaskConfig(deviceCode, platform);
+}
+
+export async function getLiveCommentActions(rawQuery: unknown) {
+  const query = paginationQuerySchema.parse(rawQuery);
+  const raw = (rawQuery ?? {}) as Record<string, string | undefined>;
+  const result = await listLiveCommentActions(query.page, query.pageSize, {
+    deviceCode: raw.deviceCode,
+    status: raw.status,
+    keyword: query.keyword,
+    createdFrom: parseOptionalDate(query.createdFrom) ?? undefined,
+    createdTo: parseOptionalDate(query.createdTo) ?? undefined
+  });
+  return listResponse(result.data, query.page, query.pageSize, result.totalItems);
+}
+
+export async function getLiveCommentDeviceSummary(rawQuery: unknown) {
+  const raw = (rawQuery ?? {}) as Record<string, string | undefined>;
+  const createdFrom = parseOptionalDate(raw.createdFrom) ?? new Date(0);
+  const [devices, summaries] = await Promise.all([listDevices(), getLiveCommentDeviceSummaries(createdFrom)]);
+  const summaryByDeviceCode = new Map(summaries.map((summary) => [summary.deviceCode, summary]));
+  return devices.map((device) => {
+    const summary = summaryByDeviceCode.get(device.deviceCode);
+    return {
+      deviceId: device.id,
+      deviceCode: device.deviceCode,
+      deviceName: device.deviceName,
+      totalCount: summary?.totalCount ?? 0,
+      plannedCount: summary?.plannedCount ?? 0,
+      sentCount: summary?.sentCount ?? 0,
+      failedCount: summary?.failedCount ?? 0,
+      skippedCount: summary?.skippedCount ?? 0,
+      latestActionAt: summary?.latestActionAt ?? null,
+      deviceStatus: mapDeviceStatus(device).effectiveStatus,
+      lastHeartbeatAt: device.lastHeartbeatAt
+    };
+  });
 }
