@@ -6,6 +6,7 @@ function createControlLoop(context) {
   var counters = context.counters;
   var commandControl = context.commandControl;
   var heartbeatService = context.heartbeatService;
+  var taskScheduler = context.taskScheduler;
   var backendSync = context.backendSync || {
     lastAt: 0,
     running: false,
@@ -23,24 +24,35 @@ function createControlLoop(context) {
     return commandType === "START" || commandType === "RESUME" || commandType === "PAUSE" || commandType === "STOP";
   }
 
+  function commandTaskKey(command) {
+    var payload = command && (command.payload || command.payloadJson || {}) || {};
+    if (taskScheduler && taskScheduler.resolveTaskType) {
+      return taskScheduler.resolveTaskType(payload.taskType || "");
+    }
+    return String(payload.taskType || "video");
+  }
+
   function compactControlCommands(commands) {
-    var latestStateIndex = -1;
+    var latestStateIndexByTask = {};
     for (var i = 0; i < commands.length; i++) {
       if (isStateCommand(commands[i].commandType)) {
-        latestStateIndex = i;
+        latestStateIndexByTask[commandTaskKey(commands[i])] = i;
       }
     }
-    if (latestStateIndex < 0) {
+    if (Object.keys(latestStateIndexByTask).length === 0) {
       return commands;
     }
 
     var compacted = [];
     for (var j = 0; j < commands.length; j++) {
       var command = commands[j];
-      if (isStateCommand(command.commandType) && j !== latestStateIndex) {
+      var taskKey = commandTaskKey(command);
+      var latestStateIndex = latestStateIndexByTask[taskKey];
+      if (isStateCommand(command.commandType) && latestStateIndex !== undefined && j !== latestStateIndex) {
         logger.warn("忽略已被更新指令覆盖的后台控制指令", {
           commandId: command.id,
           commandType: command.commandType,
+          taskType: taskKey,
           latestCommandId: commands[latestStateIndex].id,
           latestCommandType: commands[latestStateIndex].commandType
         });
@@ -48,6 +60,7 @@ function createControlLoop(context) {
           applied: false,
           commandType: command.commandType,
           reason: "superseded_by_newer_state_command",
+          taskType: taskKey,
           latestCommandId: commands[latestStateIndex].id,
           latestCommandType: commands[latestStateIndex].commandType
         });
@@ -60,6 +73,14 @@ function createControlLoop(context) {
 
   function pollControlCommands(force) {
     if (!config.upload.controlEnabled) {
+      return;
+    }
+    if (uploader.isRegistered && !uploader.isRegistered()) {
+      if (force) {
+        logger.warn("backend command polling skipped: device not registered", {
+          deviceId: config.device.deviceId || ""
+        });
+      }
       return;
     }
     var intervalMs = (config.upload.commandPollIntervalSeconds || 30) * 1000;
@@ -142,12 +163,80 @@ function createControlLoop(context) {
     return "idle";
   }
 
+  function syncTaskSchedulerState(taskType, commandType, meta) {
+    if (!taskScheduler) {
+      return;
+    }
+    var normalizedTaskType = taskScheduler.resolveTaskType(taskType);
+    if (!normalizedTaskType) {
+      return;
+    }
+    if (commandType === "START" || commandType === "RESUME") {
+      taskScheduler.requestTask(normalizedTaskType, commandType, meta);
+      return;
+    }
+    if (commandType === "PAUSE") {
+      taskScheduler.pauseTask(normalizedTaskType, meta);
+      return;
+    }
+    if (commandType === "STOP") {
+      taskScheduler.stopTask(normalizedTaskType, meta);
+    }
+  }
+
+  function currentCheckpoint(extra) {
+    var checkpoint = {
+      currentPhase: counters.currentPhase,
+      viewedCount: counters.viewedCount,
+      liveViewedCount: counters.liveViewedCount,
+      liveRoomEnteredCount: counters.liveRoomEnteredCount,
+      liveCandidateCount: counters.liveCandidateCount,
+      liveRejectedCount: counters.liveRejectedCount,
+      capturedCount: counters.capturedCount,
+      plannedVideoMinutes: counters.plannedVideoMinutes,
+      plannedLiveMinutes: counters.plannedLiveMinutes,
+      videoElapsedMinutes: counters.videoElapsedMinutes,
+      videoRemainingMinutes: counters.videoRemainingMinutes,
+      liveElapsedMinutes: counters.liveElapsedMinutes,
+      liveRemainingMinutes: counters.liveRemainingMinutes,
+      lastStopReason: counters.lastStopReason,
+      phaseStartedAt: counters.phaseStartedAt,
+      phaseEndedAt: counters.phaseEndedAt
+    };
+    extra = extra || {};
+    Object.keys(extra).forEach(function (key) {
+      checkpoint[key] = extra[key];
+    });
+    return checkpoint;
+  }
+
   function syncBackendOnce(reason) {
     if (!config.upload.enabled) {
       return { success: false, message: "upload disabled" };
     }
 
     var tokenResult = uploader.registerDeviceToken();
+    if (!tokenResult || !tokenResult.success) {
+      backendSync.failureCount += 1;
+      backendSync.ready = false;
+      floatyControl.update({
+        lastMessage: "设备注册失败，等待重试"
+      });
+      var registerNow = Date.now();
+      var registerLogIntervalMs = Number(config.upload.failureLogIntervalMs || 5 * 60 * 1000);
+      if (backendSync.failureCount === 1 || backendSync.failureCount % 10 === 0 || registerNow - backendSync.lastFailureLogAt >= registerLogIntervalMs) {
+        backendSync.lastFailureLogAt = registerNow;
+        logger.warn("backend sync not ready: device registration failed", {
+          reason: reason,
+          failureCount: backendSync.failureCount,
+          statusCode: tokenResult && tokenResult.statusCode,
+          message: tokenResult && (tokenResult.message || tokenResult.body) || "",
+          nextRetrySeconds: Math.round(nextBackendSyncDelayMs() / 1000)
+        });
+      }
+      return { success: false, applied: false, message: "device registration failed" };
+    }
+
     var configResult = refreshRuntimeConfig();
     if (tokenResult && tokenResult.success && configResult && configResult.applied) {
       backendSync.failureCount = 0;
@@ -187,6 +276,9 @@ function createControlLoop(context) {
 
     backendSync.failureCount += 1;
     backendSync.ready = false;
+    floatyControl.update({
+      lastMessage: "后台未就绪，等待注册/配置同步"
+    });
     var now = Date.now();
     var logIntervalMs = Number(config.upload.failureLogIntervalMs || 5 * 60 * 1000);
     if (backendSync.failureCount === 1 || backendSync.failureCount % 10 === 0 || now - backendSync.lastFailureLogAt >= logIntervalMs) {
@@ -266,6 +358,10 @@ function createControlLoop(context) {
           lastManualAction: "backend_" + commandType,
           lastMessage: "后台指令恢复运行"
         });
+        syncTaskSchedulerState(payload.taskType, commandType, {
+          reason: "backend_command",
+          checkpoint: currentCheckpoint({ checkpointType: "backend_start" })
+        });
         logCommandApplied(command, "INFO", {
           running: true,
           paused: false,
@@ -283,6 +379,10 @@ function createControlLoop(context) {
           lastManualAction: "backend_pause",
           lastMessage: "后台指令暂停"
         });
+        syncTaskSchedulerState(payload.taskType, commandType, {
+          reason: "backend_command",
+          checkpoint: currentCheckpoint({ checkpointType: "backend_pause" })
+        });
         logCommandApplied(command, "INFO", {
           running: floatyControl.state.running,
           paused: true,
@@ -297,21 +397,31 @@ function createControlLoop(context) {
         floatyControl.update({
           running: false,
           stopRequested: true,
-          exitRequested: true,
-          paused: false,
+          exitRequested: false,
+          paused: true,
           manualOverride: true,
           lastManualAction: "backend_close",
-          lastMessage: "后台指令关闭脚本"
+          lastMessage: "后台指令停止任务"
+        });
+        syncTaskSchedulerState(payload.taskType, commandType, {
+          reason: "backend_command",
+          checkpoint: currentCheckpoint({ checkpointType: "backend_stop" })
         });
         logCommandApplied(command, "WARN", {
           running: floatyControl.state.running,
-          paused: false,
+          paused: true,
           stopRequested: true,
-          exitRequested: true,
+          exitRequested: false,
           stopReason: counters.lastStopReason
         });
-        heartbeatService.reportImmediateHeartbeat(counters.currentPhase, "stopped", "后台指令关闭脚本");
-        uploader.ackCommand(command.id, "DONE", { applied: true, commandType: commandType });
+        heartbeatService.reportImmediateHeartbeat(counters.currentPhase, "stopped", "后台指令停止任务");
+        uploader.ackCommand(command.id, "DONE", {
+          applied: true,
+          accepted: true,
+          completed: false,
+          commandType: commandType,
+          message: "command accepted; task execution continues asynchronously"
+        });
         return;
       }
       if (commandType === "STATUS") {
@@ -326,11 +436,32 @@ function createControlLoop(context) {
       }
       if (commandType === "REFRESH_CONFIG") {
         var configResult = refreshRuntimeConfig();
+        if (payload && payload.reenterTargetRoom === true) {
+          context.liveCommentPriorityRequested = true;
+          context.liveCommentTargetRoomRefreshRequested = true;
+          context.targetLiveRoomEntry = null;
+          syncTaskSchedulerState(payload.taskType, "START", {
+            reason: "target_room_config_saved",
+            checkpoint: currentCheckpoint({ checkpointType: "target_room_refresh" })
+          });
+          floatyControl.update({
+            running: true,
+            paused: false,
+            stopRequested: false,
+            manualOverride: false,
+            liveCommentControlStatus: "running",
+            liveCommentExecutionEnabled: true,
+            lastManualAction: "target_room_config_saved",
+            lastMessage: "指定直播间已刷新，准备重新进入"
+          });
+        }
         uploader.ackCommand(command.id, "DONE", {
           applied: !!configResult.applied,
           commandType: commandType,
+          taskType: payload.taskType,
           message: configResult.message,
-          config: configResult.config || null
+          config: configResult.config || null,
+          reenterTargetRoom: !!(payload && payload.reenterTargetRoom)
         });
         return;
       }
@@ -392,17 +523,41 @@ function createControlLoop(context) {
     var commandType = command.commandType;
     if (commandType === "REFRESH_CONFIG") {
       var configResult = refreshRuntimeConfig();
+      if (payload && payload.reenterTargetRoom === true) {
+        context.liveCommentPriorityRequested = true;
+        context.liveCommentTargetRoomRefreshRequested = true;
+        context.targetLiveRoomEntry = null;
+        syncTaskSchedulerState(payload.taskType, "START", {
+          reason: "target_room_config_saved",
+          checkpoint: currentCheckpoint({ checkpointType: "target_room_refresh" })
+        });
+        floatyControl.update({
+          running: true,
+          paused: false,
+          stopRequested: false,
+          manualOverride: false,
+          liveCommentControlStatus: "running",
+          liveCommentExecutionEnabled: true,
+          lastManualAction: "target_room_config_saved",
+          lastMessage: "指定直播间已刷新，准备重新进入"
+        });
+      }
       uploader.ackCommand(command.id, "DONE", {
         applied: !!configResult.applied,
         commandType: commandType,
         taskType: payload.taskType,
         message: configResult.message,
-        config: configResult.config || null
+        config: configResult.config || null,
+        reenterTargetRoom: !!(payload && payload.reenterTargetRoom)
       });
       return;
     }
     if (commandType === "START" || commandType === "RESUME") {
       context.liveCommentPriorityRequested = true;
+      syncTaskSchedulerState(payload.taskType, commandType, {
+        reason: "backend_live_comment",
+        checkpoint: currentCheckpoint({ checkpointType: "backend_live_comment_start" })
+      });
       floatyControl.update({
         running: true,
         paused: false,
@@ -421,11 +576,25 @@ function createControlLoop(context) {
         liveCommentExecutionEnabled: true
       });
       heartbeatService.reportImmediateHeartbeat(counters.currentPhase, currentAgentStatus(), "直播评论已启动");
-      uploader.ackCommand(command.id, "DONE", { applied: true, commandType: commandType, taskType: payload.taskType });
+      uploader.ackCommand(command.id, "DONE", {
+        applied: true,
+        accepted: true,
+        completed: false,
+        commandType: commandType,
+        taskType: payload.taskType,
+        message: "live comment command accepted; target room execution continues asynchronously"
+      });
       return;
     }
-    if (commandType === "PAUSE") {
+      if (commandType === "PAUSE") {
+      syncTaskSchedulerState(payload.taskType, commandType, {
+        reason: "backend_live_comment",
+        checkpoint: currentCheckpoint({ checkpointType: "backend_live_comment_pause" })
+      });
       floatyControl.update({
+        running: true,
+        paused: true,
+        manualOverride: true,
         liveCommentControlStatus: "paused",
         liveCommentExecutionEnabled: false,
         lastManualAction: "backend_live_comment_pause",
@@ -442,7 +611,12 @@ function createControlLoop(context) {
     }
     if (commandType === "STOP") {
       context.liveCommentPriorityRequested = false;
+      context.liveCommentTargetRoomRefreshRequested = false;
       counters.lastStopReason = "backend_live_comment_stop";
+      syncTaskSchedulerState(payload.taskType, commandType, {
+        reason: "backend_live_comment",
+        checkpoint: currentCheckpoint({ checkpointType: "backend_live_comment_stop" })
+      });
       floatyControl.update({
         running: false,
         paused: true,

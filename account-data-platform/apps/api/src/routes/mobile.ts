@@ -86,6 +86,9 @@ mobileRoutes.post("/device-token/register", async (c) => {
     if (message === "REGISTRATION_SECRET_INVALID") {
       return c.json({ error: { code: "REGISTRATION_SECRET_INVALID", message: "Mobile registration secret is invalid", details: {} } }, 403);
     }
+    if (message === "DEVICE_DISABLED") {
+      return c.json({ error: { code: "DEVICE_DISABLED", message: "Device is disabled", details: {} } }, 403);
+    }
     return c.json({ error: { code: "INVALID_DEVICE_TOKEN", message: "Invalid device token registration payload", details: {} } }, 400);
   }
 });

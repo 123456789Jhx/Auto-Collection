@@ -73,9 +73,15 @@ function createFloatyControl(config, logger) {
   }
 
   function moveToSafeCorner(reason) {
-    var screenWidth = autojsUtils.getScreenSize().width;
-    var x = Math.max(20, screenWidth - 140);
-    var y = 120;
+    var screen = autojsUtils.getScreenSize();
+    var reasonText = String(reason || "");
+    var x = Math.max(20, screen.width - 140);
+    var y = Math.floor(Math.max(260, screen.height * 0.22));
+    if (/search/i.test(reasonText)) {
+      x = 20;
+      y = Math.floor(Math.max(420, screen.height * 0.78));
+    }
+    y = Math.max(80, Math.min(y, screen.height - 180));
     logger.info("floaty moved to safe corner", { reason: reason || "", x: x, y: y });
     return setPosition(x, y);
   }

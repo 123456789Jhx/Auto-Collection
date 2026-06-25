@@ -313,7 +313,11 @@ export async function registerDeviceToken(payload: {
   }
 
   const existingDevice = await findDeviceByToken(payload.deviceToken);
-  if (!existingDevice && config.mobileRegistrationSecret && payload.registrationSecret !== config.mobileRegistrationSecret) {
+  const secretVerified = !config.mobileRegistrationSecret || payload.registrationSecret === config.mobileRegistrationSecret;
+  if (existingDevice && !existingDevice.enabled && !secretVerified) {
+    throw new Error("DEVICE_DISABLED");
+  }
+  if (!existingDevice && !secretVerified) {
     throw new Error("REGISTRATION_SECRET_INVALID");
   }
   if (existingDevice && !isGenericDeviceId(payload.deviceId) && existingDevice.deviceCode !== payload.deviceId) {
@@ -321,7 +325,10 @@ export async function registerDeviceToken(payload: {
   }
   if (!existingDevice && !isGenericDeviceId(payload.deviceId)) {
     const boundDevice = await findDeviceByCode(payload.deviceId);
-    if (boundDevice && boundDevice.deviceToken && boundDevice.deviceToken !== payload.deviceToken) {
+    if (boundDevice && !boundDevice.enabled && !secretVerified) {
+      throw new Error("DEVICE_DISABLED");
+    }
+    if (boundDevice && boundDevice.deviceToken && boundDevice.deviceToken !== payload.deviceToken && !secretVerified) {
       throw new Error("DEVICE_CODE_CONFLICT");
     }
   }
@@ -331,7 +338,8 @@ export async function registerDeviceToken(payload: {
     preferredDeviceCode: isGenericDeviceId(payload.deviceId) ? undefined : payload.deviceId,
     platform: payload.platform,
     appVersion: payload.appVersion,
-    lastIp: clientIp
+    lastIp: clientIp,
+    reactivateDisabled: Boolean(config.mobileRegistrationSecret && secretVerified)
   });
 
   return {

@@ -275,16 +275,17 @@ function Patch-InrtPreserveUpdatedProject([string]$LauncherPath) {
   $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $LauncherPath
   $old = @"
         val projectConfig = ProjectConfig.fromProjectDir(mProjectDir)
-        if (projectConfig != null &&
-            TextUtils.equals(projectConfig.buildInfo.buildId, mProjectConfig.buildInfo.buildId)
-        ) {
+        if (projectConfig != null && File(mProjectDir, projectConfig.mainScriptFileName).isFile) {
             initKey(projectConfig)
             return
         }
 "@
   $new = @"
         val projectConfig = ProjectConfig.fromProjectDir(mProjectDir)
-        if (projectConfig != null && File(mProjectDir, projectConfig.mainScriptFileName).isFile) {
+        if (projectConfig != null &&
+            TextUtils.equals(projectConfig.buildInfo.buildId, mProjectConfig.buildInfo.buildId) &&
+            File(mProjectDir, projectConfig.mainScriptFileName).isFile
+        ) {
             initKey(projectConfig)
             return
         }
@@ -295,7 +296,7 @@ function Patch-InrtPreserveUpdatedProject([string]$LauncherPath) {
     Write-Utf8NoBom -Path $LauncherPath -Value $text
     Write-Host "Patched inrt project preservation:"
     Write-Host "  $LauncherPath"
-  } elseif ($text.Contains('if (projectConfig != null && File(mProjectDir, projectConfig.mainScriptFileName).isFile)')) {
+  } elseif ($text.Contains('TextUtils.equals(projectConfig.buildInfo.buildId, mProjectConfig.buildInfo.buildId)')) {
     Write-Host "Inrt project preservation already patched:"
     Write-Host "  $LauncherPath"
   } else {
@@ -460,20 +461,38 @@ Get-ChildItem -LiteralPath $projectSource -Force | ForEach-Object {
 }
 
 $registrationSecret = [string]$env:MOBILE_REGISTRATION_SECRET
-if (-not [string]::IsNullOrWhiteSpace($registrationSecret)) {
-  $targetConfigPath = Join-Path $targetProject "config.js"
-  if (Test-Path $targetConfigPath) {
-    $targetConfigText = Get-Content -Raw -Encoding UTF8 -LiteralPath $targetConfigPath
-    $targetConfigText = [regex]::Replace(
-      $targetConfigText,
-      '(registrationSecret\s*:\s*)".*?"',
-      '${1}"' + $registrationSecret + '"',
-      1
-    )
-    Write-Utf8NoBom -Path $targetConfigPath -Value $targetConfigText
-    Write-Host "Registration secret injected into staged AutoJS config."
-  }
+if ([string]::IsNullOrWhiteSpace($registrationSecret)) {
+  throw "MOBILE_REGISTRATION_SECRET is required for mobile agent APK packages."
 }
+
+$targetConfigPath = Join-Path $targetProject "config.js"
+if (-not (Test-Path $targetConfigPath)) {
+  throw "Config file not found in staged APK project: $targetConfigPath"
+}
+$targetConfigText = Get-Content -Raw -Encoding UTF8 -LiteralPath $targetConfigPath
+$registrationSecretPattern = '(registrationSecret\s*:\s*)".*?"'
+if (-not [regex]::IsMatch($targetConfigText, $registrationSecretPattern)) {
+  throw "registrationSecret field not found in staged APK config: $targetConfigPath"
+}
+$secretPatchedConfigText = [regex]::Replace(
+  $targetConfigText,
+  $registrationSecretPattern,
+  '${1}"' + $registrationSecret + '"',
+  1
+)
+$appVersionPattern = '(?s)(app\s*:\s*\{.*?version\s*:\s*)".*?"'
+if (-not [regex]::IsMatch($secretPatchedConfigText, $appVersionPattern)) {
+  throw "app.version field not found in staged APK config: $targetConfigPath"
+}
+$versionPatchedConfigText = [regex]::Replace(
+  $secretPatchedConfigText,
+  $appVersionPattern,
+  '${1}"' + $versionName + '"',
+  1
+)
+$targetConfigText = $versionPatchedConfigText
+Write-Utf8NoBom -Path $targetConfigPath -Value $targetConfigText
+Write-Host "Registration secret and version injected into staged AutoJS config."
 
 $buildId = "AGRI-" + (Get-Date -Format "yyyyMMddHHmmss")
 $inrtConfig = [ordered]@{

@@ -23,6 +23,22 @@ function createUploader(config, logger, storage) {
     return bytesToHex(digest.digest());
   }
 
+  function sha256FileHex(filePath) {
+    var digest = java.security.MessageDigest.getInstance("SHA-256");
+    var input = new java.io.FileInputStream(filePath);
+    var buffer = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, 8192);
+    try {
+      var readCount = input.read(buffer);
+      while (readCount > 0) {
+        digest.update(buffer, 0, readCount);
+        readCount = input.read(buffer);
+      }
+    } finally {
+      input.close();
+    }
+    return bytesToHex(digest.digest());
+  }
+
   function hmacSha256Hex(secret, value) {
     var mac = javax.crypto.Mac.getInstance("HmacSHA256");
     var key = new javax.crypto.spec.SecretKeySpec(new java.lang.String(secret || "").getBytes("UTF-8"), "HmacSHA256");
@@ -92,16 +108,88 @@ function createUploader(config, logger, storage) {
     return clean.substring(0, length || 12) || "unknown";
   }
 
+  function sanitizeDeviceCode(value) {
+    value = String(value || "").replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
+    if (value.length > 48) {
+      value = value.substring(0, 48);
+    }
+    return value;
+  }
+
+  function getAndroidId() {
+    try {
+      var resolver = typeof context !== "undefined" && context && context.getContentResolver ? context.getContentResolver() : null;
+      if (resolver && typeof android !== "undefined" && android && android.provider && android.provider.Settings && android.provider.Settings.Secure) {
+        return String(android.provider.Settings.Secure.getString(resolver, android.provider.Settings.Secure.ANDROID_ID) || "");
+      }
+    } catch (error) {
+    }
+    return "";
+  }
+
+  function stablePhysicalDeviceCode(token) {
+    var androidId = sanitizeDeviceCode(getAndroidId());
+    if (androidId && androidId !== "9774d56d682e549c" && androidId !== "unknown") {
+      return "device_" + androidId;
+    }
+    return "device_" + tokenSuffix(token, 12);
+  }
+
   function isGenericDeviceId(deviceId) {
-    return !deviceId || deviceId === "android_001" || deviceId === "unknown";
+    return !deviceId || deviceId === "android_001" || deviceId === "unknown" || deviceId === "device_local_placeholder";
+  }
+
+  function getDeviceStore() {
+    return storages.create("AgriVideoCollectorDevice");
+  }
+
+  function removeStoreValue(store, key) {
+    try {
+      if (store.remove) {
+        store.remove(key);
+        return;
+      }
+    } catch (error) {
+    }
+    try {
+      store.put(key, "");
+    } catch (error2) {
+    }
+  }
+
+  function ensureDeviceIdentityReset() {
+    var resetKey = config.upload.deviceIdentityResetKey || "";
+    if (!resetKey) {
+      return;
+    }
+    try {
+      var store = getDeviceStore();
+      var appliedKey = store.get("deviceIdentityResetKey", "");
+      if (appliedKey === resetKey) {
+        return;
+      }
+      removeStoreValue(store, "deviceToken");
+      removeStoreValue(store, "registrationReady");
+      removeStoreValue(store, "registrationCheckedAt");
+      removeStoreValue(store, "lastRegisteredDeviceId");
+      removeStoreValue(store, "lastRegistrationStatusCode");
+      removeStoreValue(store, "lastRegistrationMessage");
+      store.put("deviceIdentityResetKey", resetKey);
+      config.device.deviceToken = "";
+      config.device.registrationReady = false;
+      logger.warn("device token reset applied; stable device id preserved", { resetKey: resetKey });
+    } catch (error) {
+      logger.warn("device identity reset failed", { resetKey: resetKey, message: String(error) });
+    }
   }
 
   function ensureDeviceToken() {
+    ensureDeviceIdentityReset();
     if (config.device.deviceToken) {
       return config.device.deviceToken;
     }
     try {
-      var store = storages.create("AgriVideoCollectorDevice");
+      var store = getDeviceStore();
       var token = store.get("deviceToken", "");
       if (!token) {
         token = randomHex(64);
@@ -120,7 +208,7 @@ function createUploader(config, logger, storage) {
   function ensureDeviceIdentity() {
     var token = ensureDeviceToken();
     try {
-      var store = storages.create("AgriVideoCollectorDevice");
+      var store = getDeviceStore();
       var storedDeviceId = store.get("deviceId", "");
       if (storedDeviceId && !isGenericDeviceId(storedDeviceId)) {
         config.device.deviceId = storedDeviceId;
@@ -128,16 +216,48 @@ function createUploader(config, logger, storage) {
       }
 
       var configuredDeviceId = config.device.deviceId || "";
-      var deviceId = isGenericDeviceId(configuredDeviceId) ? "device_" + tokenSuffix(token, 12) : configuredDeviceId;
+      var deviceId = isGenericDeviceId(configuredDeviceId) ? stablePhysicalDeviceCode(token) : configuredDeviceId;
       store.put("deviceId", deviceId);
       config.device.deviceId = deviceId;
       return deviceId;
     } catch (error) {
       if (isGenericDeviceId(config.device.deviceId)) {
-        config.device.deviceId = "device_" + tokenSuffix(token, 12);
+        config.device.deviceId = stablePhysicalDeviceCode(token);
       }
       logger.warn("device id persistence failed; using token-derived id", { message: String(error), deviceId: config.device.deviceId });
       return config.device.deviceId;
+    }
+  }
+
+  function setRegistrationState(success, result) {
+    try {
+      var store = getDeviceStore();
+      store.put("registrationReady", success ? "true" : "false");
+      store.put("registrationCheckedAt", new Date().toISOString());
+      if (success) {
+        store.put("lastRegisteredDeviceId", config.device.deviceId || "");
+      }
+      if (result && result.statusCode) {
+        store.put("lastRegistrationStatusCode", String(result.statusCode));
+      }
+      if (result && result.message) {
+        store.put("lastRegistrationMessage", String(result.message).slice(0, 200));
+      }
+    } catch (error) {
+    }
+    config.device.registrationReady = success === true;
+  }
+
+  function isRegistered() {
+    if (config.device.registrationReady === true) {
+      return true;
+    }
+    try {
+      return getDeviceStore().get("registrationReady", "") === "true" &&
+        !!config.device.deviceId &&
+        !isGenericDeviceId(config.device.deviceId);
+    } catch (error) {
+      return false;
     }
   }
 
@@ -173,7 +293,7 @@ function createUploader(config, logger, storage) {
       if (response.statusCode >= 200 && response.statusCode < 300 && responsePayload.deviceCode) {
         config.device.deviceId = responsePayload.deviceCode;
         try {
-          storages.create("AgriVideoCollectorDevice").put("deviceId", responsePayload.deviceCode);
+          getDeviceStore().put("deviceId", responsePayload.deviceCode);
         } catch (storeError) {
           logger.warn("backend device id persistence failed", { message: String(storeError), deviceId: responsePayload.deviceCode });
         }
@@ -183,21 +303,25 @@ function createUploader(config, logger, storage) {
         body: body,
         deviceId: config.device.deviceId
       });
-      return {
+      var result = {
         enabled: true,
         success: response.statusCode >= 200 && response.statusCode < 300,
         statusCode: response.statusCode,
         body: body,
         deviceId: config.device.deviceId
       };
+      setRegistrationState(result.success, result);
+      return result;
     } catch (error) {
       logger.warn("device token registration failed", { message: String(error), deviceId: config.device.deviceId });
-      return {
+      var failure = {
         enabled: true,
         success: false,
         message: String(error),
         deviceId: config.device.deviceId
       };
+      setRegistrationState(false, failure);
+      return failure;
     }
   }
 
@@ -270,6 +394,9 @@ function createUploader(config, logger, storage) {
   function uploadHeartbeat(payload) {
     if (!config.upload.enabled) {
       return { enabled: false, success: false, message: "upload disabled" };
+    }
+    if (!isRegistered()) {
+      return { enabled: true, success: false, skipped: true, message: "device not registered" };
     }
 
     try {
@@ -630,6 +757,12 @@ function createUploader(config, logger, storage) {
     if (!config.upload.controlEnabled) {
       return [];
     }
+    if (!isRegistered()) {
+      if (shouldLogRequestStart("pollCommandsUnregistered")) {
+        logger.warn("skip command polling before device registration", { deviceId: deviceId || config.device.deviceId || "" });
+      }
+      return [];
+    }
 
     try {
       var url = endpoint("/mobile/commands?deviceId=" + encodeURIComponent(deviceId));
@@ -757,6 +890,186 @@ function createUploader(config, logger, storage) {
     }
   }
 
+  function ensureDir(path) {
+    if (!files.exists(path)) {
+      files.createWithDirs(path + "/.keep");
+      files.remove(path + "/.keep");
+    }
+  }
+
+  function deletePath(path) {
+    if (!path || !files.exists(path)) {
+      return;
+    }
+    try {
+      files.removeDir(path);
+      return;
+    } catch (error) {
+    }
+    try {
+      files.remove(path);
+    } catch (error2) {
+    }
+  }
+
+  function downloadFile(url, targetPath) {
+    var response = http.get(url, {
+      timeout: Math.max(15000, Number(config.upload.timeoutMs || 5000) * 4),
+      headers: requestHeaders(url, "GET", "")
+    });
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      var body = response.body ? response.body.string() : "";
+      throw new Error("download failed: " + response.statusCode + " " + body.slice(0, 160));
+    }
+    var bytes = response.body.bytes();
+    files.writeBytes(targetPath, bytes);
+    return bytes.length;
+  }
+
+  function unzipFile(zipPath, targetDir) {
+    ensureDir(targetDir);
+    var input = new java.util.zip.ZipInputStream(new java.io.BufferedInputStream(new java.io.FileInputStream(zipPath)));
+    var buffer = java.lang.reflect.Array.newInstance(java.lang.Byte.TYPE, 8192);
+    try {
+      var entry = input.getNextEntry();
+      while (entry !== null) {
+        var entryName = String(entry.getName() || "").replace(/\\/g, "/");
+        if (entryName.indexOf("..") >= 0 || entryName.charAt(0) === "/") {
+          throw new Error("unsafe zip entry: " + entryName);
+        }
+        var outputPath = files.join(targetDir, entryName);
+        if (entry.isDirectory()) {
+          ensureDir(outputPath);
+        } else {
+          var outputFile = new java.io.File(outputPath);
+          var parent = outputFile.getParentFile();
+          if (parent && !parent.exists()) {
+            parent.mkdirs();
+          }
+          var output = new java.io.BufferedOutputStream(new java.io.FileOutputStream(outputFile));
+          try {
+            var count = input.read(buffer);
+            while (count > 0) {
+              output.write(buffer, 0, count);
+              count = input.read(buffer);
+            }
+          } finally {
+            output.close();
+          }
+        }
+        input.closeEntry();
+        entry = input.getNextEntry();
+      }
+    } finally {
+      input.close();
+    }
+  }
+
+  function findUpdateSourceDir(extractDir) {
+    var directMain = files.join(extractDir, "main.js");
+    if (files.exists(directMain)) {
+      return extractDir;
+    }
+    var names = files.listDir(extractDir) || [];
+    for (var i = 0; i < names.length; i++) {
+      var candidate = files.join(extractDir, names[i]);
+      if (files.exists(files.join(candidate, "main.js"))) {
+        return candidate;
+      }
+    }
+    throw new Error("update package missing main.js");
+  }
+
+  function copyDirContents(sourceDir, targetDir) {
+    ensureDir(targetDir);
+    var names = files.listDir(sourceDir) || [];
+    for (var i = 0; i < names.length; i++) {
+      var name = names[i];
+      if (name === "datasource") {
+        continue;
+      }
+      var sourcePath = files.join(sourceDir, name);
+      var targetPath = files.join(targetDir, name);
+      var sourceFile = new java.io.File(sourcePath);
+      if (sourceFile.isDirectory()) {
+        deletePath(targetPath);
+        copyDirContents(sourcePath, targetPath);
+      } else {
+        var parent = new java.io.File(targetPath).getParentFile();
+        if (parent && !parent.exists()) {
+          parent.mkdirs();
+        }
+        if (files.exists(targetPath)) {
+          files.remove(targetPath);
+        }
+        files.copy(sourcePath, targetPath);
+      }
+    }
+  }
+
+  function applyAgentUpdate(versionResult, options) {
+    options = options || {};
+    var latest = versionResult && versionResult.latestVersion;
+    if (!latest || !latest.packageUrl || !latest.version) {
+      return { applied: false, message: "no update package" };
+    }
+    var scriptDir = options.scriptDir || (config.runtime && config.runtime.scriptDir) || files.cwd();
+    var updateRoot = files.join(config.output && config.output.baseDir || scriptDir, "agent-update");
+    var workDir = files.join(updateRoot, "work-" + latest.version + "-" + Date.now());
+    var zipPath = files.join(workDir, "package.zip");
+    var extractDir = files.join(workDir, "extract");
+
+    logger.warn("开始自动更新手机 Agent", {
+      fromVersion: config.app.version,
+      toVersion: latest.version,
+      packageUrl: latest.packageUrl,
+      forceUpdate: !!versionResult.forceUpdate
+    });
+    uploadAgentUpdateEvent({
+      eventType: "DOWNLOADING",
+      fromVersion: config.app.version,
+      toVersion: latest.version,
+      message: "downloading update package",
+      payload: { packageUrl: latest.packageUrl, forceUpdate: !!versionResult.forceUpdate }
+    });
+
+    ensureDir(workDir);
+    var size = downloadFile(latest.packageUrl, zipPath);
+    var actualSha256 = sha256FileHex(zipPath);
+    if (latest.sha256 && String(latest.sha256).toLowerCase() !== actualSha256) {
+      throw new Error("update package sha256 mismatch: expected " + latest.sha256 + ", actual " + actualSha256);
+    }
+
+    unzipFile(zipPath, extractDir);
+    var sourceDir = findUpdateSourceDir(extractDir);
+    copyDirContents(sourceDir, scriptDir);
+    config.app.version = latest.version;
+
+    uploadAgentUpdateEvent({
+      eventType: "APPLIED",
+      fromVersion: versionResult.currentVersion || "",
+      toVersion: latest.version,
+      message: "update package applied",
+      payload: {
+        packageUrl: latest.packageUrl,
+        sha256: actualSha256,
+        sizeBytes: size,
+        scriptDir: scriptDir
+      }
+    });
+    logger.warn("手机 Agent 自动更新完成", {
+      toVersion: latest.version,
+      scriptDir: scriptDir,
+      sizeBytes: size
+    });
+    return {
+      applied: true,
+      version: latest.version,
+      sha256: actualSha256,
+      sizeBytes: size
+    };
+  }
+
   function uploadAgentUpdateEvent(event) {
     if (!config.upload.enabled) {
       return { enabled: false, success: false, message: "upload disabled" };
@@ -798,11 +1111,13 @@ function createUploader(config, logger, storage) {
     uploadLogFilesByOptions: uploadLogFilesByOptions,
     ensureDeviceToken: ensureDeviceToken,
     registerDeviceToken: registerDeviceToken,
+    isRegistered: isRegistered,
     retryCached: retryCached,
     pollCommands: pollCommands,
     ackCommand: ackCommand,
     fetchCurrentTask: fetchCurrentTask,
     checkAgentVersion: checkAgentVersion,
+    applyAgentUpdate: applyAgentUpdate,
     uploadAgentUpdateEvent: uploadAgentUpdateEvent
   };
 }

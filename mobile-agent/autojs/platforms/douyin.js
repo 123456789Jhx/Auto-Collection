@@ -3,6 +3,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
   var createScreenRecognizer = require(files.join(config.runtime.scriptDir, "core/screen-recognizer.js")).createScreenRecognizer;
   var packageName = "com.ss.android.ugc.aweme";
   var activeSearchKeyword = "";
+  var pendingTargetLiveEntry = null;
   var screenRecognizer = injectedScreenRecognizer || createScreenRecognizer(config, logger, ocrEngine, { expectedPackage: packageName });
 
   function recognitionOptions() {
@@ -151,7 +152,15 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     if (searchNode) {
       focusSearchInput(searchNode);
       autojsUtils.sleepRandom(600, 1000);
-      return completeSearchKeyword(keyword, previousSearchKeyword, "node");
+      if (completeSearchKeyword(keyword, previousSearchKeyword, "node")) {
+        return true;
+      }
+      logger.warn("搜索入口控件命中但关键词未完成输入，改用坐标兜底重试", {
+        keyword: keyword,
+        textSample: extractVisibleText().slice(0, 220),
+        activity: safeCurrentActivity()
+      });
+      backFromSearchFallbackIfNeeded();
     }
 
     if (openSearchByCoordinateFallback(keyword, previousSearchKeyword)) {
@@ -163,28 +172,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
   }
 
   function completeSearchKeyword(keyword, previousSearchKeyword, source) {
-    try {
-      setText(keyword);
-    } catch (error) {
-      logger.warn("搜索关键词输入失败", { keyword: keyword, source: source || "", message: String(error) });
+    if (!enterSearchKeyword(keyword, source)) {
       activeSearchKeyword = previousSearchKeyword;
       return false;
-    }
-    autojsUtils.sleepRandom(300, 500);
-    if (!isSearchKeywordVisible(keyword)) {
-      var inputNode = findSearchInputNode();
-      if (inputNode && inputNode.setText) {
-        try {
-          inputNode.setText(keyword);
-          autojsUtils.sleepRandom(300, 500);
-        } catch (setTextError) {
-          logger.warn("search input direct setText failed", {
-            keyword: keyword,
-            source: source || "",
-            message: String(setTextError)
-          });
-        }
-      }
     }
     if (!isSearchKeywordVisible(keyword)) {
       logger.warn("search keyword not visible after input", {
@@ -227,6 +217,11 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       }
     }
     if (!isSearchResultPage()) {
+      if (recoverSearchResultIssue(keyword, 0, "after_submit")) {
+        autojsUtils.sleepRandom(900, 1400);
+      }
+    }
+    if (!isSearchResultPage()) {
       logger.warn("搜索提交后未确认进入搜索结果页", {
         keyword: keyword,
         source: source || "",
@@ -236,6 +231,178 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       return false;
     }
     return true;
+  }
+
+  function enterSearchKeyword(keyword, source) {
+    var attempts = [
+      inputSearchKeywordByNode,
+      inputSearchKeywordGlobally,
+      inputSearchKeywordByCoordinate,
+      inputSearchKeywordByClipboard
+    ];
+
+    for (var i = 0; i < attempts.length; i++) {
+      clearSearchKeywordIfPossible(keyword, source, i + 1);
+      if (attempts[i](keyword, source, i + 1)) {
+        autojsUtils.sleepRandom(300, 600);
+        if (isSearchKeywordVisible(keyword)) {
+          logger.info("搜索关键词输入成功", {
+            keyword: keyword,
+            source: source || "",
+            strategyIndex: i + 1,
+            textSample: extractVisibleText().slice(0, 180)
+          });
+          return true;
+        }
+      }
+      logger.warn("搜索关键词输入策略未生效", {
+        keyword: keyword,
+        source: source || "",
+        strategyIndex: i + 1,
+        textSample: extractVisibleText().slice(0, 180)
+      });
+    }
+
+    return false;
+  }
+
+  function clearSearchKeywordIfPossible(keyword, source, attempt) {
+    var clearNode =
+      autojsUtils.waitForElement(desc("清空"), 250, null, null) ||
+      autojsUtils.waitForElement(text("清空"), 250, null, null);
+    if (!clearNode) {
+      return false;
+    }
+    logger.info("清空搜索框旧内容", {
+      keyword: keyword,
+      source: source || "",
+      attempt: attempt,
+      bounds: autojsUtils.formatBounds(clearNode.bounds && clearNode.bounds())
+    });
+    autojsUtils.safeClick(clearNode, 3, logger);
+    autojsUtils.sleepRandom(200, 400);
+    return true;
+  }
+
+  function inputSearchKeywordByNode(keyword, source, attempt) {
+    var inputNode = findSearchInputNode();
+    if (!inputNode) {
+      logger.warn("未找到搜索输入框控件", { keyword: keyword, source: source || "", attempt: attempt });
+      return false;
+    }
+    try {
+      autojsUtils.safeClick(inputNode, 3, logger);
+      autojsUtils.sleepRandom(180, 320);
+      if (inputNode.setText) {
+        inputNode.setText(keyword);
+        return true;
+      }
+    } catch (error) {
+      logger.warn("搜索输入框控件 setText 失败", {
+        keyword: keyword,
+        source: source || "",
+        attempt: attempt,
+        message: String(error)
+      });
+    }
+    return false;
+  }
+
+  function inputSearchKeywordGlobally(keyword, source, attempt) {
+    try {
+      setText(keyword);
+      return true;
+    } catch (error) {
+      logger.warn("全局 setText 搜索关键词失败", {
+        keyword: keyword,
+        source: source || "",
+        attempt: attempt,
+        message: String(error)
+      });
+      return false;
+    }
+  }
+
+  function inputSearchKeywordByCoordinate(keyword, source, attempt) {
+    var point = findSearchInputFallbackPoint();
+    logger.info("坐标点击搜索输入框后输入关键词", {
+      keyword: keyword,
+      source: source || "",
+      attempt: attempt,
+      point: point,
+      screen: autojsUtils.describeScreenSize()
+    });
+    autojsUtils.clickPoint(point.x, point.y, logger, "search_input_fallback");
+    autojsUtils.sleepRandom(250, 450);
+    try {
+      setText(keyword);
+      return true;
+    } catch (setTextError) {
+      logger.warn("坐标聚焦后 setText 搜索关键词失败", {
+        keyword: keyword,
+        source: source || "",
+        attempt: attempt,
+        message: String(setTextError)
+      });
+    }
+    try {
+      if (typeof input === "function") {
+        input(keyword);
+        return true;
+      }
+    } catch (inputError) {
+      logger.warn("坐标聚焦后 input 搜索关键词失败", {
+        keyword: keyword,
+        source: source || "",
+        attempt: attempt,
+        message: String(inputError)
+      });
+    }
+    return false;
+  }
+
+  function inputSearchKeywordByClipboard(keyword, source, attempt) {
+    var point = findSearchInputFallbackPoint();
+    autojsUtils.clickPoint(point.x, point.y, logger, "search_input_clipboard_fallback");
+    autojsUtils.sleepRandom(200, 350);
+    try {
+      if (typeof setClip === "function") {
+        setClip(keyword);
+        autojsUtils.sleepRandom(150, 250);
+      }
+      if (typeof paste === "function") {
+        paste();
+        return true;
+      }
+      if (typeof input === "function") {
+        input(keyword);
+        return true;
+      }
+    } catch (error) {
+      logger.warn("剪贴板搜索关键词输入失败", {
+        keyword: keyword,
+        source: source || "",
+        attempt: attempt,
+        message: String(error)
+      });
+    }
+    return false;
+  }
+
+  function findSearchInputFallbackPoint() {
+    var inputNode = findSearchInputNode();
+    var bounds = inputNode && inputNode.bounds && inputNode.bounds();
+    if (bounds) {
+      return {
+        x: Math.floor(bounds.left + Math.min(bounds.width() * 0.35, 180)),
+        y: Math.floor(bounds.centerY())
+      };
+    }
+    var screen = autojsUtils.getScreenSize();
+    return {
+      x: Math.floor(screen.width * 0.36),
+      y: Math.floor(Math.max(72, screen.height * 0.075))
+    };
   }
 
   function openSearchByCoordinateFallback(keyword, previousSearchKeyword) {
@@ -834,6 +1001,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       return false;
     }
     autojsUtils.sleepRandom(1000, 1600);
+    recoverSearchResultIssue(keyword, 0, "open_live_search");
     logger.info("指定直播间测试：保留在综合搜索结果页，直接从综合页寻找直播入口", {
       keyword: keyword,
       textSample: extractVisibleText().slice(0, 180)
@@ -858,7 +1026,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       return false;
     }
 
-    switchTargetLiveSearchTab("\u7efc\u5408", keyword, 0);
+    ensureTargetLiveSearchComprehensiveTab(keyword, 0);
 
     for (var attempt = 1; attempt <= 4; attempt++) {
       if (isLiveRoomVisible()) {
@@ -874,30 +1042,36 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         autojsUtils.sleepRandom(1200, 1800);
       }
 
+      if (recoverSearchResultIssue(keyword, attempt, "target_live_search_loop")) {
+        ensureTargetLiveSearchComprehensiveTab(keyword, attempt);
+        continue;
+      }
+
+      if (clickTargetUserLiveEntryFromSearch(keyword, targetKeywords, targetRoom, attempt)) {
+        return true;
+      }
+
+      if (clickVisibleTargetLiveCardFromSearch(keyword, targetKeywords, attempt)) {
+        return true;
+      }
+
+      if (clickVisibleTargetLiveCardByTextFallback(keyword, targetKeywords, attempt)) {
+        return true;
+      }
+
       var entry = findTargetLiveSearchEntry(targetKeywords);
       if (entry && clickTargetLiveSearchEntry(entry, keyword, targetKeywords, attempt)) {
         return true;
       }
 
-      if (attempt === 1 && switchTargetLiveSearchTab("用户", keyword, attempt)) {
-        continue;
-      }
-      if (attempt === 2 && switchTargetLiveSearchTab("直播", keyword, attempt)) {
-        continue;
-      }
-
-      if (attempt === 3 && switchTargetLiveSearchTab("\u7efc\u5408", keyword, attempt)) {
-        continue;
-      }
-
       if (attempt < 4) {
-        logger.warn("target live search entry not found, scroll search results", {
+        logger.warn("target live search entry not found on comprehensive tab, scroll current results", {
           attempt: attempt,
           keyword: keyword,
           targetKeywords: targetKeywords,
           textSample: extractVisibleText().slice(0, 180)
         });
-        swipeSearchResultsUp();
+        advanceTargetLiveSearchResults(keyword, attempt);
       }
     }
 
@@ -907,6 +1081,391 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       textSample: extractVisibleText().slice(0, 220)
     });
     return false;
+  }
+
+  function clickTargetUserLiveEntryFromSearch(keyword, targetKeywords, targetRoom, attempt) {
+    var block = findTargetUserSearchBlock(targetKeywords, targetRoom);
+    if (!block) {
+      return false;
+    }
+
+    logger.info("target user block detected on search results", {
+      keyword: keyword,
+      attempt: attempt,
+      targetText: block.targetText.slice(0, 80),
+      contextText: block.contextText.slice(0, 180),
+      bounds: autojsUtils.formatBounds(block.bounds),
+      liveHit: block.liveHit,
+      liveReason: block.liveReason || ""
+    });
+
+    if (!block.liveHit) {
+      logger.info("target user block has no live entry, wait for current search result refresh", {
+        keyword: keyword,
+        attempt: attempt,
+        bounds: autojsUtils.formatBounds(block.bounds)
+      });
+      return false;
+    }
+
+    var points = buildTargetUserLiveClickPoints(block);
+    for (var i = 0; i < points.length; i++) {
+      logger.info("click target user live entry", {
+        keyword: keyword,
+        attempt: attempt,
+        point: points[i].name,
+        x: points[i].x,
+        y: points[i].y,
+        liveReason: block.liveReason || "",
+        bounds: autojsUtils.formatBounds(block.bounds)
+      });
+      rememberPendingTargetLiveEntry(keyword, targetKeywords, {
+        text: block.targetText,
+        contextText: block.contextText,
+        bounds: block.bounds
+      }, points[i].name);
+      autojsUtils.clickPoint(points[i].x, points[i].y, logger, "target_user_live_entry_" + points[i].name);
+      autojsUtils.sleepRandom(3000, 5000);
+      var afterText = extractVisibleText();
+      if (isEndedTargetLiveRoomText(afterText, targetKeywords)) {
+        logger.warn("target live entry opened ended live room, back and refresh results", {
+          keyword: keyword,
+          attempt: attempt,
+          point: points[i].name,
+          textSample: afterText.slice(0, 180)
+        });
+        if (!isSearchResultPage(afterText)) {
+          back();
+          autojsUtils.sleepRandom(1000, 1600);
+        }
+        refreshSearchResultsPage(keyword, attempt);
+        return false;
+      }
+      if (!isSearchResultPage(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, points[i].name)) {
+        return true;
+      }
+      if (!isSearchResultPage(afterText)) {
+        logger.warn("target user live entry click did not confirm live room, back to search results", {
+          keyword: keyword,
+          attempt: attempt,
+          point: points[i].name,
+          textSample: afterText.slice(0, 180)
+        });
+        back();
+        autojsUtils.sleepRandom(900, 1400);
+      }
+    }
+    return false;
+  }
+
+  function findTargetUserSearchBlock(targetKeywords, targetRoom) {
+    var keywords = buildTargetUserSearchKeywords(targetKeywords, targetRoom);
+    var nodes = [];
+    for (var i = 0; i < keywords.length; i++) {
+      pushFoundNodes(nodes, textContains(keywords[i]));
+      pushFoundNodes(nodes, descContains(keywords[i]));
+    }
+    var screen = autojsUtils.getScreenSize();
+    var best = null;
+    var bestScore = -1;
+    var samples = [];
+    for (var j = 0; j < nodes.length; j++) {
+      var node = nodes[j];
+      var bounds = node && node.bounds && node.bounds();
+      if (!bounds || !isTargetSearchBoundsAllowed(bounds, screen)) {
+        continue;
+      }
+      var textValue = getNodeOwnText(node);
+      var contextText = collectNodeContextText(node, 5);
+      var combined = [textValue, contextText].join("\n");
+      var keywordHit = containsAnyTargetKeyword(combined, keywords);
+      if (!keywordHit) {
+        continue;
+      }
+      var userLike = /粉丝|抖音号|关注|用户/.test(combined) || bounds.centerY() < screen.height * 0.42;
+      var liveInfo = detectTargetUserLiveInfo(node, bounds, combined, screen);
+      var score = 50;
+      if (userLike) {
+        score += 25;
+      }
+      if (liveInfo.liveHit) {
+        score += 45;
+      }
+      if (bounds.centerY() >= screen.height * 0.14 && bounds.centerY() <= screen.height * 0.52) {
+        score += 10;
+      }
+      if (samples.length < 8) {
+        samples.push({
+          text: textValue.slice(0, 50),
+          contextText: contextText.slice(0, 100),
+          bounds: autojsUtils.formatBounds(bounds),
+          userLike: userLike,
+          liveHit: liveInfo.liveHit,
+          score: score
+        });
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = {
+          node: node,
+          bounds: bounds,
+          targetText: textValue,
+          contextText: contextText,
+          liveHit: liveInfo.liveHit,
+          liveReason: liveInfo.reason,
+          score: score
+        };
+      }
+    }
+    logger.info("target user search block scanned", {
+      total: nodes.length,
+      selected: !!best,
+      bestScore: bestScore,
+      samples: samples
+    });
+    return bestScore >= 60 ? best : null;
+  }
+
+  function buildTargetUserSearchKeywords(targetKeywords, targetRoom) {
+    var result = [];
+    addTargetKeywordList(result, targetKeywords || []);
+    addTargetKeyword(result, targetRoom && targetRoom.anchorName);
+    addTargetKeyword(result, targetRoom && targetRoom.anchorId);
+    addTargetKeyword(result, targetRoom && targetRoom.douyinId);
+    addTargetKeyword(result, targetRoom && targetRoom.accountId);
+    return result;
+  }
+
+  function detectTargetUserLiveInfo(node, targetBounds, contextText, screen) {
+    var textLive = containsLiveEntryText(contextText) || /正在直播|直播中|开播中|直播\s*$/.test(String(contextText || ""));
+    if (textLive) {
+      return { liveHit: true, reason: "text_live_marker" };
+    }
+    var nearbyLiveNode = findNearbyLiveMarkerNode(targetBounds, screen);
+    if (nearbyLiveNode) {
+      return { liveHit: true, reason: "nearby_live_marker" };
+    }
+    var visualCard = hasLikelyLiveVisualCardBelow(targetBounds, screen);
+    if (visualCard) {
+      return { liveHit: true, reason: "visual_card_below_target" };
+    }
+    return { liveHit: false, reason: "" };
+  }
+
+  function findNearbyLiveMarkerNode(targetBounds, screen) {
+    var nodes = [];
+    pushFoundNodes(nodes, textMatches(".*(直播|直播中|正在直播).*"));
+    pushFoundNodes(nodes, descMatches(".*(直播|直播中|正在直播).*"));
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var bounds = node && node.bounds && node.bounds();
+      if (!bounds || !isTargetSearchBoundsAllowed(bounds, screen)) {
+        continue;
+      }
+      if (bounds.centerY() < Math.max(screen.height * 0.13, targetBounds.top - screen.height * 0.08)) {
+        continue;
+      }
+      if (bounds.centerY() > targetBounds.bottom + screen.height * 0.36) {
+        continue;
+      }
+      return node;
+    }
+    return null;
+  }
+
+  function hasLikelyLiveVisualCardBelow(targetBounds, screen) {
+    if (!targetBounds || !screen) {
+      return false;
+    }
+    var visibleText = extractVisibleText();
+    return /直播中|正在直播|正在\s*直播|正在直播间|直播[，,\s]*按钮/.test(visibleText);
+  }
+
+  function buildTargetUserLiveClickPoints(block) {
+    var screen = autojsUtils.getScreenSize();
+    var bounds = block.bounds;
+    var anchorY = bounds && bounds.centerY ? bounds.centerY() : Math.floor(screen.height * 0.25);
+    var imageTop = bounds ? Math.max(bounds.bottom + Math.floor(screen.height * 0.03), Math.floor(screen.height * 0.32)) : Math.floor(screen.height * 0.35);
+    var imageY = Math.min(Math.floor(screen.height * 0.66), imageTop + Math.floor(screen.height * 0.18));
+    return [
+      { name: "target_avatar_live", x: Math.floor(screen.width * 0.13), y: Math.floor(anchorY) },
+      { name: "target_user_row", x: Math.floor(screen.width * 0.36), y: Math.floor(anchorY) },
+      { name: "target_live_card_center", x: Math.floor(screen.width * 0.36), y: imageY },
+      { name: "target_live_card_upper", x: Math.floor(screen.width * 0.36), y: Math.max(Math.floor(screen.height * 0.34), imageY - Math.floor(screen.height * 0.10)) },
+      { name: "target_live_card_right_badge", x: Math.floor(screen.width * 0.58), y: Math.max(Math.floor(screen.height * 0.34), imageY - Math.floor(screen.height * 0.12)) }
+    ];
+  }
+
+  function isEndedTargetLiveRoomText(textValue, targetKeywords) {
+    textValue = String(textValue || "");
+    return /下场直播更精彩|开播通知我|直播已结束|暂未开播/.test(textValue) &&
+      (!targetKeywords || !targetKeywords.length || containsAnyTargetKeyword(textValue, targetKeywords));
+  }
+
+  function refreshSearchResultsPage(keyword, attempt) {
+    var screen = autojsUtils.getScreenSize();
+    logger.info("refresh target live search result page", {
+      keyword: keyword,
+      attempt: attempt,
+      screen: autojsUtils.describeScreenSize()
+    });
+    try {
+      swipe(
+        Math.floor(screen.width * 0.50),
+        Math.floor(screen.height * 0.36),
+        Math.floor(screen.width * 0.50),
+        Math.floor(screen.height * 0.72),
+        520
+      );
+      autojsUtils.sleepRandom(1800, 2800);
+      return true;
+    } catch (error) {
+      logger.warn("refresh target live search result page failed", {
+        keyword: keyword,
+        attempt: attempt,
+        message: String(error)
+      });
+    }
+    return false;
+  }
+
+  function advanceTargetLiveSearchResults(keyword, attempt) {
+    var screen = autojsUtils.getScreenSize();
+    logger.info("scroll target live search comprehensive results", {
+      keyword: keyword,
+      attempt: attempt,
+      screen: autojsUtils.describeScreenSize()
+    });
+    try {
+      swipe(
+        Math.floor(screen.width * 0.50),
+        Math.floor(screen.height * 0.76),
+        Math.floor(screen.width * 0.50),
+        Math.floor(screen.height * 0.34),
+        520
+      );
+      autojsUtils.sleepRandom(1600, 2400);
+      recoverSearchResultIssue(keyword, attempt, "after_scroll");
+      return true;
+    } catch (error) {
+      logger.warn("scroll target live search comprehensive results failed", {
+        keyword: keyword,
+        attempt: attempt,
+        message: String(error)
+      });
+    }
+    return false;
+  }
+
+  function ensureTargetLiveSearchComprehensiveTab(keyword, attempt) {
+    var visibleText = extractVisibleText();
+    var searchState = screenRecognizer.detectSearchPageState(visibleText, recognitionOptions());
+    if (!searchState.isResult) {
+      return false;
+    }
+    if (!hasStandaloneLine(visibleText, "综合")) {
+      return false;
+    }
+    return switchTargetLiveSearchTab("综合", keyword, attempt);
+  }
+
+  function recoverSearchResultIssue(keyword, attempt, source) {
+    var visibleText = extractVisibleText();
+    if (!isRecoverableSearchResultIssue(visibleText)) {
+      return false;
+    }
+    logger.warn("search result page needs retry recovery", {
+      keyword: keyword,
+      attempt: attempt,
+      source: source || "",
+      textSample: visibleText.slice(0, 220)
+    });
+    if (clickSearchRetryButton(keyword, attempt, source)) {
+      autojsUtils.sleepRandom(2200, 3600);
+      return true;
+    }
+    refreshSearchResultsPage(keyword, attempt);
+    return true;
+  }
+
+  function isRecoverableSearchResultIssue(visibleText) {
+    visibleText = String(visibleText || "");
+    if (/网络异常|网络不给力|连接失败|加载失败|请求失败|点击重试|重试|重新加载|服务异常|系统繁忙|页面加载失败/.test(visibleText)) {
+      return true;
+    }
+    var searchState = screenRecognizer.detectSearchPageState(visibleText, recognitionOptions());
+    if (!searchState.hasSearchHeader && !searchState.hasTabs) {
+      return false;
+    }
+    var lines = normalizeVisibleLines(visibleText);
+    if (searchState.hasSearchHeader && searchState.hasTabs && lines.length <= 8 && !/直播中|正在直播|进入直播间|点击进入直播间/.test(visibleText)) {
+      return true;
+    }
+    return false;
+  }
+
+  function clickSearchRetryButton(keyword, attempt, source) {
+    var nodes = [];
+    pushFoundNodes(nodes, textMatches(".*(点击重试|重试|重新加载|刷新).*"));
+    pushFoundNodes(nodes, descMatches(".*(点击重试|重试|重新加载|刷新).*"));
+    var screen = autojsUtils.getScreenSize();
+    var best = null;
+    var bestScore = -1;
+    var samples = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var bounds = node && node.bounds && node.bounds();
+      if (!bounds) {
+        continue;
+      }
+      var centerY = bounds.centerY();
+      if (centerY < screen.height * 0.12 || centerY > screen.height * 0.88) {
+        continue;
+      }
+      var value = getNodeOwnText(node);
+      var score = 0;
+      if (/点击重试|重试|重新加载/.test(value)) {
+        score += 50;
+      }
+      if (/刷新/.test(value)) {
+        score += 20;
+      }
+      if (node.clickable && node.clickable()) {
+        score += 8;
+      }
+      if (bounds.centerX() > screen.width * 0.18 && bounds.centerX() < screen.width * 0.82) {
+        score += 6;
+      }
+      if (samples.length < 6) {
+        samples.push({
+          text: value.slice(0, 40),
+          bounds: autojsUtils.formatBounds(bounds),
+          score: score
+        });
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = node;
+      }
+    }
+    if (!best || bestScore < 20) {
+      logger.warn("search retry button not found", {
+        keyword: keyword,
+        attempt: attempt,
+        source: source || "",
+        samples: samples
+      });
+      return false;
+    }
+    logger.info("click search retry button", {
+      keyword: keyword,
+      attempt: attempt,
+      source: source || "",
+      score: bestScore,
+      bounds: autojsUtils.formatBounds(best.bounds && best.bounds()),
+      samples: samples
+    });
+    return autojsUtils.safeClick(best, 4, logger);
   }
 
   function switchTargetLiveSearchTab(tabName, keyword, attempt) {
@@ -966,6 +1525,118 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       }
     }
     return bestScore >= 20 ? best : null;
+  }
+
+  function clickVisibleTargetLiveCardFromSearch(keyword, targetKeywords, attempt) {
+    var visibleText = extractVisibleText();
+    var searchState = screenRecognizer.detectSearchPageState(visibleText, recognitionOptions());
+    var liveVisible = containsLiveEntryText(visibleText) || /直播[，,\s]*按钮/.test(visibleText);
+    var keywordEntry = findVisibleTargetKeywordEntry(targetKeywords);
+    if (!searchState.isResult || !keywordEntry || !liveVisible) {
+      return false;
+    }
+
+    logger.info("target live room visible on comprehensive search tab, click result card directly", {
+      keyword: keyword,
+      attempt: attempt,
+      liveVisible: liveVisible,
+      searchState: searchState,
+      keywordEntry: {
+        text: keywordEntry.text.slice(0, 60),
+        contextText: keywordEntry.contextText.slice(0, 120),
+        bounds: autojsUtils.formatBounds(keywordEntry.bounds)
+      },
+      textSample: visibleText.slice(0, 220)
+    });
+
+    if (clickTargetLiveSearchCardFallback(keywordEntry, keyword, targetKeywords, attempt, visibleText)) {
+      return true;
+    }
+
+    logger.warn("target live room visible but direct comprehensive card click failed", {
+      keyword: keyword,
+      attempt: attempt,
+      textSample: extractVisibleText().slice(0, 220)
+    });
+    return false;
+  }
+
+  function clickVisibleTargetLiveCardByTextFallback(keyword, targetKeywords, attempt) {
+    var visibleText = extractVisibleText();
+    var searchState = screenRecognizer.detectSearchPageState(visibleText, recognitionOptions());
+    var targetVisible = containsAnyTargetKeyword(visibleText, targetKeywords);
+    var liveVisible = containsLiveEntryText(visibleText) || /直播[中间]|正在直播|直播[，,\s]*按钮/.test(visibleText);
+    if (!searchState.isResult || !targetVisible || !liveVisible) {
+      return false;
+    }
+
+    logger.warn("target live room visible by screen text, use coordinate fallback", {
+      keyword: keyword,
+      attempt: attempt,
+      targetKeywords: targetKeywords,
+      searchState: searchState,
+      textSample: visibleText.slice(0, 260)
+    });
+
+    var screen = autojsUtils.getScreenSize();
+    var entry = {
+      text: keyword || "",
+      contextText: visibleText,
+      bounds: null
+    };
+    var points = [
+      { name: "visible_user_avatar_live_badge", x: screen.width * 0.13, y: screen.height * 0.26 },
+      { name: "visible_user_name_row", x: screen.width * 0.36, y: screen.height * 0.25 },
+      { name: "visible_live_card_badge", x: screen.width * 0.60, y: screen.height * 0.36 },
+      { name: "visible_live_card_center", x: screen.width * 0.36, y: screen.height * 0.50 },
+      { name: "visible_live_card_upper", x: screen.width * 0.36, y: screen.height * 0.42 }
+    ];
+
+    for (var i = 0; i < points.length; i++) {
+      var x = Math.floor(points[i].x);
+      var y = Math.floor(points[i].y);
+      rememberPendingTargetLiveEntry(keyword, targetKeywords, entry, points[i].name);
+      autojsUtils.clickPoint(x, y, logger, "target_live_text_fallback_" + points[i].name);
+      autojsUtils.sleepRandom(2600, 4200);
+      var afterText = extractVisibleText();
+      if (isEndedTargetLiveRoomText(afterText, targetKeywords)) {
+        logger.warn("target live text fallback opened ended live room, back and continue search", {
+          keyword: keyword,
+          attempt: attempt,
+          point: points[i].name,
+          textSample: afterText.slice(0, 180)
+        });
+        if (!isSearchResultPage(afterText)) {
+          back();
+          autojsUtils.sleepRandom(900, 1400);
+        }
+        continue;
+      }
+      if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, points[i].name)) {
+        logger.info("entered target live room from text coordinate fallback", {
+          keyword: keyword,
+          attempt: attempt,
+          point: points[i].name
+        });
+        return true;
+      }
+      if (!isSearchResultPage(afterText) && containsLiveEntryText(afterText) && containsAnyTargetKeyword(afterText, targetKeywords)) {
+        logger.info("target page opened from text coordinate fallback, try visible live entry", {
+          keyword: keyword,
+          attempt: attempt,
+          point: points[i].name,
+          textSample: afterText.slice(0, 180)
+        });
+        if (openLiveRoomFromCurrentScreen(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry")) {
+          return true;
+        }
+      }
+      if (!isSearchResultPage(afterText)) {
+        back();
+        autojsUtils.sleepRandom(900, 1400);
+      }
+    }
+    return false;
   }
 
   function buildTargetRoomKeywords(targetRoom, fallbackKeyword) {
@@ -1084,6 +1755,75 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return best;
   }
 
+  function findVisibleTargetKeywordEntry(targetKeywords) {
+    var nodes = [];
+    for (var i = 0; i < targetKeywords.length; i++) {
+      pushFoundNodes(nodes, textContains(targetKeywords[i]));
+      pushFoundNodes(nodes, descContains(targetKeywords[i]));
+    }
+
+    var screen = autojsUtils.getScreenSize();
+    var best = null;
+    var bestScore = -1;
+    var samples = [];
+    for (var j = 0; j < nodes.length; j++) {
+      var node = nodes[j];
+      var bounds = node && node.bounds && node.bounds();
+      if (!bounds || !isTargetSearchBoundsAllowed(bounds, screen)) {
+        continue;
+      }
+
+      var textValue = getNodeOwnText(node);
+      if (!containsAnyTargetKeyword(textValue, targetKeywords)) {
+        continue;
+      }
+
+      var centerY = bounds.centerY();
+      var score = 0;
+      if (centerY >= screen.height * 0.18 && centerY <= screen.height * 0.72) {
+        score += 50;
+      }
+      if (centerY > screen.height * 0.28) {
+        score += 20;
+      }
+      if (bounds.centerX() < screen.width * 0.80) {
+        score += 8;
+      }
+      if (node.clickable && node.clickable()) {
+        score += 3;
+      }
+
+      if (samples.length < 8) {
+        samples.push({
+          text: textValue.slice(0, 50),
+          bounds: autojsUtils.formatBounds(bounds),
+          score: score
+        });
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = {
+          node: node,
+          bounds: bounds,
+          text: textValue,
+          contextText: collectNodeContextText(node, 3),
+          score: score,
+          targetHit: true,
+          liveHit: false
+        };
+      }
+    }
+
+    logger.info("target keyword search nodes scanned", {
+      total: nodes.length,
+      selected: !!best,
+      bestScore: bestScore,
+      samples: samples
+    });
+    return bestScore >= 40 ? best : null;
+  }
+
   function clickTargetLiveSearchEntry(entry, keyword, targetKeywords, attempt) {
     logger.info("click target live search entry", {
       keyword: keyword,
@@ -1103,14 +1843,16 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       }
     }
 
+    rememberPendingTargetLiveEntry(keyword, targetKeywords, entry, "node_click");
     autojsUtils.axisClick(entry.node, logger);
     autojsUtils.sleepRandom(2500, 4200);
-    if (confirmTargetLiveRoom(keyword, targetKeywords, attempt, "node_click")) {
+
+    var visibleText = extractVisibleText();
+    if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "node_click")) {
       logger.info("entered target live room from search", { keyword: keyword, attempt: attempt });
       return true;
     }
 
-    var visibleText = extractVisibleText();
     if (containsLiveEntryText(visibleText) && containsAnyTargetKeyword(visibleText, targetKeywords)) {
       logger.info("target profile/result page opened, try live entry on current screen", {
         keyword: keyword,
@@ -1127,24 +1869,31 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       attempt: attempt,
       textSample: extractVisibleText().slice(0, 180)
     });
-    back();
-    autojsUtils.sleepRandom(900, 1400);
+    if (!isSearchResultPage(extractVisibleText())) {
+      back();
+      autojsUtils.sleepRandom(900, 1400);
+    }
     return false;
   }
 
   function clickTargetLiveSearchCardFallback(entry, keyword, targetKeywords, attempt, visibleText) {
     var screen = autojsUtils.getScreenSize();
     var bounds = entry && entry.bounds;
-    var anchorY = bounds && bounds.bottom ? bounds.bottom : Math.floor(screen.height * 0.35);
+    var anchorY = bounds && bounds.centerY ? bounds.centerY() : Math.floor(screen.height * 0.35);
     var cardY = Math.max(
-      Math.floor(screen.height * 0.34),
-      Math.min(Math.floor(anchorY + screen.height * 0.16), Math.floor(screen.height * 0.72))
+      Math.floor(screen.height * 0.28),
+      Math.min(Math.floor(anchorY + screen.height * 0.08), Math.floor(screen.height * 0.72))
     );
     var points = [
+      { x: screen.width * 0.84, y: anchorY, name: "search_live_card_row_right" },
+      { x: screen.width * 0.70, y: anchorY, name: "search_live_card_row_mid_right" },
+      { x: screen.width * 0.30, y: anchorY, name: "search_live_card_row_left" },
       { x: screen.width * 0.36, y: cardY, name: "search_live_card_left" },
       { x: screen.width * 0.50, y: cardY, name: "search_live_card_center" },
+      { x: screen.width * 0.84, y: cardY, name: "search_live_card_right" },
       { x: screen.width * 0.36, y: screen.height * 0.56, name: "search_live_card_mid_left" },
-      { x: screen.width * 0.50, y: screen.height * 0.56, name: "search_live_card_mid_center" }
+      { x: screen.width * 0.50, y: screen.height * 0.56, name: "search_live_card_mid_center" },
+      { x: screen.width * 0.84, y: screen.height * 0.56, name: "search_live_card_mid_right" }
     ];
 
     for (var i = 0; i < points.length; i++) {
@@ -1160,15 +1909,28 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         textSample: String(visibleText || "").slice(0, 160),
         entryBounds: autojsUtils.formatBounds(bounds)
       });
+      rememberPendingTargetLiveEntry(keyword, targetKeywords, entry, points[i].name);
       autojsUtils.clickPoint(x, y, logger, "target_live_search_card_" + points[i].name);
       autojsUtils.sleepRandom(2600, 3800);
-      if (confirmTargetLiveRoom(keyword, targetKeywords, attempt, points[i].name)) {
+      var afterClickText = extractVisibleText();
+      if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, points[i].name)) {
         logger.info("entered target live room from search card coordinate", {
           keyword: keyword,
           attempt: attempt,
           point: points[i].name
         });
         return true;
+      }
+      if (!isSearchResultPage(afterClickText) && containsLiveEntryText(afterClickText) && containsAnyTargetKeyword(afterClickText, targetKeywords)) {
+        logger.info("target page opened from search card, try visible live entry", {
+          keyword: keyword,
+          attempt: attempt,
+          point: points[i].name,
+          textSample: afterClickText.slice(0, 180)
+        });
+        if (openLiveRoomFromCurrentScreen(afterClickText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry")) {
+          return true;
+        }
       }
       if (!/SearchResult/i.test(safeCurrentActivity())) {
         back();
@@ -1179,11 +1941,36 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
   }
 
   function confirmTargetLiveRoom(keyword, targetKeywords, attempt, source) {
-    if (!isLiveRoomVisible()) {
-      return false;
-    }
     var visibleText = extractVisibleText();
-    if (containsAnyTargetKeyword(visibleText, targetKeywords)) {
+    var searchState = screenRecognizer.detectSearchPageState(visibleText, recognitionOptions());
+    if (isLiveRoomVisible()) {
+      if (containsAnyTargetKeyword(visibleText, targetKeywords)) {
+        clearPendingTargetLiveEntry();
+        return true;
+      }
+      if (isPendingTargetLiveEntryValid(keyword, targetKeywords, source)) {
+        logger.info("entered live room scene by verified target search card", {
+          keyword: keyword,
+          attempt: attempt,
+          source: source || "",
+          textSample: visibleText.slice(0, 220)
+        });
+        clearPendingTargetLiveEntry();
+        return true;
+      }
+    }
+    if ((source === "node_click" || source === "current_screen_live_entry" || /^search_live_card_/.test(String(source || "")) || /^target_/.test(String(source || ""))) &&
+      !searchState.isResult &&
+      /说点什么|欢迎来到直播间|小黄车|粉丝团|礼物|连麦|本场点赞|直播广场/.test(visibleText) &&
+      isPendingTargetLiveEntryValid(keyword, targetKeywords, source)) {
+      logger.info("target live room navigation accepted by live room markers", {
+        keyword: keyword,
+        attempt: attempt,
+        source: source || "",
+        textSample: visibleText.slice(0, 220),
+        searchState: searchState
+      });
+      clearPendingTargetLiveEntry();
       return true;
     }
     logger.warn("entered live room but target anchor not matched, exit and continue search", {
@@ -1198,8 +1985,44 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return false;
   }
 
+  function rememberPendingTargetLiveEntry(keyword, targetKeywords, entry, source) {
+    var textValue = String(entry && entry.text || "");
+    var contextText = String(entry && entry.contextText || "");
+    var combined = [textValue, contextText, keyword || ""].join(" ");
+    if (!containsAnyTargetKeyword(combined, targetKeywords)) {
+      return;
+    }
+    pendingTargetLiveEntry = {
+      keyword: keyword || "",
+      targetKeywords: targetKeywords || [],
+      source: source || "",
+      text: combined.slice(0, 240),
+      at: Date.now()
+    };
+  }
+
+  function clearPendingTargetLiveEntry() {
+    pendingTargetLiveEntry = null;
+  }
+
+  function isPendingTargetLiveEntryValid(keyword, targetKeywords, source) {
+    if (!pendingTargetLiveEntry || !pendingTargetLiveEntry.at || Date.now() - pendingTargetLiveEntry.at > 15000) {
+      return false;
+    }
+    var sourceValue = String(source || "");
+    if (sourceValue && pendingTargetLiveEntry.source && sourceValue !== pendingTargetLiveEntry.source && sourceValue.indexOf("search_live_card_") !== 0) {
+      return false;
+    }
+    var combined = [
+      pendingTargetLiveEntry.keyword || "",
+      pendingTargetLiveEntry.text || "",
+      keyword || ""
+    ].join(" ");
+    return containsAnyTargetKeyword(combined, targetKeywords || pendingTargetLiveEntry.targetKeywords || []);
+  }
+
   function containsLiveEntryText(value) {
-    return /进入直播间|点击进入直播间|正在直播|直播中|热聊中|讲解中|LIVE|live/i.test(String(value || ""));
+    return /进入直播间|点击进入直播间|正在直播|直播中|热聊中|讲解中|直播[，,\s]*按钮|LIVE|live/i.test(String(value || ""));
   }
 
   function containsAnyTargetKeyword(value, keywords) {
@@ -1460,8 +2283,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function findLiveRoomEntryNode() {
     var nodes = [];
-    pushFoundNodes(nodes, textMatches(".*(进入直播间|直播中|热聊中|讲解中).*"));
-    pushFoundNodes(nodes, descMatches(".*(进入直播间|直播中|热聊中|讲解中).*"));
+    pushFoundNodes(nodes, textMatches(".*(进入直播间|直播中|热聊中|讲解中|直播[，,\\s]*按钮).*"));
+    pushFoundNodes(nodes, descMatches(".*(进入直播间|直播中|热聊中|讲解中|直播[，,\\s]*按钮).*"));
 
     var screen = autojsUtils.getScreenSize();
     var best = null;
@@ -1491,6 +2314,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         score += 30;
       } else if (/进入直播间/.test(value)) {
         score += 24;
+      } else if (/直播[，,\s]*按钮/.test(value)) {
+        score += 18;
       } else if (/直播中|热聊中|讲解中/.test(value)) {
         score += 12;
       }
@@ -1541,7 +2366,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function tryLiveEntryFallback(visibleTextHint) {
     var visibleText = visibleTextHint || extractVisibleText();
-    if (!/进入直播间|点击进入直播间|正在直播|直播中|主播|讲解中|热聊中/.test(visibleText)) {
+    if (!/进入直播间|点击进入直播间|正在直播|直播中|主播|讲解中|热聊中|直播[，,\s]*按钮/.test(visibleText)) {
       return false;
     }
 

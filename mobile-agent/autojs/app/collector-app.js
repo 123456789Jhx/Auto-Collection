@@ -8,6 +8,7 @@ function createCollectorApp(context) {
   var counters = context.counters;
   var controlLoop = context.controlLoop;
   var heartbeatService = context.heartbeatService;
+  var taskScheduler = context.taskScheduler;
   var phaseRunner = context.phaseRunner;
 
   function randomMinutes(min, max) {
@@ -68,6 +69,7 @@ function createCollectorApp(context) {
     var targetRoom = getLiveCommentTargetRoom();
     if (douyin.openTargetLiveRoomFromSearch({ keyword: liveKeyword, targetRoom: targetRoom })) {
       counters.lastSearchKeyword = liveKeyword;
+      context.liveCommentTargetRoomRefreshRequested = false;
       context.targetLiveRoomEntry = {
         enteredAt: Date.now(),
         keyword: liveKeyword,
@@ -101,6 +103,9 @@ function createCollectorApp(context) {
     });
     return false;
   }
+
+  context.tryEnterTargetLiveRoomFromSearch = tryEnterTargetLiveRoomFromSearch;
+  context.liveCommentTargetRoomRefreshRequested = false;
 
   function runBackground(name, fn) {
     try {
@@ -162,6 +167,20 @@ function createCollectorApp(context) {
           forceUpdate: result.forceUpdate
         });
         floatyControl.update({ lastMessage: "发现新版本 " + latestVersion });
+        if (!uploader.applyAgentUpdate) {
+          logger.warn("agent update skipped: applyAgentUpdate not available", {
+            latestVersion: latestVersion,
+            forceUpdate: result.forceUpdate
+          });
+          uploader.uploadAgentUpdateEvent({
+            eventType: "SKIPPED",
+            fromVersion: config.app.version,
+            toVersion: latestVersion,
+            message: "applyAgentUpdate not available",
+            payload: result
+          });
+          return;
+        }
         try {
           var updateResult = uploader.applyAgentUpdate(result, { scriptDir: config.runtime && config.runtime.scriptDir });
           if (updateResult && updateResult.applied) {
@@ -356,8 +375,11 @@ function createCollectorApp(context) {
     return false;
   }
 
-  function enterFlow() {
+  function enterFlow(requestedTaskType) {
     var flowStartedAt = Date.now();
+    var isLiveCommentTask = taskScheduler ?
+      taskScheduler.resolveTaskType(requestedTaskType) === "live_comment" :
+      requestedTaskType === "live_comment";
     floatyControl.update({ lastMessage: "打开抖音" });
     logger.info("启动流程：打开抖音", { elapsedMs: Date.now() - flowStartedAt });
     if (!douyin.openApp()) {
@@ -368,7 +390,7 @@ function createCollectorApp(context) {
     }
     logger.info("启动流程：抖音已打开", { elapsedMs: Date.now() - flowStartedAt });
 
-    if (isLiveCommentPriorityRequested()) {
+    if (isLiveCommentTask || isLiveCommentPriorityRequested()) {
       logger.info("live comment control requested: force target room search flow");
       if (tryEnterTargetLiveRoomFromSearch(config.task.liveCommentDirectTest === true ? "direct_test" : "control_start")) {
         return true;
@@ -376,13 +398,13 @@ function createCollectorApp(context) {
       return false;
     }
 
-    if (config.task.liveCommentDirectTest === true) {
+    if (isLiveCommentTask && config.task.liveCommentDirectTest === true) {
       if (tryEnterTargetLiveRoomFromSearch("direct_test")) {
         return true;
       }
     }
 
-    if (config.task.liveCommentDirectTest === true) {
+    if (isLiveCommentTask && config.task.liveCommentDirectTest === true) {
       var liveKeyword = pickLiveCommentSearchKeyword();
       if (liveKeyword && douyin.openLiveSearch && douyin.openLiveSearch(liveKeyword)) {
         counters.lastSearchKeyword = liveKeyword;
@@ -419,8 +441,214 @@ function createCollectorApp(context) {
     counters.lastStopReason = "";
   }
 
+  function resetLaunchFailureState() {
+    context.launchFailureState = context.launchFailureState || {
+      consecutiveCount: 0,
+      lastReason: "",
+      lastAt: ""
+    };
+    context.launchFailureState.consecutiveCount = 0;
+    context.launchFailureState.lastReason = "";
+    context.launchFailureState.lastAt = "";
+  }
+
+  function handleLaunchFlowAborted(requestedTaskType, reason) {
+    context.launchFailureState = context.launchFailureState || {
+      consecutiveCount: 0,
+      lastReason: "",
+      lastAt: ""
+    };
+    context.launchFailureState.consecutiveCount += 1;
+    context.launchFailureState.lastReason = reason || "launch_flow_aborted";
+    context.launchFailureState.lastAt = new Date().toISOString();
+
+    var threshold = Math.max(1, Number(config.runtime.launchFailurePauseThreshold || 3));
+    var tooManyFailures = context.launchFailureState.consecutiveCount >= threshold;
+    var stopReason = tooManyFailures ? "launch_failed_too_many_times" : "launch_flow_aborted";
+    var message = tooManyFailures ? "连续启动失败，已暂停待命" : "启动失败，已回到待命";
+    var normalizedTaskType = taskScheduler ? taskScheduler.resolveTaskType(requestedTaskType) : requestedTaskType;
+
+    counters.lastStopReason = stopReason;
+    if (normalizedTaskType === "live_comment") {
+      context.liveCommentPriorityRequested = false;
+      context.liveCommentTargetRoomRefreshRequested = false;
+    }
+    floatyControl.update({
+      running: false,
+      paused: true,
+      stopRequested: false,
+      manualOverride: true,
+      lastManualAction: stopReason,
+      lastMessage: message
+    });
+    if (normalizedTaskType === "live_comment") {
+      floatyControl.update({
+        liveCommentControlStatus: "stopped",
+        liveCommentExecutionEnabled: false
+      });
+    }
+
+    logger.warn(message, {
+      taskType: requestedTaskType || "",
+      stopReason: stopReason,
+      failureCount: context.launchFailureState.consecutiveCount,
+      threshold: threshold
+    });
+    controlLoop.reportRuntimeLog("WARN", message, {
+      phase: "launch",
+      taskType: requestedTaskType || "",
+      stopReason: stopReason,
+      failureCount: context.launchFailureState.consecutiveCount,
+      threshold: threshold
+    });
+    heartbeatService.reportImmediateHeartbeat("", tooManyFailures ? "error" : "idle", message);
+    if (controlLoop.pollControlCommandsAsync) {
+      controlLoop.pollControlCommandsAsync(true);
+    }
+  }
+
+  function mergeObjects(base, extra) {
+    var result = {};
+    var key;
+    base = base || {};
+    extra = extra || {};
+    for (key in base) {
+      if (Object.prototype.hasOwnProperty.call(base, key)) {
+        result[key] = base[key];
+      }
+    }
+    for (key in extra) {
+      if (Object.prototype.hasOwnProperty.call(extra, key)) {
+        result[key] = extra[key];
+      }
+    }
+    return result;
+  }
+
+  function persistCheckpoint(extra) {
+    if (!taskScheduler) {
+      return;
+    }
+    var explicitTaskType = extra && extra.taskType;
+    var currentTaskType = taskScheduler.resolveTaskType(explicitTaskType,
+      (context.liveCommentPriorityRequested || floatyControl.state.liveCommentControlStatus === "running") ? "live_comment" : counters.currentPhase
+    );
+    if (!currentTaskType) {
+      return;
+    }
+    taskScheduler.recordCheckpoint(currentTaskType, mergeObjects({
+      currentPhase: counters.currentPhase,
+      viewedCount: counters.viewedCount,
+      liveViewedCount: counters.liveViewedCount,
+      liveRoomEnteredCount: counters.liveRoomEnteredCount,
+      liveCandidateCount: counters.liveCandidateCount,
+      liveRejectedCount: counters.liveRejectedCount,
+      capturedCount: counters.capturedCount,
+      plannedVideoMinutes: counters.plannedVideoMinutes,
+      plannedLiveMinutes: counters.plannedLiveMinutes,
+      videoElapsedMinutes: counters.videoElapsedMinutes,
+      videoRemainingMinutes: counters.videoRemainingMinutes,
+      liveElapsedMinutes: counters.liveElapsedMinutes,
+      liveRemainingMinutes: counters.liveRemainingMinutes,
+      lastStopReason: counters.lastStopReason,
+      phaseStartedAt: counters.phaseStartedAt,
+      phaseEndedAt: counters.phaseEndedAt
+    }, extra || {}));
+  }
+
+  function startTask(taskType, commandType, meta) {
+    if (taskScheduler) {
+      taskScheduler.requestTask(taskType, commandType || "START", meta || {});
+    }
+  }
+
+  function markTaskFinished(taskType, meta) {
+    if (taskScheduler) {
+      taskScheduler.finishTask(taskType, meta || {});
+    }
+  }
+
+  function resolveRequestedTaskType() {
+    if (taskScheduler) {
+      var activeTaskType = taskScheduler.getActiveTaskType();
+      if (activeTaskType) {
+        return activeTaskType;
+      }
+    }
+    if (context.liveCommentPriorityRequested || floatyControl.state.liveCommentControlStatus === "running") {
+      return "live_comment";
+    }
+    return "video";
+  }
+
+  function restoreCheckpoint(taskType) {
+    if (!taskScheduler || !taskType) {
+      return false;
+    }
+    return taskScheduler.restoreTask(taskType, counters);
+  }
+
+  function runLiveCommentTask(todayLiveMinutes) {
+    startTask("live_comment", "START", { reason: "run_live_comment_task" });
+    context.liveCommentPriorityRequested = true;
+    floatyControl.update({
+      liveCommentControlStatus: "running",
+      liveCommentExecutionEnabled: true,
+      lastMessage: "直播评论任务启动"
+    });
+    counters.plannedVideoMinutes = 0;
+    counters.videoRemainingMinutes = 0;
+    counters.plannedLiveMinutes = counters.plannedLiveMinutes || todayLiveMinutes || randomMinutes(config.schedule.liveMinutesMin, config.schedule.liveMinutesMax);
+    counters.liveElapsedMinutes = counters.liveElapsedMinutes || 0;
+    counters.liveRemainingMinutes = Math.max(1, counters.liveRemainingMinutes || counters.plannedLiveMinutes - counters.liveElapsedMinutes || counters.plannedLiveMinutes);
+    logger.info("直播评论任务按调度器独立执行", {
+      liveRemainingMinutes: counters.liveRemainingMinutes
+    });
+    controlLoop.reportRuntimeLog("INFO", "直播评论任务按调度器独立执行", {
+      phase: "live_comment_task_start",
+      liveRemainingMinutes: counters.liveRemainingMinutes
+    });
+    phaseRunner.runPhase("live", counters.liveRemainingMinutes, {
+      taskType: "live_comment"
+    });
+    persistCheckpoint({
+      taskType: "live_comment",
+      checkpointType: "live_comment_phase_end"
+    });
+  }
+
+  function runLiveTask(todayLiveMinutes) {
+    startTask("live", "START", { reason: "run_live_task" });
+    counters.plannedLiveMinutes = counters.plannedLiveMinutes || todayLiveMinutes || randomMinutes(config.schedule.liveMinutesMin, config.schedule.liveMinutesMax);
+    counters.liveElapsedMinutes = counters.liveElapsedMinutes || 0;
+    counters.liveRemainingMinutes = Math.max(1, counters.liveRemainingMinutes || counters.plannedLiveMinutes - counters.liveElapsedMinutes || counters.plannedLiveMinutes);
+    phaseRunner.runPhase("live", counters.liveRemainingMinutes, {
+      taskType: "live"
+    });
+    persistCheckpoint({
+      taskType: "live",
+      checkpointType: "phase_end"
+    });
+  }
+
+  function runVideoTask(todayVideoMinutes) {
+    startTask("video", "START", { reason: "run_video_task" });
+    counters.plannedVideoMinutes = counters.plannedVideoMinutes || todayVideoMinutes || randomMinutes(config.schedule.videoMinutesMin, config.schedule.videoMinutesMax);
+    counters.videoElapsedMinutes = counters.videoElapsedMinutes || 0;
+    counters.videoRemainingMinutes = Math.max(1, counters.videoRemainingMinutes || counters.plannedVideoMinutes - counters.videoElapsedMinutes || counters.plannedVideoMinutes);
+    phaseRunner.runPhase("video", counters.videoRemainingMinutes, {
+      taskType: "video"
+    });
+    persistCheckpoint({
+      taskType: "video",
+      checkpointType: "phase_end"
+    });
+  }
+
   function runOneTask() {
     resetRunCounters();
+    var requestedTaskType = resolveRequestedTaskType();
+    restoreCheckpoint(requestedTaskType);
     floatyControl.update({
       running: true,
       paused: false,
@@ -434,11 +662,12 @@ function createCollectorApp(context) {
       phase: "task_start",
       status: "running"
     });
+    startTask(requestedTaskType, "START", { reason: "run_one_task" });
     runBackground("脚本启动任务心跳上报", function () {
       heartbeatService.reportImmediateHeartbeat("", "running", "启动任务");
     });
     controlLoop.refreshRuntimeConfig();
-    if (config.task.liveCommentDirectTest === true) {
+    if (requestedTaskType === "live_comment" && config.task.liveCommentDirectTest === true) {
       floatyControl.update({
         liveCommentControlStatus: "running",
         liveCommentExecutionEnabled: true
@@ -446,116 +675,75 @@ function createCollectorApp(context) {
     }
     var liveCommentPriority = !!context.liveCommentPriorityRequested ||
       floatyControl.state.liveCommentControlStatus === "running";
-    var mustVerifyTargetLiveRoom = (liveCommentPriority || config.task.liveCommentDirectTest === true) &&
+    var mustVerifyTargetLiveRoom = (requestedTaskType === "live_comment" || liveCommentPriority ||
+      (requestedTaskType === "live_comment" && config.task.liveCommentDirectTest === true)) &&
       shouldEnterTargetLiveRoom();
     var alreadyInLiveRoom = false;
     try {
-      alreadyInLiveRoom = !mustVerifyTargetLiveRoom &&
+      alreadyInLiveRoom = requestedTaskType === "live_comment" &&
+        !mustVerifyTargetLiveRoom &&
         config.task.liveCommentDirectTest === true &&
         douyin.isForeground && douyin.isForeground() &&
         douyin.isLiveRoomVisible && douyin.isLiveRoomVisible();
     } catch (error) {
       alreadyInLiveRoom = false;
     }
-    if (!alreadyInLiveRoom && !enterFlow()) {
+    if (!alreadyInLiveRoom && !enterFlow(requestedTaskType)) {
       logger.warn("启动流程被停止请求打断", {
         stopRequested: floatyControl.state.stopRequested,
         exitRequested: floatyControl.state.exitRequested
       });
-      finishTask();
+      handleLaunchFlowAborted(requestedTaskType, "enter_flow_failed");
+      persistCheckpoint({
+        taskType: requestedTaskType,
+        stopReason: counters.lastStopReason,
+        checkpointType: "launch_flow_aborted"
+      });
+      markTaskFinished(taskScheduler ? taskScheduler.getActiveTaskType() : "", {
+        reason: counters.lastStopReason,
+        status: "failed",
+        commandType: "LAUNCH_FAILED"
+      });
       return;
     }
+    resetLaunchFailureState();
 
     if (config.schedule.enabled) {
       var todayVideoMinutes = randomMinutes(config.schedule.videoMinutesMin, config.schedule.videoMinutesMax);
       var todayLiveMinutes = randomMinutes(config.schedule.liveMinutesMin, config.schedule.liveMinutesMax);
-      counters.plannedVideoMinutes = liveCommentPriority ? 0 : (counters.plannedVideoMinutes || todayVideoMinutes);
-      counters.plannedLiveMinutes = counters.plannedLiveMinutes || todayLiveMinutes;
-      counters.videoElapsedMinutes = counters.videoElapsedMinutes || 0;
-      counters.videoRemainingMinutes = Math.max(0, counters.plannedVideoMinutes - counters.videoElapsedMinutes);
-      counters.liveElapsedMinutes = counters.liveElapsedMinutes || 0;
-      counters.liveRemainingMinutes = Math.max(0, counters.plannedLiveMinutes - counters.liveElapsedMinutes);
-      if (liveCommentPriority) {
-        counters.videoRemainingMinutes = 0;
-        counters.liveRemainingMinutes = Math.max(1, counters.liveRemainingMinutes || counters.plannedLiveMinutes || todayLiveMinutes);
-        logger.info("live comment control requested, prioritize live phase", {
-          liveMinutes: counters.liveRemainingMinutes
-        });
-        controlLoop.reportRuntimeLog("INFO", "live comment control requested, prioritize live phase", {
-          liveMinutes: counters.liveRemainingMinutes
-        });
-      }
-      logger.info("今日随机采集时长", {
-        videoMinutes: counters.plannedVideoMinutes,
-        liveMinutes: counters.plannedLiveMinutes
-      });
-      if (counters.videoRemainingMinutes > 0) {
-        phaseRunner.runPhase("video", counters.videoRemainingMinutes);
-      } else {
-        logger.info("今日视频阶段已完成，跳过视频阶段", {
-          plannedVideoMinutes: counters.plannedVideoMinutes,
-          videoElapsedMinutes: counters.videoElapsedMinutes
-        });
-      }
-      if (counters.lastStopReason === "phase_expired_while_paused") {
-        logger.warn("旧视频阶段已过期，丢弃旧任务并重新开始一轮任务", {
-          lastStopReason: counters.lastStopReason
-        });
-        floatyControl.update({
-          running: true,
-          paused: false,
-          stopRequested: false,
-          lastMessage: "旧任务已过期，重新开始"
-        });
+      if (requestedTaskType === "live_comment") {
+        runLiveCommentTask(todayLiveMinutes);
+        finishTask();
         return;
       }
-      logger.info("视频阶段结束，判断是否进入直播阶段", {
-        stopRequested: floatyControl.state.stopRequested,
-        exitRequested: floatyControl.state.exitRequested,
-        lastStopReason: counters.lastStopReason,
-        plannedLiveMinutes: counters.plannedLiveMinutes
-      });
-      if (!floatyControl.state.stopRequested && !floatyControl.state.exitRequested) {
-        if (counters.liveRemainingMinutes > 0) {
-          phaseRunner.runPhase("live", counters.liveRemainingMinutes);
-        } else {
-          logger.info("今日直播阶段已完成，跳过直播阶段", {
-            plannedLiveMinutes: counters.plannedLiveMinutes,
-            liveElapsedMinutes: counters.liveElapsedMinutes
-          });
-        }
-        if (counters.lastStopReason === "phase_expired_while_paused") {
-          logger.warn("旧直播阶段已过期，丢弃旧任务并重新开始一轮任务", {
-            lastStopReason: counters.lastStopReason
-          });
-          floatyControl.update({
-            running: true,
-            paused: false,
-            stopRequested: false,
-            lastMessage: "旧任务已过期，重新开始"
-          });
-          return;
-        }
-      } else {
-        logger.warn("直播阶段跳过", {
-          stopRequested: floatyControl.state.stopRequested,
-          exitRequested: floatyControl.state.exitRequested,
-          lastStopReason: counters.lastStopReason
-        });
-        controlLoop.reportRuntimeLog("WARN", "直播阶段跳过", {
-          stopRequested: floatyControl.state.stopRequested,
-          exitRequested: floatyControl.state.exitRequested,
-          lastStopReason: counters.lastStopReason
-        });
+      if (requestedTaskType === "live") {
+        runLiveTask(todayLiveMinutes);
+        finishTask();
+        return;
+      }
+      if (requestedTaskType === "video") {
+        runVideoTask(todayVideoMinutes);
+        finishTask();
+        return;
       }
     } else {
-      phaseRunner.runPhase("video", 24 * 60);
+      startTask("video", "START", { reason: "schedule_disabled" });
+      phaseRunner.runPhase("video", 24 * 60, {
+        taskType: "video"
+      });
+      persistCheckpoint({
+        taskType: "video",
+        checkpointType: "unscheduled_end"
+      });
     }
 
-    finishTask();
+    markTaskFinished(taskScheduler ? taskScheduler.getActiveTaskType() : "", {
+      reason: "task_finished"
+    });
   }
 
   function finishTask() {
+    var finishedTaskType = taskScheduler ? taskScheduler.getActiveTaskType() : "";
     counters.currentPhase = "";
     counters.phaseStartedAt = "";
     counters.phaseEndedAt = "";
@@ -569,6 +757,13 @@ function createCollectorApp(context) {
     });
     logger.info("农业视频手机采集脚本结束", counters);
     controlLoop.reportRuntimeLog("INFO", "农业视频手机采集脚本结束", counters);
+    persistCheckpoint({
+      taskType: finishedTaskType || counters.currentPhase || "video",
+      checkpointType: "task_finished"
+    });
+    markTaskFinished(taskScheduler ? taskScheduler.getActiveTaskType() : "", {
+      reason: "task_finished"
+    });
     runBackground("脚本结束心跳上报", function () {
       heartbeatService.reportImmediateHeartbeat(counters.currentPhase, "idle", "任务结束，待命中");
     });
@@ -595,6 +790,10 @@ function createCollectorApp(context) {
     });
     sleep(300);
     floatyControl.close();
+    persistCheckpoint({
+      taskType: counters.currentPhase || "video",
+      checkpointType: "shutdown"
+    });
     try {
       exit();
     } catch (error) {
@@ -644,6 +843,15 @@ function createCollectorApp(context) {
       uploader.retryCached();
     });
 
+    if (!permissions.ensureCapturePermission()) {
+      logger.error("鎴浘鏉冮檺妫€鏌ュけ璐ワ紝鑴氭湰缁撴潫");
+      floatyControl.update({ lastMessage: "鎴浘鏉冮檺妫€鏌ュけ璐?" });
+      runBackground("鎴浘鏉冮檺澶辫触鏃ュ織涓婃姤", function () {
+        controlLoop.reportRuntimeLog("ERROR", "鎴浘鏉冮檺妫€鏌ュけ璐ワ紝鑴氭湰缁撴潫", { stopReason: "permission_failed" });
+      });
+      return false;
+    }
+
     var configResult = controlLoop.syncBackendOnce("startup");
     logger.info("Agent 启动配置同步完成", {
       applied: !!configResult.applied,
@@ -654,6 +862,25 @@ function createCollectorApp(context) {
       lastManualAction: floatyControl.state.lastManualAction || "",
       message: configResult.message
     });
+
+    if (!configResult.success) {
+      floatyControl.update({
+        running: false,
+        paused: true,
+        stopRequested: false,
+        manualOverride: true,
+        lastManualAction: "backend_not_ready",
+        lastMessage: "后台未就绪，等待注册"
+      });
+      runBackground("后台未就绪日志上报", function () {
+        controlLoop.reportRuntimeLog("WARN", "后台未就绪，等待注册/配置同步", {
+          version: config.app.version,
+          taskId: config.task.taskId,
+          message: configResult.message || ""
+        });
+      });
+      return true;
+    }
 
     runBackground("脚本就绪日志上报", function () {
       controlLoop.reportRuntimeLog("INFO", "Agent 已就绪", {
@@ -693,6 +920,7 @@ function createCollectorApp(context) {
     logger.info("进入 Agent 常驻待命循环");
     while (!floatyControl.state.exitRequested) {
       try {
+        controlLoop.pollControlCommandsAsync(false);
         if (floatyControl.state.running && !floatyControl.state.paused && !floatyControl.state.stopRequested) {
           runOneTask();
         } else {
@@ -705,7 +933,6 @@ function createCollectorApp(context) {
             });
             heartbeatService.reportAgentHeartbeat("idle", "未执行任务", true);
           }
-          controlLoop.pollControlCommandsAsync(false);
           controlLoop.syncBackendAsync(false, "idle_loop");
           checkAgentVersion(false);
           maybeUploadDailyLogs();

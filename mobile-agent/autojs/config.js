@@ -1,11 +1,11 @@
 module.exports = {
   app: {
     name: "燎原星火",
-    version: "0.1.x"
+    version: "1.0.9"
   },
 
   device: {
-    deviceId: "device_local_placeholder",
+    deviceId: "",
     deviceToken: ""
   },
 
@@ -55,7 +55,7 @@ module.exports = {
     liveReadonlySampleCount: 8,
     liveReadonlySampleIntervalMs: 1200,
     liveReadonlyMaxComments: 30,
-    liveCommentDirectTest: true,
+    liveCommentDirectTest: false,
     liveCommentRole: "none",
     liveCommentGroup: "",
     liveCommentMode: "agri_chatbot",
@@ -196,7 +196,7 @@ module.exports = {
     enabled: true,
     baseUrl: "http://106.54.41.106:18080/api/v1",
     url: "http://106.54.41.106:18080/api/v1/mobile/collection-records",
-    registrationSecret: "change_this_mobile_registration_secret",
+    registrationSecret: "",
     timeoutMs: 5000,
     retryCachedOnStart: true,
     controlEnabled: true,
@@ -213,13 +213,15 @@ module.exports = {
     dailyLogUploadMinute: 55,
     versionCheckEnabled: true,
     versionCheckIntervalMinutes: 2,
-    versionChannel: "stable"
+    versionChannel: "stable",
+    deviceIdentityResetKey: ""
   },
 
   runtime: {
     ocrRetryCount: 3,
     recoverRetryCount: 2,
     searchEntryRetryCount: 3,
+    launchFailurePauseThreshold: 3,
     searchFallbackToFeed: true,
     invalidContextRetryCount: 3,
     swipeDurationMs: 450,

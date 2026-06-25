@@ -1,5 +1,5 @@
 param(
-  [string]$Version = "0.1.0"
+  [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,13 +9,22 @@ $sourceDir = Join-Path $repoRoot "mobile-agent\autojs"
 $distDir = Join-Path $repoRoot "dist"
 $stageRoot = Join-Path $distDir "stage"
 $stageDir = Join-Path $stageRoot "AgriVideoCollector"
-$zipPath = Join-Path $distDir ("AgriVideoCollector-autojs-" + $Version + ".zip")
-$shaPath = $zipPath + ".sha256"
-$manifestPath = Join-Path $distDir ("AgriVideoCollector-autojs-" + $Version + ".json")
 
 if (-not (Test-Path $sourceDir)) {
   throw "Source directory not found: $sourceDir"
 }
+
+$projectConfig = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $sourceDir "project.json") | ConvertFrom-Json
+if ([string]::IsNullOrWhiteSpace($Version)) {
+  $Version = [string]$projectConfig.versionName
+}
+if ([string]::IsNullOrWhiteSpace($Version)) {
+  throw "Version is required and project.json versionName is empty."
+}
+
+$zipPath = Join-Path $distDir ("AgriVideoCollector-autojs-" + $Version + ".zip")
+$shaPath = $zipPath + ".sha256"
+$manifestPath = Join-Path $distDir ("AgriVideoCollector-autojs-" + $Version + ".json")
 
 if (Test-Path $stageRoot) {
   Remove-Item -LiteralPath $stageRoot -Recurse -Force
@@ -37,6 +46,41 @@ Get-ChildItem -Path $sourceDir -Force | ForEach-Object {
   }
   Copy-Item -LiteralPath $_.FullName -Destination $stageDir -Recurse -Force
 }
+
+$registrationSecret = [string]$env:MOBILE_REGISTRATION_SECRET
+if ([string]::IsNullOrWhiteSpace($registrationSecret)) {
+  throw "MOBILE_REGISTRATION_SECRET is required for mobile agent packages."
+}
+
+$configPath = Join-Path $stageDir "config.js"
+if (-not (Test-Path $configPath)) {
+  throw "Config file not found in staged package: $configPath"
+}
+$escapedSecret = $registrationSecret.Replace("\", "\\").Replace('"', '\"')
+$escapedVersion = $Version.Replace("\", "\\").Replace('"', '\"')
+$configText = Get-Content -Raw -Encoding UTF8 -LiteralPath $configPath
+$registrationSecretPattern = '(registrationSecret\s*:\s*)".*?"'
+if (-not [regex]::IsMatch($configText, $registrationSecretPattern)) {
+  throw "registrationSecret field not found in staged config: $configPath"
+}
+$patchedConfigText = [regex]::Replace(
+  $configText,
+  $registrationSecretPattern,
+  '${1}"' + $escapedSecret + '"',
+  1
+)
+$appVersionPattern = '(?s)(app\s*:\s*\{.*?version\s*:\s*)".*?"'
+if (-not [regex]::IsMatch($patchedConfigText, $appVersionPattern)) {
+  throw "app.version field not found in staged config: $configPath"
+}
+$versionPatchedConfigText = [regex]::Replace(
+  $patchedConfigText,
+  $appVersionPattern,
+  '${1}"' + $escapedVersion + '"',
+  1
+)
+$patchedConfigText = $versionPatchedConfigText
+Set-Content -LiteralPath $configPath -Encoding UTF8 -Value $patchedConfigText
 
 if (Test-Path $zipPath) {
   Remove-Item -LiteralPath $zipPath -Force

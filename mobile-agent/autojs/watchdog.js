@@ -151,6 +151,11 @@ function maybeUpdate(force) {
     return false;
   }
 
+  if (!uploader.applyAgentUpdate) {
+    log("Agri watchdog update skipped: applyAgentUpdate not available");
+    return false;
+  }
+
   log("Agri watchdog applies update: " + versionResult.latestVersion.version);
   var updateResult = uploader.applyAgentUpdate(versionResult, { scriptDir: SCRIPT_DIR });
   return !!(updateResult && updateResult.applied);

@@ -36,6 +36,7 @@ $moduleOrder = @(
   "domain\live-room-sampler.js",
   "domain\candidate-service.js",
   "app\heartbeat.js",
+  "app\task-scheduler.js",
   "app\control-loop.js",
   "app\phase-runner.js",
   "app\collector-app.js"

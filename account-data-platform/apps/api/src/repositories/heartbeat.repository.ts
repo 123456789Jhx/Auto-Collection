@@ -85,7 +85,7 @@ export async function listDeviceHeartbeats(deviceCode: string, limit = 50) {
     .where(and(
       eq(deviceHeartbeats.tenantId, config.tenantId),
       eq(collectorDevices.deviceCode, deviceCode),
-      eq(deviceHeartbeats.status, "running"),
+      isNull(collectorDevices.deletedAt),
       isNull(deviceHeartbeats.deletedAt)
     ))
     .orderBy(desc(deviceHeartbeats.reportedAt), desc(deviceHeartbeats.createdAt))
@@ -117,7 +117,7 @@ export async function getDeviceDailyProgressSummaries(deviceCode: string, limit 
     .where(and(
       eq(deviceHeartbeats.tenantId, config.tenantId),
       eq(collectorDevices.deviceCode, deviceCode),
-      eq(deviceHeartbeats.status, "running"),
+      isNull(collectorDevices.deletedAt),
       isNull(deviceHeartbeats.deletedAt)
     ))
     .groupBy(sql`to_char(${deviceHeartbeats.reportedAt}, 'YYYY-MM-DD')`)

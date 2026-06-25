@@ -261,7 +261,7 @@ function refreshStatus() {
     ui.readyStatus.setText(ready ? TEXT.ready : TEXT.needSetup);
     ui.readyStatus.setTextColor(colors.parseColor(ready ? "#137333" : "#b3261e"));
     ui.version.setText(appInfo.version || "-");
-    ui.deviceId.setText(deviceInfo.deviceId || "-");
+    ui.deviceId.setText(readRuntimeDeviceId() || deviceInfo.deviceId || "-");
     ui.backend.setText(backendStatusText(uploadInfo));
     ui.scriptDirValue.setText(SCRIPT_DIR);
     ui.accessibilityStatus.setText(statusText(accessibilityEnabled));
@@ -273,6 +273,14 @@ function refreshStatus() {
     ui.mainStatus.setText(mainRunning ? TEXT.running : TEXT.stopped);
     ui.mainStatus.setTextColor(colors.parseColor(mainRunning ? "#137333" : "#5f6368"));
   });
+}
+
+function readRuntimeDeviceId() {
+  try {
+    return storages.create("AgriVideoCollectorDevice").get("deviceId", "");
+  } catch (error) {
+    return "";
+  }
 }
 
 function checkPermissions() {

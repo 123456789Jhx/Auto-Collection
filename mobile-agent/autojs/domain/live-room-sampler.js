@@ -46,8 +46,45 @@ function createLiveRoomSampler(context) {
     }
   }
 
+  function isControlStopped() {
+    var state = context.floatyControl && context.floatyControl.state;
+    return !!(state && (state.stopRequested || state.exitRequested));
+  }
+
+  function isTargetRoomRefreshRequested() {
+    return context.liveCommentTargetRoomRefreshRequested === true;
+  }
+
+  function waitWhilePaused() {
+    if (context.controlLoop && context.controlLoop.waitWhilePaused) {
+      context.controlLoop.waitWhilePaused();
+      return;
+    }
+    while (context.floatyControl && context.floatyControl.state && context.floatyControl.state.paused && !isControlStopped()) {
+      sleep(300);
+    }
+  }
+
   function sleepMs(ms) {
-    sleep(Number(ms || 1000));
+    var endAt = Date.now() + Math.max(0, Number(ms || 1000));
+    while (Date.now() < endAt) {
+      if (isControlStopped() || isTargetRoomRefreshRequested()) {
+        return false;
+      }
+      waitWhilePaused();
+      if (isControlStopped() || isTargetRoomRefreshRequested()) {
+        return false;
+      }
+      if (context.controlLoop && context.controlLoop.pollControlCommandsAsync) {
+        context.controlLoop.pollControlCommandsAsync(false);
+      }
+      var remaining = endAt - Date.now();
+      if (remaining <= 0) {
+        break;
+      }
+      sleep(Math.min(300, remaining));
+    }
+    return true;
   }
 
   function captureText() {
@@ -272,8 +309,13 @@ function createLiveRoomSampler(context) {
       logLiveCommentAction("live_comment_result", sampleIndex, triggerEvent, action);
       return;
     }
+    if (action.plannedDelayMs && !sleepMs(action.plannedDelayMs)) {
+      return;
+    }
+    if (isControlStopped() || isTargetRoomRefreshRequested()) {
+      return;
+    }
     var result = douyin.sendLiveComment(action.replyText, {
-      plannedDelayMs: action.plannedDelayMs,
       commentMode: config.task.liveCommentMode,
       actionType: action.type || ""
     });
@@ -463,6 +505,20 @@ function createLiveRoomSampler(context) {
         break;
       }
 
+      if (isTargetRoomRefreshRequested()) {
+        stopReason = "target_room_refresh_requested";
+        break;
+      }
+      waitWhilePaused();
+      if (shouldStop() || isControlStopped()) {
+        stopReason = "external_stop";
+        break;
+      }
+      if (isTargetRoomRefreshRequested()) {
+        stopReason = "target_room_refresh_requested";
+        break;
+      }
+
       var result = sampleOnce(i + 1);
       samples.push(result);
       allComments = uniqueByText(allComments.concat(result.comments || [])).slice(0, maxComments);
@@ -494,7 +550,10 @@ function createLiveRoomSampler(context) {
         break;
       }
 
-      sleepMs(intervalMs);
+      if (!sleepMs(intervalMs)) {
+        stopReason = isTargetRoomRefreshRequested() ? "target_room_refresh_requested" : "external_stop";
+        break;
+      }
     }
 
     var lastState = samples.length ? samples[samples.length - 1].state : "";

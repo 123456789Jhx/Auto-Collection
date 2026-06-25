@@ -23,6 +23,13 @@ account-data-platform/.env.*
 mobile-agent/autojs/datasource/*
 !mobile-agent/autojs/datasource/.gitkeep
 
+# Local UI/debug captures
+current-state.png
+live-after-click.png
+live-click-verified.png
+live-search-current.png
+tmp-window*.xml
+
 # Local OS/editor noise
 Thumbs.db
 .DS_Store

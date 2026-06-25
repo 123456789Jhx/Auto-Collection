@@ -5,6 +5,8 @@ import { useMemo, useState } from "react";
 import { createMobileCommand, getDeviceTaskConfig, getLiveCommentActions, getLiveCommentDeviceSummary, updateDevice, updateDeviceTaskConfig } from "../lib/api-client";
 import { statusColor, statusText } from "../lib/display-maps";
 
+type LiveCommentMode = "off" | "target_follow" | "agri_chatbot";
+
 type LiveCommentDeviceSummary = {
   deviceId?: string;
   deviceCode?: string;
@@ -16,7 +18,13 @@ type LiveCommentDeviceSummary = {
   skippedCount: number;
   latestActionAt?: string | null;
   deviceStatus?: string;
+  reportedStatus?: string;
+  currentTask?: "video" | "live" | "none";
   lastHeartbeatAt?: string | null;
+  heartbeatAgeMinutes?: number | null;
+  lastMessage?: string | null;
+  liveCommentMode?: LiveCommentMode;
+  configSource?: string;
 };
 
 type LiveCommentAction = {
@@ -37,7 +45,7 @@ type LiveCommentAction = {
 
 type DeviceTaskConfig = {
   source?: string;
-  liveCommentMode?: "off" | "target_follow" | "agri_chatbot";
+  liveCommentMode?: LiveCommentMode;
   liveCommentBotConfig?: Record<string, unknown> | null;
   accountProfile?: Record<string, unknown> | null;
 };
@@ -100,6 +108,12 @@ function liveCommentModeText(value?: string) {
   if (value === "off") return "关闭";
   return "账号机器人";
 }
+
+const liveCommentModeOptions: Array<{ value: LiveCommentMode; label: string }> = [
+  { value: "agri_chatbot", label: "账号机器人" },
+  { value: "target_follow", label: "跟随评论" },
+  { value: "off", label: "关闭" }
+];
 
 function configSourceText(value?: string) {
   if (value === "device") return "设备单独配置";
@@ -254,11 +268,15 @@ export function LiveCommentsPage() {
   });
 
   const commandMutation = useMutation({
-    mutationFn: ({ deviceId, commandType }: { deviceId: string; commandType: CommandType }) =>
+    mutationFn: ({ deviceId, commandType, payload }: { deviceId: string; commandType: CommandType; payload?: Record<string, unknown> }) =>
       createMobileCommand({
         deviceId,
         commandType,
-        payload: { source: "live_comment_page", taskType: "live_comment_control" },
+        payload: {
+          source: "live_comment_page",
+          taskType: "live_comment_control",
+          ...(payload || {})
+        },
         expiresInSeconds: 3600
       }),
     onSuccess: () => {
@@ -291,8 +309,19 @@ export function LiveCommentsPage() {
       setTargetRoomOpen(false);
       setTargetRoomDevice(null);
       setTargetRoomConfig(null);
-      commandMutation.mutate({ deviceId: variables.deviceCode, commandType: "REFRESH_CONFIG" });
+      sendCommand(variables.deviceCode, "REFRESH_CONFIG", { reenterTargetRoom: true });
       void queryClient.invalidateQueries({ queryKey: ["live-comment-task-config", selectedDevice?.deviceCode] });
+      void queryClient.invalidateQueries({ queryKey: ["live-comment-device-summary"] });
+    },
+    onError: (error: Error) => messageApi.error(error.message)
+  });
+
+  const modeMutation = useMutation({
+    mutationFn: ({ deviceCode, liveCommentMode }: { deviceCode: string; liveCommentMode: LiveCommentMode }) =>
+      updateDeviceTaskConfig(deviceCode, { liveCommentMode }, "douyin"),
+    onSuccess: (_data, variables) => {
+      messageApi.success(`评论模式已切换为：${liveCommentModeText(variables.liveCommentMode)}`);
+      void queryClient.invalidateQueries({ queryKey: ["live-comment-task-config", variables.deviceCode] });
       void queryClient.invalidateQueries({ queryKey: ["live-comment-device-summary"] });
     },
     onError: (error: Error) => messageApi.error(error.message)
@@ -326,9 +355,9 @@ export function LiveCommentsPage() {
     setCheckedDeviceCodes((current) => current.includes(deviceCode) ? current.filter((item) => item !== deviceCode) : [...current, deviceCode]);
   }
 
-  function sendCommand(deviceCode: string | undefined, commandType: CommandType) {
+  function sendCommand(deviceCode: string | undefined, commandType: CommandType, payload?: Record<string, unknown>) {
     if (!deviceCode) return;
-    commandMutation.mutate({ deviceId: deviceCode, commandType });
+    commandMutation.mutate({ deviceId: deviceCode, commandType, payload });
   }
 
   function sendBatchCommand(commandType: CommandType) {
@@ -337,6 +366,11 @@ export function LiveCommentsPage() {
       return;
     }
     checkedDeviceCodes.forEach((deviceCode) => commandMutation.mutate({ deviceId: deviceCode, commandType }));
+  }
+
+  function changeLiveCommentMode(deviceCode: string | undefined, liveCommentMode: LiveCommentMode) {
+    if (!deviceCode) return;
+    modeMutation.mutate({ deviceCode, liveCommentMode });
   }
 
   function openProfileEditor() {
@@ -409,8 +443,19 @@ export function LiveCommentsPage() {
           <Space direction="vertical" style={{ width: "100%" }} size={12}>
             <Space wrap>
               <Tag color={statusColor(selectedDevice.deviceStatus)}>{statusText(selectedDevice.deviceStatus)}</Tag>
-              <Tag>评论模式：{liveCommentModeText(selectedConfig?.liveCommentMode)}</Tag>
+              <Space size={4}>
+                <span>评论模式</span>
+                <Select
+                  size="small"
+                  value={(selectedConfig?.liveCommentMode || selectedDevice.liveCommentMode || "agri_chatbot") as LiveCommentMode}
+                  options={liveCommentModeOptions}
+                  style={{ width: 120 }}
+                  loading={modeMutation.isPending}
+                  onChange={(value) => changeLiveCommentMode(selectedDevice.deviceCode, value)}
+                />
+              </Space>
               <Tag>配置来源：{configSourceText(selectedConfig?.source)}</Tag>
+              <Tag>阶段：{selectedDevice.lastMessage || "暂无心跳消息"}</Tag>
               <Button icon={<ReloadOutlined />} onClick={() => sendCommand(selectedDevice.deviceCode, "REFRESH_CONFIG")}>刷新配置</Button>
               <Button icon={<PlayCircleOutlined />} onClick={() => sendCommand(selectedDevice.deviceCode, "START")}>启动</Button>
               <Button icon={<PauseOutlined />} onClick={() => sendCommand(selectedDevice.deviceCode, "PAUSE")}>暂停</Button>
@@ -539,6 +584,7 @@ export function LiveCommentsPage() {
                 checked={!!item.deviceCode && checkedDeviceCodes.includes(item.deviceCode)}
                 onCheck={() => toggleDeviceChecked(item.deviceCode)}
                 onTargetRoom={() => void openTargetRoomEditor(item)}
+                onModeChange={(mode) => changeLiveCommentMode(item.deviceCode, mode)}
                 onOpen={() => {
                   if (batchMode) {
                     toggleDeviceChecked(item.deviceCode);
@@ -568,6 +614,7 @@ function DeviceCard(props: {
   checked: boolean;
   onCheck: () => void;
   onTargetRoom: () => void;
+  onModeChange: (mode: LiveCommentMode) => void;
   onOpen: () => void;
 }) {
   const item = props.device;
@@ -584,6 +631,16 @@ function DeviceCard(props: {
         <Tag color={statusColor(item.deviceStatus)}>{statusText(item.deviceStatus)}</Tag>
       </Space>
       <Space style={{ marginTop: 12 }} wrap>
+        <div onClick={(event) => event.stopPropagation()}>
+          <Select
+            size="small"
+            value={item.liveCommentMode || "agri_chatbot"}
+            options={liveCommentModeOptions}
+            style={{ width: 120 }}
+            onChange={props.onModeChange}
+          />
+        </div>
+        <Tag>{configSourceText(item.configSource)}</Tag>
         <Button size="small" onClick={(event) => { event.stopPropagation(); props.onTargetRoom(); }}>指定直播间</Button>
       </Space>
       <Row gutter={12} className="card-stats">
@@ -593,7 +650,10 @@ function DeviceCard(props: {
         <Col span={6}><Statistic title="失败" value={item.failedCount} valueStyle={{ color: item.failedCount > 0 ? "#cf1322" : undefined }} /></Col>
         <Col span={6}><Statistic title="跳过" value={item.skippedCount} /></Col>
       </Row>
-      <Typography.Text type="secondary">最近执行：{formatDateTime(item.latestActionAt)}</Typography.Text>
+      <Space direction="vertical" size={0} style={{ marginTop: 8 }}>
+        <Typography.Text type="secondary">最近执行：{formatDateTime(item.latestActionAt)}</Typography.Text>
+        <Typography.Text type="secondary">最近心跳：{formatDateTime(item.lastHeartbeatAt)}，{item.lastMessage || "暂无消息"}</Typography.Text>
+      </Space>
     </Card>
   );
 }

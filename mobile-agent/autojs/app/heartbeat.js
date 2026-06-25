@@ -5,6 +5,9 @@ function createHeartbeatService(context) {
   var floatyControl = context.floatyControl;
   var counters = context.counters;
   var heartbeat = context.heartbeat;
+  function currentTaskType() {
+    return context.taskScheduler && context.taskScheduler.getActiveTaskType ? context.taskScheduler.getActiveTaskType() : "";
+  }
 
   function writeHeartbeat(sceneType, startMs, endAt) {
     var intervalMs = (config.runtime.idleHeartbeatSeconds || 60) * 1000;
@@ -43,6 +46,7 @@ function createHeartbeatService(context) {
       paused: floatyControl.state.paused,
       stopRequested: floatyControl.state.stopRequested,
       status: floatyControl.state.paused ? "paused" : "running",
+      currentTaskType: currentTaskType(),
       lastMessage: floatyControl.state.lastMessage,
       reportedAt: new Date(now).toISOString()
     };
@@ -74,6 +78,7 @@ function createHeartbeatService(context) {
       paused: floatyControl.state.paused,
       stopRequested: floatyControl.state.stopRequested,
       status: heartbeatStatus,
+      currentTaskType: currentTaskType(),
       lastMessage: message || floatyControl.state.lastMessage,
       reportedAt: new Date().toISOString()
     };

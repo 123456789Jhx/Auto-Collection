@@ -219,7 +219,7 @@ export async function upsertDeviceByToken(values: {
     .values({
       tenantId: config.tenantId,
       deviceCode,
-      deviceName: values.deviceName || "Device-" + suffix,
+      deviceName: values.deviceName || "设备-" + suffix,
       deviceToken: values.deviceToken,
       platform: values.platform,
       appVersion: values.appVersion,
@@ -239,12 +239,30 @@ export async function registerDeviceByToken(values: {
   appVersion?: string;
   lastIp?: string;
   deviceName?: string;
+  reactivateDisabled?: boolean;
 }) {
   const existingByToken = await findDeviceByToken(values.deviceToken);
   if (existingByToken) {
+    if (!existingByToken.enabled && !values.reactivateDisabled) {
+      throw new Error("DEVICE_DISABLED");
+    }
     const preferredCode = (values.preferredDeviceCode || "").trim();
     if (preferredCode && existingByToken.deviceCode !== preferredCode) {
       throw new Error("DEVICE_CODE_MISMATCH");
+    }
+    if (!existingByToken.enabled && values.reactivateDisabled) {
+      const [updated] = await db
+        .update(collectorDevices)
+        .set({
+          enabled: true,
+          platform: values.platform ?? existingByToken.platform,
+          appVersion: values.appVersion ?? existingByToken.appVersion,
+          lastIp: values.lastIp ?? existingByToken.lastIp,
+          updatedAt: new Date()
+        })
+        .where(eq(collectorDevices.id, existingByToken.id))
+        .returning();
+      return updated ?? existingByToken;
     }
     return (await updateDeviceRuntimeMetadata(existingByToken.id, values)) ?? existingByToken;
   }
@@ -253,13 +271,14 @@ export async function registerDeviceByToken(values: {
   if (preferredCode) {
     const existingByCode = await findDeviceByCode(preferredCode);
     if (existingByCode) {
-      if (existingByCode.deviceToken && existingByCode.deviceToken !== values.deviceToken) {
-        throw new Error("DEVICE_TOKEN_CONFLICT");
+      if (!existingByCode.enabled && !values.reactivateDisabled) {
+        throw new Error("DEVICE_DISABLED");
       }
       const [updated] = await db
         .update(collectorDevices)
         .set({
           deviceToken: values.deviceToken,
+          enabled: existingByCode.enabled || values.reactivateDisabled ? true : existingByCode.enabled,
           platform: values.platform ?? existingByCode.platform,
           appVersion: values.appVersion ?? existingByCode.appVersion,
           lastIp: values.lastIp ?? existingByCode.lastIp,
@@ -278,7 +297,7 @@ export async function registerDeviceByToken(values: {
     .values({
       tenantId: config.tenantId,
       deviceCode,
-      deviceName: values.deviceName || "Device-" + suffix,
+      deviceName: values.deviceName || "设备-" + suffix,
       deviceToken: values.deviceToken,
       platform: values.platform,
       appVersion: values.appVersion,

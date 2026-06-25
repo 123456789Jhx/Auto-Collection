@@ -1,5 +1,8 @@
 import { paginationQuerySchema, type UpdateDevicePayload, type UpdateDeviceTaskConfigPayload, type UpdateTaskPayload } from "@pkg/types";
 import { randomBytes } from "node:crypto";
+import { db } from "../repositories/db";
+import { collectorDevices } from "@pkg/db/schema";
+import { and, eq, isNull } from "drizzle-orm";
 import { listDevices, updateDeviceByCode } from "../repositories/device.repository";
 import { getDeviceDailyProgressSummaries, listDeviceHeartbeats, listLatestHeartbeats, listLatestHeartbeatsByDeviceIds } from "../repositories/heartbeat.repository";
 import { countRuntimeLogs, getLogDateSummaries, getLogDeviceSummaries, listRuntimeLogs } from "../repositories/log.repository";
@@ -175,6 +178,22 @@ export async function rotateDeviceToken(deviceCode: string) {
 
 export async function clearDeviceToken(deviceCode: string) {
   const updated = await updateDeviceByCode(deviceCode, { deviceToken: null });
+  if (!updated) {
+    throw new Error("设备不存在");
+  }
+  return hideDeviceSecret(mapDeviceStatus(updated));
+}
+
+export async function deleteDeviceRecord(deviceCode: string) {
+  const [updated] = await db
+    .update(collectorDevices)
+    .set({
+      deletedAt: new Date(),
+      updatedAt: new Date(),
+      updatedBy: "admin"
+    })
+    .where(and(eq(collectorDevices.tenantId, "default"), eq(collectorDevices.deviceCode, deviceCode), isNull(collectorDevices.deletedAt)))
+    .returning();
   if (!updated) {
     throw new Error("设备不存在");
   }
@@ -390,10 +409,27 @@ export async function getLiveCommentActions(rawQuery: unknown) {
 export async function getLiveCommentDeviceSummary(rawQuery: unknown) {
   const raw = (rawQuery ?? {}) as Record<string, string | undefined>;
   const createdFrom = parseOptionalDate(raw.createdFrom) ?? new Date(0);
-  const [devices, summaries] = await Promise.all([listDevices(), getLiveCommentDeviceSummaries(createdFrom)]);
+  const devices = await listDevices();
+  const [summaries, latestHeartbeats, configResults] = await Promise.all([
+    getLiveCommentDeviceSummaries(createdFrom),
+    listLatestHeartbeatsByDeviceIds(devices.map((device) => device.id)),
+    Promise.all(devices.map((device) => findDeviceTaskConfig(device.deviceCode, device.platform ?? "douyin")))
+  ]);
   const summaryByDeviceCode = new Map(summaries.map((summary) => [summary.deviceCode, summary]));
+  const latestHeartbeatByDeviceId = new Map(latestHeartbeats.filter((heartbeat) => heartbeat.deviceId).map((heartbeat) => [heartbeat.deviceId, heartbeat]));
+  const configByDeviceCode = new Map(
+    devices.map((device, index) => {
+      const result = configResults[index];
+      return [device.deviceCode, {
+        source: result.config ? "device" : "task",
+        config: resolveTaskConfig(result.task, result.config)
+      }];
+    })
+  );
   return devices.map((device) => {
     const summary = summaryByDeviceCode.get(device.deviceCode);
+    const latestHeartbeat = latestHeartbeatByDeviceId.get(device.id);
+    const taskConfig = configByDeviceCode.get(device.deviceCode);
     return {
       deviceId: device.id,
       deviceCode: device.deviceCode,
@@ -405,7 +441,13 @@ export async function getLiveCommentDeviceSummary(rawQuery: unknown) {
       skippedCount: summary?.skippedCount ?? 0,
       latestActionAt: summary?.latestActionAt ?? null,
       deviceStatus: mapDeviceStatus(device).effectiveStatus,
-      lastHeartbeatAt: device.lastHeartbeatAt
+      reportedStatus: device.status,
+      currentTask: latestHeartbeat?.status === "running" && (latestHeartbeat.sceneType === "video" || latestHeartbeat.sceneType === "live") ? latestHeartbeat.sceneType : "none",
+      lastHeartbeatAt: latestHeartbeat?.reportedAt ?? device.lastHeartbeatAt,
+      heartbeatAgeMinutes: minutesSince(latestHeartbeat?.reportedAt ?? device.lastHeartbeatAt),
+      lastMessage: latestHeartbeat?.lastMessage ?? null,
+      liveCommentMode: taskConfig?.config.liveCommentMode ?? "agri_chatbot",
+      configSource: taskConfig?.source ?? "task"
     };
   });
 }

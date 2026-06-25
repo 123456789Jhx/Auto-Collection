@@ -12,6 +12,7 @@ function createPhaseRunner(context) {
   var liveScorer = context.liveScorer;
   var liveRoomSampler = context.liveRoomSampler;
   var riskDetector = context.riskDetector;
+  var taskScheduler = context.taskScheduler;
 
   function randomRangeSeconds(minValue, maxValue) {
     var min = minValue;
@@ -68,20 +69,63 @@ function createPhaseRunner(context) {
     return false;
   }
 
+  function persistCheckpoint(sceneType, extra) {
+    if (!taskScheduler || !sceneType) {
+      return;
+    }
+    var activeTaskType = taskScheduler.getActiveTaskType ? taskScheduler.getActiveTaskType() : "";
+    var checkpointTaskType = taskScheduler.resolveTaskType(
+      (extra && extra.taskType) || activeTaskType,
+      sceneType
+    );
+    taskScheduler.recordCheckpoint(checkpointTaskType, {
+      taskType: checkpointTaskType,
+      sceneType: sceneType,
+      viewedCount: counters.viewedCount,
+      liveViewedCount: counters.liveViewedCount,
+      liveRoomEnteredCount: counters.liveRoomEnteredCount,
+      liveCandidateCount: counters.liveCandidateCount,
+      liveRejectedCount: counters.liveRejectedCount,
+      capturedCount: counters.capturedCount,
+      plannedVideoMinutes: counters.plannedVideoMinutes,
+      plannedLiveMinutes: counters.plannedLiveMinutes,
+      videoElapsedMinutes: counters.videoElapsedMinutes,
+      videoRemainingMinutes: counters.videoRemainingMinutes,
+      liveElapsedMinutes: counters.liveElapsedMinutes,
+      liveRemainingMinutes: counters.liveRemainingMinutes,
+      lastStopReason: counters.lastStopReason,
+      phaseStartedAt: counters.phaseStartedAt,
+      phaseEndedAt: counters.phaseEndedAt,
+      extra: extra || {}
+    });
+  }
+
   function isLiveCommentPriorityRunning() {
     return !!context.liveCommentPriorityRequested ||
       !!(floatyControl && floatyControl.state && floatyControl.state.liveCommentControlStatus === "running");
+  }
+
+  function currentTaskType() {
+    return taskScheduler && taskScheduler.getActiveTaskType ? taskScheduler.getActiveTaskType() : "";
+  }
+
+  function isLiveCommentFlowActive() {
+    return currentTaskType() === "live_comment" || isLiveCommentPriorityRunning();
   }
 
   function sleepResponsive(totalMs, sceneType, phaseStartMs, phaseEndAt, stepMs) {
     var endAt = Date.now() + Math.max(0, totalMs || 0);
     var chunkMs = Math.max(100, stepMs || 300);
     while (!shouldStop() && Date.now() < endAt) {
+      controlLoop.waitWhilePaused();
+      if (shouldStop() || Date.now() >= endAt) {
+        break;
+      }
       controlLoop.pollControlCommandsAsync(false);
       if (sceneType && phaseStartMs) {
         heartbeatService.writeHeartbeat(sceneType, phaseStartMs, phaseEndAt);
       }
-      sleep(Math.min(chunkMs, endAt - Date.now()));
+      sleep(Math.min(chunkMs, Math.max(0, endAt - Date.now())));
     }
   }
 
@@ -105,7 +149,7 @@ function createPhaseRunner(context) {
 
     if (sceneType === "live") {
       douyin.restartToFeed();
-      if (config.task.liveCommentDirectTest !== true && !isLiveCommentPriorityRunning()) {
+      if (!isLiveCommentFlowActive()) {
         douyin.enterLiveFeed();
       }
     } else {
@@ -118,6 +162,7 @@ function createPhaseRunner(context) {
     controlLoop.waitWhilePaused();
     if (phaseEndAt && Date.now() >= phaseEndAt) {
       counters.lastStopReason = "phase_expired_while_paused";
+      persistCheckpoint(sceneType || "video", { checkpointType: "paused_expired" });
       logger.warn("phase expired while paused, restart task on next loop", {
         sceneType: sceneType,
         expectedEndAt: new Date(phaseEndAt).toISOString()
@@ -217,6 +262,10 @@ function createPhaseRunner(context) {
       }
       douyin.nextVideo();
     }
+    persistCheckpoint(sceneType || "video", {
+      checkpointType: "video_step",
+      sceneType: screenData.sceneType || sceneType || "video"
+    });
   }
 
   function handleInvalidVideoContext(screenData, text) {
@@ -302,6 +351,13 @@ function createPhaseRunner(context) {
     if (!ensureDouyinForeground("live", "handle_live_start")) {
       return;
     }
+    if (context.liveCommentTargetRoomRefreshRequested && context.tryEnterTargetLiveRoomFromSearch) {
+      floatyControl.update({
+        lastMessage: "指定直播间已刷新，重新搜索中"
+      });
+      context.tryEnterTargetLiveRoomFromSearch("target_room_refresh_retry");
+      return;
+    }
 
     if (counters.liveRoomEnteredCount >= config.task.liveMaxRoomsPerPhase) {
       if (!livePhaseState.maxRoomsLogged) {
@@ -312,6 +368,9 @@ function createPhaseRunner(context) {
         });
       }
       sleepWithHeartbeat(30, "live", phaseStartMs, phaseEndAt);
+      persistCheckpoint("live", {
+        checkpointType: "live_idle"
+      });
       return;
     }
 
@@ -385,12 +444,12 @@ function createPhaseRunner(context) {
       });
     }
 
-    if ((config.task.liveCommentDirectTest === true || isLiveCommentPriorityRunning()) && douyin.isLiveRoomVisible && douyin.isLiveRoomVisible()) {
+    if (isLiveCommentFlowActive() && douyin.isLiveRoomVisible && douyin.isLiveRoomVisible()) {
       enterAndCollectLiveRoom(screenData, text, matchResult, liveScore, phaseEndAt, phaseStartMs);
       return;
     }
 
-    if (config.task.liveCommentDirectTest === true) {
+    if (currentTaskType() === "live_comment" && config.task.liveCommentDirectTest === true) {
       logger.info("指定直播间测试：从当前搜索综合页直接尝试进入直播间", {
         score: liveScore.score,
         reasons: liveScore.reasons,
@@ -488,6 +547,10 @@ function createPhaseRunner(context) {
     }
 
     counters.liveRoomEnteredCount += 1;
+    persistCheckpoint("live", {
+      checkpointType: "live_room_entered",
+      liveRoomEnteredCount: counters.liveRoomEnteredCount
+    });
     var staySeconds = randomLiveStaySeconds(liveScore.quality);
     if (phaseEndAt) {
       staySeconds = Math.min(staySeconds, Math.max(30, Math.floor((phaseEndAt - Date.now()) / 1000)));
@@ -529,6 +592,24 @@ function createPhaseRunner(context) {
         commentCount: liveRoomSample ? liveRoomSample.commentCount : 0,
         lastState: liveRoomSample ? liveRoomSample.lastState : ""
       });
+      if (liveRoomSample && liveRoomSample.stopReason === "target_room_refresh_requested") {
+        logger.info("target live room refresh requested, re-entering search", {
+          sampleCount: liveRoomSample.sampleCount,
+          commentCount: liveRoomSample.commentCount
+        });
+        controlLoop.reportRuntimeLog("INFO", "target live room refresh requested, re-entering search", {
+          phase: "live_room_refresh",
+          sampleCount: liveRoomSample.sampleCount,
+          commentCount: liveRoomSample.commentCount
+        });
+        floatyControl.update({
+          lastMessage: "指定直播间已刷新，重新搜索中"
+        });
+        if (context.tryEnterTargetLiveRoomFromSearch) {
+          context.tryEnterTargetLiveRoomFromSearch("target_room_refresh");
+        }
+        return;
+      }
       if (liveRoomSample && liveRoomSample.stopReason === "consecutive_comment_failures") {
         counters.lastStopReason = "consecutive_comment_failures";
         floatyControl.update({
@@ -570,6 +651,10 @@ function createPhaseRunner(context) {
     if (!shouldStop() && Date.now() < phaseEndAt) {
       douyin.nextVideo();
     }
+    persistCheckpoint("live", {
+      checkpointType: "live_step",
+      liveRoomEnteredCount: counters.liveRoomEnteredCount
+    });
   }
 
   function stopForRisk(message, sceneType, text) {
@@ -589,7 +674,9 @@ function createPhaseRunner(context) {
     });
   }
 
-  function runPhase(sceneType, durationMinutes) {
+  function runPhase(sceneType, durationMinutes, options) {
+    options = options || {};
+    var taskType = options.taskType || sceneType;
     counters.currentPhase = sceneType;
     counters.phaseStartedAt = isoNow();
     counters.phaseEndedAt = "";
@@ -608,6 +695,7 @@ function createPhaseRunner(context) {
     context.heartbeat.lastAt = startMs;
     logger.info("开始采集阶段", {
       sceneType: sceneType,
+      taskType: taskType,
       durationMinutes: durationMinutes,
       startedAt: counters.phaseStartedAt,
       expectedEndAt: new Date(endAt).toISOString()
@@ -615,6 +703,7 @@ function createPhaseRunner(context) {
     controlLoop.reportRuntimeLog("INFO", "开始采集阶段", {
       phase: "phase_start",
       sceneType: sceneType,
+      taskType: taskType,
       durationMinutes: durationMinutes,
       startedAt: counters.phaseStartedAt,
       expectedEndAt: new Date(endAt).toISOString()
@@ -623,7 +712,7 @@ function createPhaseRunner(context) {
       lastMessage: (sceneType === "live" ? "直播阶段" : "视频阶段") + "开始"
     });
 
-    if (sceneType === "live" && config.task.liveCommentDirectTest !== true && !isLiveCommentPriorityRunning()) {
+    if (sceneType === "live" && !isLiveCommentFlowActive()) {
       logger.info("直播阶段启动前恢复页面上下文");
       douyin.enterLiveFeed();
     }
@@ -686,10 +775,10 @@ function createPhaseRunner(context) {
       }
     }
 
-    finishPhase(sceneType, startMs, endAt);
+    finishPhase(sceneType, startMs, endAt, taskType);
   }
 
-  function finishPhase(sceneType, startMs, endAt) {
+  function finishPhase(sceneType, startMs, endAt, taskType) {
     if (!counters.lastStopReason) {
       counters.lastStopReason = Date.now() >= endAt ? "duration_finished" : "phase_finished";
     }
@@ -705,6 +794,7 @@ function createPhaseRunner(context) {
     }
     var payload = {
       sceneType: sceneType,
+      taskType: taskType || sceneType,
       startedAt: counters.phaseStartedAt,
       endedAt: counters.phaseEndedAt,
       elapsedMinutes: elapsedMinutes,
@@ -718,6 +808,10 @@ function createPhaseRunner(context) {
     };
     logger.info("采集阶段结束", payload);
     controlLoop.reportRuntimeLog("INFO", "采集阶段结束", payload);
+    persistCheckpoint(taskType || sceneType, {
+      checkpointType: "phase_end",
+      stopReason: counters.lastStopReason
+    });
     floatyControl.update({
       lastMessage: (sceneType === "live" ? "直播阶段" : "视频阶段") + "结束: " + counters.lastStopReason
     });
