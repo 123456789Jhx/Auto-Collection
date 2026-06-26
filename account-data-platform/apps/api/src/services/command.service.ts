@@ -9,6 +9,7 @@ import {
 } from "../repositories/command.repository";
 import { findDeviceByCode, markDeviceCommandIssued, resolveDeviceByToken } from "../repositories/device.repository";
 import { findTaskByCode } from "../repositories/task.repository";
+import { updateTaskAssignmentByCommandId } from "../repositories/task-assignment.repository";
 
 const STATE_COMMAND_TYPES = ["START", "RESUME", "PAUSE", "STOP"];
 
@@ -86,5 +87,12 @@ export async function acknowledgeCommand(commandId: string, payload: MobileComma
   if (!command) {
     throw new Error("COMMAND_NOT_FOUND");
   }
+  const assignmentStatus = payload.status === "DONE" ? "ACKED" : (payload.status === "FAILED" ? "FAILED" : "SUPERSEDED");
+  await updateTaskAssignmentByCommandId(commandId, {
+    status: assignmentStatus,
+    acknowledgedAt: command.acknowledgedAt ?? new Date(),
+    completedAt: payload.status === "FAILED" || payload.status === "IGNORED" ? command.acknowledgedAt ?? new Date() : undefined,
+    updatedBy: "mobile_agent"
+  });
   return command;
 }

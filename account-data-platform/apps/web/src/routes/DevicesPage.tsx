@@ -1,9 +1,9 @@
 import { MoreOutlined, PauseOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined, SyncOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Dropdown, Form, Input, InputNumber, Modal, Popconfirm, Select, Skeleton, Space, Switch, Table, Tag, Tooltip, message } from "antd";
+import { Alert, Button, Dropdown, Form, Input, InputNumber, Modal, Popconfirm, Select, Skeleton, Space, Switch, message } from "antd";
 import { useState } from "react";
 import { createMobileCommand, getDeviceTaskConfig, getDevices, updateDevice, updateDeviceTaskConfig } from "../lib/api-client";
-import { statusColor, statusText } from "../lib/display-maps";
+import { statusText } from "../lib/display-maps";
 import { defaultLiveCommentBotConfig, parseLiveCommentConfig, parseP3ExtensionsConfig, stringifyLiveCommentConfig, stringifyP3ExtensionsConfig } from "../lib/live-comment-config";
 
 type DeviceRow = {
@@ -110,6 +110,31 @@ function formatDateTime(value?: string | null) {
   return date.toLocaleString("zh-CN", { hour12: false });
 }
 
+function taskText(value?: string | null) {
+  if (value === "video") return "视频";
+  if (value === "live") return "直播";
+  if (value === "live_comment") return "直播评论";
+  return "待命";
+}
+
+function statusTone(value?: string | null) {
+  if (value === "error" || value === "risk_control") return "red";
+  if (value === "offline" || value === "stopped") return "gray";
+  if (value === "paused" || value === "idle" || value === "booting" || value === "updating") return "amber";
+  return "green";
+}
+
+function taskTone(value?: string | null) {
+  if (value === "live_comment") return "purple";
+  if (value === "live") return "green";
+  if (value === "video") return "blue";
+  return "gray";
+}
+
+function enabledText(value?: boolean) {
+  return value === false ? "禁用" : "启用";
+}
+
 function parseAliasText(value?: string) {
   return (value || "")
     .split(/[\n,，]/)
@@ -150,6 +175,7 @@ export function DevicesPage() {
   const [currentDevice, setCurrentDevice] = useState<DeviceRow | null>(null);
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
+  const [selectedDeviceCode, setSelectedDeviceCode] = useState("");
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(15);
   const [form] = Form.useForm<DeviceConfigFormValues>();
   const [deviceForm] = Form.useForm<DeviceFormValues>();
@@ -309,139 +335,216 @@ export function DevicesPage() {
   if (query.isLoading) return <Skeleton active />;
   if (query.isError) return <Alert type="error" message="设备列表加载失败" description={query.error.message} showIcon />;
 
-  const devices = ((query.data ?? []) as DeviceRow[]).filter((item) => {
+  const allDevices = (query.data ?? []) as DeviceRow[];
+  const devices = allDevices.filter((item) => {
     const text = `${item.deviceCode} ${item.deviceName ?? ""} ${item.platform ?? ""}`.toLowerCase();
     const matchedKeyword = !keyword || text.includes(keyword.toLowerCase());
     const matchedStatus = !statusFilter || item.effectiveStatus === statusFilter || item.reportedStatus === statusFilter;
     return matchedKeyword && matchedStatus;
   });
+  const selectedDevice = devices.find((item) => item.deviceCode === selectedDeviceCode)
+    ?? allDevices.find((item) => item.deviceCode === selectedDeviceCode)
+    ?? devices[0]
+    ?? allDevices[0]
+    ?? null;
+  const onlineCount = allDevices.filter((item) => !["offline", "stopped", "error"].includes(item.effectiveStatus || item.status || "")).length;
+  const runningCount = allDevices.filter((item) => item.effectiveStatus === "running" || item.reportedStatus === "running").length;
+  const disabledCount = allDevices.filter((item) => item.enabled === false).length;
+  const exceptionCount = allDevices.filter((item) => ["offline", "error", "stopped", "risk_control"].includes(item.effectiveStatus || item.status || "")).length;
 
   return (
-    <Card title="设备状态">
+    <>
       {contextHolder}
-      <Space style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }} wrap>
-        <Space wrap>
-          <Input.Search placeholder="搜索设备编号/名称" allowClear style={{ width: 260 }} value={keyword} onChange={(event) => setKeyword(event.target.value)} />
-          <Select
-            allowClear
-            placeholder="状态"
-            style={{ width: 150 }}
-            value={statusFilter}
-            onChange={setStatusFilter}
-            options={[
-              { label: "运行中", value: "running" },
-              { label: "待命", value: "idle" },
-              { label: "暂停", value: "paused" },
-              { label: "离线", value: "offline" },
-              { label: "异常", value: "error" }
-            ]}
-          />
-          <Select
-            style={{ width: 150 }}
-            value={autoRefreshSeconds}
-            onChange={setAutoRefreshSeconds}
-            options={[
-              { label: "5秒刷新", value: 5 },
-              { label: "15秒刷新", value: 15 },
-              { label: "30秒刷新", value: 30 },
-              { label: "暂停刷新", value: 0 }
-            ]}
-          />
-        </Space>
-        <Button icon={<ReloadOutlined />} loading={query.isFetching} onClick={() => void manualRefresh()}>
-          手动刷新
-        </Button>
-      </Space>
-      <Table<DeviceRow> rowKey={(row) => String(row.id)} dataSource={devices} scroll={{ x: 1180 }} pagination={{ pageSize: 10 }}>
-        <Table.Column<DeviceRow>
-          title="设备"
-          fixed="left"
-          width={220}
-          render={(_, device) => (
-            <Space direction="vertical" size={0}>
-              <strong>{device.deviceName || device.deviceCode}</strong>
-              <span style={{ color: "#6b7280", fontSize: 12 }}>{device.deviceCode}</span>
-            </Space>
-          )}
-        />
-        <Table.Column<DeviceRow>
-          title="当前状态"
-          dataIndex="effectiveStatus"
-          width={110}
-          render={(value) => <Tag color={statusColor(value)}>{statusText(value)}</Tag>}
-        />
-        <Table.Column<DeviceRow>
-          title="当前任务"
-          dataIndex="currentTask"
-          width={120}
-          render={(value) => {
-            if (value === "video") return <Tag color="blue">视频</Tag>;
-            if (value === "live") return <Tag color="purple">直播</Tag>;
-            return <Tag>未执行任务</Tag>;
-          }}
-        />
-        <Table.Column<DeviceRow> title="平台" dataIndex="platform" width={90} render={(value) => value || "-"} />
-        <Table.Column<DeviceRow> title="启用" dataIndex="enabled" width={80} render={(value) => <Tag color={value === false ? "red" : "green"}>{value === false ? "禁用" : "启用"}</Tag>} />
-        <Table.Column<DeviceRow> title="最近 IP" dataIndex="lastIp" width={140} render={(value) => value || "-"} />
-        <Table.Column<DeviceRow> title="最后心跳" width={190} render={(_, device) => <span>{formatDateTime(device.lastHeartbeatAt)}</span>} />
-        <Table.Column<DeviceRow> title="版本" width={150} render={(_, device) => `${device.appVersion || "-"} / ${device.targetVersion || "-"}`} />
-        <Table.Column<DeviceRow>
-          title="控制"
-          fixed="right"
-          width={360}
-          render={(_, device) => (
-            <Space size={6} wrap>
-              <Tooltip title="启动或继续今天的采集任务，Agent 脚本保持常驻">
-                <Button size="small" icon={<PlayCircleOutlined />} onClick={() => sendCommand(device.deviceCode, "START")}>
-                  启动/继续任务
-                </Button>
-              </Tooltip>
-              <Tooltip title="暂停当前采集任务，Agent 脚本继续常驻">
-                <Button size="small" icon={<PauseOutlined />} onClick={() => sendCommand(device.deviceCode, "PAUSE")}>
-                  暂停任务
-                </Button>
-              </Tooltip>
-              <Tooltip title="查看并修改当前平台脚本参数">
-                <Button size="small" onClick={() => void openConfig(device)}>
-                  脚本参数
-                </Button>
-              </Tooltip>
-              <Tooltip title="编辑设备名称、部署区域和备注">
-                <Button size="small" onClick={() => openDeviceEditor(device)}>
-                  设备信息
-                </Button>
-              </Tooltip>
-              <Popconfirm
-                title="确认关闭手机 Agent 脚本？"
-                description="关闭后后台将无法继续下发任务，除非本地或守护脚本重新拉起。"
-                okText="确认关闭"
-                cancelText="取消"
-                okButtonProps={{ danger: true }}
-                onConfirm={() => sendCommand(device.deviceCode, "STOP")}
-              >
-                <Button size="small" danger icon={<StopOutlined />}>
-                  关闭脚本
-                </Button>
-              </Popconfirm>
-              <Dropdown
-                menu={{
-                  items: [
-                    { key: "REFRESH_CONFIG", icon: <SyncOutlined />, label: "刷新配置" },
-                    { key: "CHECK_UPDATE", icon: <SyncOutlined />, label: "检查版本" },
-                    { key: "UPDATE_AGENT", icon: <SyncOutlined />, label: "更新脚本" },
-                    { key: "RESTART_APP", icon: <ReloadOutlined />, label: "故障重启抖音" }
-                  ],
-                  onClick: ({ key }) => {
-                    sendCommand(device.deviceCode, key as "REFRESH_CONFIG" | "CHECK_UPDATE" | "UPDATE_AGENT" | "RESTART_APP");
-                  }
-                }}
-              >
-                <Button size="small" icon={<MoreOutlined />} />
-              </Dropdown>
-            </Space>
-          )}
-        />
-      </Table>
+      <div className="ops-page">
+        <header className="ops-topbar">
+          <div>
+            <h1>设备运行</h1>
+            <p>查看每台手机的在线状态、当前任务、版本、心跳和常用远程控制。</p>
+          </div>
+          <div className="ops-toolbar">
+            <button className="ops-btn" type="button" disabled={query.isFetching} onClick={() => void manualRefresh()}>刷新</button>
+            <select className="ops-input" value={autoRefreshSeconds} onChange={(event) => setAutoRefreshSeconds(Number(event.currentTarget.value))}>
+              <option value={5}>5秒刷新</option>
+              <option value={15}>15秒刷新</option>
+              <option value={30}>30秒刷新</option>
+              <option value={0}>暂停刷新</option>
+            </select>
+          </div>
+        </header>
+
+        <section className="ops-stats">
+          <div className="ops-stat">
+            <div className="ops-stat-label">设备总数</div>
+            <div className="ops-stat-value">{allDevices.length}</div>
+            <div className="ops-stat-note">已注册设备</div>
+          </div>
+          <div className="ops-stat">
+            <div className="ops-stat-label">在线设备</div>
+            <div className="ops-stat-value ok">{onlineCount}</div>
+            <div className="ops-stat-note">非离线/停止/异常</div>
+          </div>
+          <div className="ops-stat">
+            <div className="ops-stat-label">运行中</div>
+            <div className="ops-stat-value">{runningCount}</div>
+            <div className="ops-stat-note">手机正在执行任务</div>
+          </div>
+          <div className="ops-stat">
+            <div className="ops-stat-label">禁用</div>
+            <div className="ops-stat-value warn">{disabledCount}</div>
+            <div className="ops-stat-note">后台停用设备</div>
+          </div>
+          <div className="ops-stat">
+            <div className="ops-stat-label">异常</div>
+            <div className="ops-stat-value danger">{exceptionCount}</div>
+            <div className="ops-stat-note">离线、错误或风控</div>
+          </div>
+        </section>
+
+        <section className="ops-filter-panel three">
+          <div className="ops-field">
+            <label htmlFor="device-keyword">设备搜索</label>
+            <input id="device-keyword" className="ops-input" placeholder="设备编号 / 名称 / 平台" value={keyword} onChange={(event) => setKeyword(event.currentTarget.value)} />
+          </div>
+          <div className="ops-field">
+            <label htmlFor="device-status">运行状态</label>
+            <select id="device-status" className="ops-input" value={statusFilter ?? ""} onChange={(event) => setStatusFilter(event.currentTarget.value || undefined)}>
+              <option value="">全部状态</option>
+              <option value="running">运行中</option>
+              <option value="idle">待命</option>
+              <option value="paused">暂停</option>
+              <option value="offline">离线</option>
+              <option value="error">异常</option>
+            </select>
+          </div>
+          <div className="ops-field">
+            <label htmlFor="device-refresh">刷新频率</label>
+            <select id="device-refresh" className="ops-input" value={autoRefreshSeconds} onChange={(event) => setAutoRefreshSeconds(Number(event.currentTarget.value))}>
+              <option value={5}>5秒刷新</option>
+              <option value={15}>15秒刷新</option>
+              <option value={30}>30秒刷新</option>
+              <option value={0}>暂停刷新</option>
+            </select>
+          </div>
+          <button className="ops-btn" type="button" onClick={() => void manualRefresh()}>应用筛选</button>
+        </section>
+
+        <section className="ops-workbench wide-side">
+          <div className="ops-panel">
+            <div className="ops-panel-head">
+              <span>设备运行清单</span>
+              <span className="ops-small">{devices.length} 台</span>
+            </div>
+            <div className="ops-table-wrap">
+              <table className="ops-table">
+                <thead>
+                  <tr>
+                    <th>设备</th>
+                    <th>当前状态</th>
+                    <th>当前任务</th>
+                    <th>平台 / 启用</th>
+                    <th>版本 / IP</th>
+                    <th>最后心跳</th>
+                    <th>常用操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {devices.length === 0 ? <tr><td className="ops-empty" colSpan={7}>没有符合条件的设备</td></tr> : null}
+                  {devices.map((device) => (
+                    <tr key={device.id || device.deviceCode} className={device.deviceCode === selectedDevice?.deviceCode ? "selected" : ""} onClick={() => setSelectedDeviceCode(device.deviceCode)}>
+                      <td>
+                        <div className="ops-title">{device.deviceName || device.deviceCode}</div>
+                        <div className="ops-small">{device.deviceCode}</div>
+                      </td>
+                      <td><span className={`ops-tag ${statusTone(device.effectiveStatus || device.status)}`}>{statusText(device.effectiveStatus || device.status)}</span></td>
+                      <td><span className={`ops-tag ${taskTone(device.currentTask)}`}>{taskText(device.currentTask)}</span></td>
+                      <td>
+                        <div>{device.platform || "-"}</div>
+                        <span className={`ops-tag ${device.enabled === false ? "red" : "green"}`}>{enabledText(device.enabled)}</span>
+                      </td>
+                      <td>
+                        <div>{device.appVersion || "-"} / {device.targetVersion || "-"}</div>
+                        <div className="ops-small">{device.lastIp || "-"}</div>
+                      </td>
+                      <td>{formatDateTime(device.lastHeartbeatAt)}</td>
+                      <td>
+                        <div className="ops-actions-cell" onClick={(event) => event.stopPropagation()}>
+                          <button className="ops-mini-btn primary" type="button" onClick={() => sendCommand(device.deviceCode, "START")}>启动</button>
+                          <button className="ops-mini-btn" type="button" onClick={() => sendCommand(device.deviceCode, "PAUSE")}>暂停</button>
+                          <button className="ops-mini-btn" type="button" onClick={() => void openConfig(device)}>脚本参数</button>
+                          <button className="ops-mini-btn" type="button" onClick={() => openDeviceEditor(device)}>设备信息</button>
+                          <span onClick={(event) => event.stopPropagation()}>
+                            <Popconfirm
+                              title="确认关闭手机 Agent 脚本？"
+                              description="关闭后后台将无法继续下发任务，除非本地或守护脚本重新拉起。"
+                              okText="确认关闭"
+                              cancelText="取消"
+                              okButtonProps={{ danger: true }}
+                              onConfirm={() => sendCommand(device.deviceCode, "STOP")}
+                            >
+                              <button className="ops-mini-btn danger" type="button">关闭</button>
+                            </Popconfirm>
+                          </span>
+                          <Dropdown
+                            menu={{
+                              items: [
+                                { key: "REFRESH_CONFIG", icon: <SyncOutlined />, label: "刷新配置" },
+                                { key: "CHECK_UPDATE", icon: <SyncOutlined />, label: "检查版本" },
+                                { key: "UPDATE_AGENT", icon: <SyncOutlined />, label: "更新脚本" },
+                                { key: "RESTART_APP", icon: <ReloadOutlined />, label: "故障重启抖音" }
+                              ],
+                              onClick: ({ key }) => {
+                                sendCommand(device.deviceCode, key as "REFRESH_CONFIG" | "CHECK_UPDATE" | "UPDATE_AGENT" | "RESTART_APP");
+                              }
+                            }}
+                          >
+                            <button className="ops-mini-btn" type="button"><MoreOutlined /></button>
+                          </Dropdown>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <aside className="ops-panel">
+            <div className="ops-panel-head">
+              <span>设备详情</span>
+              <span className={`ops-tag ${statusTone(selectedDevice?.effectiveStatus || selectedDevice?.status)}`}>{statusText(selectedDevice?.effectiveStatus || selectedDevice?.status)}</span>
+            </div>
+            <div className="ops-panel-body">
+              {selectedDevice ? (
+                <>
+                  <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>{selectedDevice.deviceName || selectedDevice.deviceCode}</h2>
+                  <div className="ops-kv">
+                    <div className="ops-k">设备编号</div><div>{selectedDevice.deviceCode}</div>
+                    <div className="ops-k">当前任务</div><div><span className={`ops-tag ${taskTone(selectedDevice.currentTask)}`}>{taskText(selectedDevice.currentTask)}</span></div>
+                    <div className="ops-k">平台</div><div>{selectedDevice.platform || "-"}</div>
+                    <div className="ops-k">启用状态</div><div><span className={`ops-tag ${selectedDevice.enabled === false ? "red" : "green"}`}>{enabledText(selectedDevice.enabled)}</span></div>
+                    <div className="ops-k">最近 IP</div><div>{selectedDevice.lastIp || "-"}</div>
+                    <div className="ops-k">部署区域</div><div>{selectedDevice.lastRegion || "-"}</div>
+                    <div className="ops-k">当前版本</div><div>{selectedDevice.appVersion || "-"}</div>
+                    <div className="ops-k">目标版本</div><div>{selectedDevice.targetVersion || "-"}</div>
+                    <div className="ops-k">最后心跳</div><div>{formatDateTime(selectedDevice.lastHeartbeatAt)}</div>
+                    <div className="ops-k">备注</div><div>{selectedDevice.remark || "-"}</div>
+                  </div>
+                  <div className="ops-toolbar detail-toolbar">
+                    <button className="ops-btn primary" type="button" onClick={() => sendCommand(selectedDevice.deviceCode, "START")}>启动/继续</button>
+                    <button className="ops-btn" type="button" onClick={() => sendCommand(selectedDevice.deviceCode, "REFRESH_CONFIG")}>刷新配置</button>
+                    <button className="ops-btn" type="button" onClick={() => void openConfig(selectedDevice)}>脚本参数</button>
+                    <button className="ops-btn" type="button" onClick={() => openDeviceEditor(selectedDevice)}>设备信息</button>
+                  </div>
+                  <div className="ops-panel-note" style={{ marginTop: 14 }}>账号画像</div>
+                  <pre className="ops-json-box">{JSON.stringify(selectedDevice.accountProfile || {}, null, 2)}</pre>
+                </>
+              ) : (
+                <div className="ops-empty">暂无设备</div>
+              )}
+            </div>
+          </aside>
+        </section>
+      </div>
       <Modal
         title={currentDevice ? `${currentDevice.deviceName || currentDevice.deviceCode} 脚本参数` : "脚本参数"}
         open={configOpen}
@@ -565,6 +668,6 @@ export function DevicesPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </Card>
+    </>
   );
 }

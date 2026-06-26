@@ -168,6 +168,22 @@ export const createMobileCommandSchema = z.object({
 
 export type CreateMobileCommandPayload = z.infer<typeof createMobileCommandSchema>;
 
+export const taskAssignmentTypeSchema = z.enum(["video", "live", "live_comment"]);
+
+export const createTaskAssignmentSchema = z.object({
+  deviceId: z.string().min(1),
+  taskType: taskAssignmentTypeSchema,
+  commandType: z.enum(["START", "RESUME", "PAUSE", "STOP"]).default("START"),
+  reason: z.string().trim().max(200).optional(),
+  priority: z.number().int().min(1).max(1000).default(100),
+  source: z.string().trim().min(1).max(64).default("manual"),
+  targetContext: z.string().trim().max(64).optional(),
+  payload: z.record(z.unknown()).optional(),
+  expiresInSeconds: z.number().int().min(60).max(86400).default(3600)
+});
+
+export type CreateTaskAssignmentPayload = z.infer<typeof createTaskAssignmentSchema>;
+
 export const createAgentVersionSchema = z.object({
   version: z.string().min(1),
   channel: z.enum(["stable", "gray", "dev"]).default("stable"),

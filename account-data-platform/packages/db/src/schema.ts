@@ -250,6 +250,33 @@ export const mobileCommands = pgTable(
   ]
 );
 
+export const deviceTaskAssignments = pgTable(
+  "device_task_assignments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    deviceId: uuid("device_id").notNull().references(() => collectorDevices.id),
+    taskId: uuid("task_id").references(() => collectionTasks.id),
+    commandId: uuid("command_id").references(() => mobileCommands.id),
+    taskType: varchar("task_type", { length: 32 }).notNull(),
+    targetContext: varchar("target_context", { length: 64 }),
+    status: varchar("status", { length: 32 }).notNull().default("PENDING"),
+    priority: integer("priority").notNull().default(100),
+    source: varchar("source", { length: 64 }).notNull().default("manual"),
+    reason: varchar("reason", { length: 200 }),
+    desiredPayload: jsonb("desired_payload").$type<Record<string, unknown>>(),
+    issuedAt: timestamp("issued_at", { withTimezone: true }),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_device_task_assignments_tenant_device_created_at").on(table.tenantId, table.deviceId, table.createdAt),
+    index("idx_device_task_assignments_tenant_status").on(table.tenantId, table.status),
+    index("idx_device_task_assignments_tenant_command").on(table.tenantId, table.commandId)
+  ]
+);
+
 export const liveCommentActions = pgTable(
   "live_comment_actions",
   {
@@ -306,6 +333,7 @@ export const collectorDevicesRelations = relations(collectorDevices, ({ many }) 
   logs: many(runtimeLogs),
   logFiles: many(deviceLogFiles),
   commands: many(mobileCommands),
+  taskAssignments: many(deviceTaskAssignments),
   liveCommentActions: many(liveCommentActions),
   updateEvents: many(agentUpdateEvents),
   taskConfigs: many(deviceTaskConfigs)
@@ -317,6 +345,7 @@ export const collectionTasksRelations = relations(collectionTasks, ({ many }) =>
   logs: many(runtimeLogs),
   logFiles: many(deviceLogFiles),
   commands: many(mobileCommands),
+  taskAssignments: many(deviceTaskAssignments),
   liveCommentActions: many(liveCommentActions),
   deviceConfigs: many(deviceTaskConfigs)
 }));

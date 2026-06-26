@@ -1,9 +1,9 @@
-import { ArrowLeftOutlined, CalendarOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Card, Col, Empty, Input, Modal, Row, Select, Skeleton, Space, Statistic, Table, Tag, Typography } from "antd";
-import { useState } from "react";
+import { Alert, Skeleton } from "antd";
+import type { ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { getRecordDates, getRecordDeviceSummary, getRecords } from "../lib/api-client";
-import { sceneText, statusColor, statusText } from "../lib/display-maps";
+import { sceneText, statusText } from "../lib/display-maps";
 
 type RecordDeviceSummary = {
   deviceCode?: string;
@@ -61,11 +61,30 @@ function matchedKeywordText(value?: string[] | null) {
   return Array.isArray(value) && value.length ? value.join("、") : "-";
 }
 
+function compactText(value?: string | null, fallback = "-", maxLength = 64) {
+  const text = String(value || "").trim();
+  if (!text) return fallback;
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function sceneTone(value?: string | null) {
+  if (value === "live") return "green";
+  if (value === "video") return "blue";
+  return "gray";
+}
+
+function statusTone(value?: string | null) {
+  if (value === "error" || value === "risk_control") return "red";
+  if (value === "offline" || value === "stopped") return "gray";
+  if (value === "paused" || value === "idle" || value === "booting" || value === "updating") return "amber";
+  return "green";
+}
+
 export function RecordsPage() {
-  const [selectedDevice, setSelectedDevice] = useState<RecordDeviceSummary | null>(null);
-  const [selectedDate, setSelectedDate] = useState<RecordDateSummary | null>(null);
-  const [previewRecord, setPreviewRecord] = useState<CollectionRecord | null>(null);
-  const [sceneType, setSceneType] = useState<string>();
+  const [selectedDeviceCode, setSelectedDeviceCode] = useState("");
+  const [selectedDate, setSelectedDate] = useState("");
+  const [previewRecordId, setPreviewRecordId] = useState("");
+  const [sceneType, setSceneType] = useState("");
   const [keyword, setKeyword] = useState("");
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(15);
 
@@ -74,187 +93,385 @@ export function RecordsPage() {
     queryFn: () => getRecordDeviceSummary(),
     refetchInterval: autoRefreshSeconds > 0 ? autoRefreshSeconds * 1000 : false
   });
+  const summaries = useMemo(() => (summaryQuery.data ?? []) as RecordDeviceSummary[], [summaryQuery.data]);
+  const selectedDevice = useMemo(
+    () => summaries.find((item) => item.deviceCode === selectedDeviceCode) ?? null,
+    [selectedDeviceCode, summaries]
+  );
+
   const dateQuery = useQuery({
-    queryKey: ["record-dates", selectedDevice?.deviceCode],
-    queryFn: () => getRecordDates(selectedDevice?.deviceCode || ""),
-    enabled: !!selectedDevice?.deviceCode
+    queryKey: ["record-dates", selectedDeviceCode],
+    queryFn: () => getRecordDates(selectedDeviceCode),
+    enabled: !!selectedDeviceCode,
+    refetchInterval: selectedDeviceCode && autoRefreshSeconds > 0 ? autoRefreshSeconds * 1000 : false
   });
+  const dates = useMemo(() => (dateQuery.data ?? []) as RecordDateSummary[], [dateQuery.data]);
+  const selectedDateSummary = useMemo(
+    () => dates.find((item) => item.recordDate === selectedDate) ?? null,
+    [dates, selectedDate]
+  );
+
   const recordsQuery = useQuery({
-    queryKey: ["records", selectedDevice?.deviceCode, selectedDate?.recordDate, sceneType, keyword],
+    queryKey: ["records", selectedDeviceCode, selectedDate, sceneType, keyword],
     queryFn: () => getRecords({
-      deviceCode: selectedDevice?.deviceCode,
+      deviceCode: selectedDeviceCode,
       sceneType,
       keyword,
-      createdFrom: selectedDate?.recordDate,
-      createdTo: nextDate(selectedDate?.recordDate),
+      createdFrom: selectedDate,
+      createdTo: nextDate(selectedDate),
       pageSize: 100
     }),
-    enabled: !!selectedDevice?.deviceCode && !!selectedDate?.recordDate,
-    refetchInterval: autoRefreshSeconds > 0 ? autoRefreshSeconds * 1000 : false
+    enabled: !!selectedDeviceCode && !!selectedDate,
+    refetchInterval: selectedDeviceCode && selectedDate && autoRefreshSeconds > 0 ? autoRefreshSeconds * 1000 : false
   });
+  const records = useMemo(() => (recordsQuery.data?.data ?? []) as CollectionRecord[], [recordsQuery.data]);
+  const selectedRecord = useMemo(
+    () => records.find((item) => item.id === previewRecordId) ?? records[0] ?? null,
+    [previewRecordId, records]
+  );
 
   if (summaryQuery.isLoading) return <Skeleton active />;
   if (summaryQuery.isError) return <Alert type="error" message="采集记录加载失败" description={summaryQuery.error.message} showIcon />;
 
-  if (!selectedDevice) {
-    const summaries = (summaryQuery.data ?? []) as RecordDeviceSummary[];
+  const totalRecords = summaries.reduce((sum, item) => sum + Number(item.totalCount || 0), 0);
+  const videoRecords = summaries.reduce((sum, item) => sum + Number(item.videoCount || 0), 0);
+  const liveRecords = summaries.reduce((sum, item) => sum + Number(item.liveCount || 0), 0);
+  const activeDevices = summaries.filter((item) => Number(item.totalCount || 0) > 0).length;
+
+  const refreshAll = () => {
+    void summaryQuery.refetch();
+    if (selectedDeviceCode) void dateQuery.refetch();
+    if (selectedDeviceCode && selectedDate) void recordsQuery.refetch();
+  };
+
+  const openDevice = (deviceCode?: string) => {
+    if (!deviceCode) return;
+    setSelectedDeviceCode(deviceCode);
+    setSelectedDate("");
+    setPreviewRecordId("");
+    setSceneType("");
+    setKeyword("");
+  };
+
+  const openDate = (date: string) => {
+    setSelectedDate(date);
+    setPreviewRecordId("");
+  };
+
+  const backToDevices = () => {
+    setSelectedDeviceCode("");
+    setSelectedDate("");
+    setPreviewRecordId("");
+    setSceneType("");
+    setKeyword("");
+  };
+
+  const backToDates = () => {
+    setSelectedDate("");
+    setPreviewRecordId("");
+  };
+
+  const renderToolbar = (extra?: ReactNode) => (
+    <div className="ops-toolbar">
+      {extra}
+      <button className="ops-btn" type="button" onClick={refreshAll}>刷新</button>
+      <select className="ops-input" value={autoRefreshSeconds} onChange={(event) => setAutoRefreshSeconds(Number(event.currentTarget.value))}>
+        <option value={5}>5秒刷新</option>
+        <option value={15}>15秒刷新</option>
+        <option value={30}>30秒刷新</option>
+        <option value={0}>暂停刷新</option>
+      </select>
+    </div>
+  );
+
+  const renderStats = () => (
+    <section className="ops-stats four">
+      <div className="ops-stat">
+        <div className="ops-stat-label">总记录</div>
+        <div className="ops-stat-value">{totalRecords}</div>
+        <div className="ops-stat-note">后台已收到的采集内容</div>
+      </div>
+      <div className="ops-stat">
+        <div className="ops-stat-label">视频</div>
+        <div className="ops-stat-value">{videoRecords}</div>
+        <div className="ops-stat-note">短视频来源</div>
+      </div>
+      <div className="ops-stat">
+        <div className="ops-stat-label">直播</div>
+        <div className="ops-stat-value">{liveRecords}</div>
+        <div className="ops-stat-note">直播间来源</div>
+      </div>
+      <div className="ops-stat">
+        <div className="ops-stat-label">有记录设备</div>
+        <div className="ops-stat-value">{activeDevices}</div>
+        <div className="ops-stat-note">最近采集：{formatDateTime(summaries[0]?.latestRecordAt)}</div>
+      </div>
+    </section>
+  );
+
+  if (!selectedDeviceCode) {
     return (
-      <Card
-        title="按手机查看采集记录"
-        extra={<RefreshSelect value={autoRefreshSeconds} onChange={setAutoRefreshSeconds} />}
-      >
-        {summaries.length === 0 ? <Empty description="暂无设备" /> : null}
-        <Row gutter={[12, 12]}>
-          {summaries.map((item) => (
-            <Col xs={24} md={12} xl={8} key={item.deviceCode || item.deviceName}>
-              <Card className="device-card" hoverable onClick={() => { setSelectedDevice(item); setSelectedDate(null); }}>
-                <Space align="start" style={{ width: "100%", justifyContent: "space-between" }}>
-                  <Space direction="vertical" size={2}>
-                    <Typography.Text strong>{item.deviceName || item.deviceCode || "未知设备"}</Typography.Text>
-                    <Typography.Text type="secondary">{item.deviceCode || "-"}</Typography.Text>
-                  </Space>
-                  <Tag color={statusColor(item.deviceStatus)}>{statusText(item.deviceStatus)}</Tag>
-                </Space>
-                <Row gutter={12} className="card-stats">
-                  <Col span={8}><Statistic title="总记录" value={item.totalCount} /></Col>
-                  <Col span={8}><Statistic title="视频" value={item.videoCount} /></Col>
-                  <Col span={8}><Statistic title="直播" value={item.liveCount} /></Col>
-                </Row>
-                <Space direction="vertical" size={0}>
-                  <Typography.Text type="secondary">最近采集：{formatDateTime(item.latestRecordAt)}</Typography.Text>
-                  <Typography.Text type="secondary">最近心跳：{formatDateTime(item.lastHeartbeatAt)}</Typography.Text>
-                </Space>
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      </Card>
+      <div className="ops-page">
+        <header className="ops-topbar">
+          <div>
+            <h1>采集记录</h1>
+            <p>先选择手机，再选择日期，最后查看当天采集内容，保留原来的记录查看路径。</p>
+          </div>
+          {renderToolbar()}
+        </header>
+
+        {renderStats()}
+
+        <section className="ops-panel">
+          <div className="ops-panel-head">
+            <span>按手机查看采集记录</span>
+            <span className="ops-small">点击手机卡片进入日期列表</span>
+          </div>
+          <div className="ops-panel-body">
+            {summaries.length === 0 ? <div className="ops-empty">暂无设备采集记录</div> : null}
+            <div className="ops-card-grid">
+              {summaries.map((item) => (
+                <button
+                  className="ops-device-card"
+                  disabled={!item.deviceCode}
+                  key={item.deviceCode || item.deviceName}
+                  type="button"
+                  onClick={() => openDevice(item.deviceCode)}
+                >
+                  <div className="ops-card-head">
+                    <div>
+                      <div className="ops-title">{item.deviceName || item.deviceCode || "未知设备"}</div>
+                      <div className="ops-small">{item.deviceCode || "未上报设备编号"}</div>
+                    </div>
+                    <span className={`ops-tag ${statusTone(item.deviceStatus)}`}>{statusText(item.deviceStatus)}</span>
+                  </div>
+                  <div className="ops-mini-stats">
+                    <div className="ops-mini-stat"><span>总采集</span><strong>{item.totalCount}</strong></div>
+                    <div className="ops-mini-stat"><span>视频</span><strong>{item.videoCount}</strong></div>
+                    <div className="ops-mini-stat"><span>直播</span><strong>{item.liveCount}</strong></div>
+                  </div>
+                  <div className="ops-card-meta">
+                    <span>最近采集</span>
+                    <strong>{formatDateTime(item.latestRecordAt)}</strong>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  if (!selectedDevice) {
+    return (
+      <div className="ops-page">
+        <header className="ops-topbar">
+          <div>
+            <h1>采集记录</h1>
+            <p>所选设备不在当前汇总中，请返回设备列表重新选择。</p>
+          </div>
+          {renderToolbar(<button className="ops-btn" type="button" onClick={backToDevices}>返回手机列表</button>)}
+        </header>
+      </div>
     );
   }
 
   if (!selectedDate) {
-    const dates = (dateQuery.data ?? []) as RecordDateSummary[];
     return (
-      <Card
-        title={
-          <Space>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => setSelectedDevice(null)} />
-            <span>{selectedDevice.deviceName || selectedDevice.deviceCode} 的采集日期</span>
-          </Space>
-        }
-        extra={<RefreshSelect value={autoRefreshSeconds} onChange={setAutoRefreshSeconds} />}
-      >
-        {dateQuery.isLoading ? <Skeleton active /> : null}
-        {!dateQuery.isLoading && dates.length === 0 ? <Empty description="暂无采集日期" /> : null}
-        <Row gutter={[12, 12]}>
-          {dates.map((item) => (
-            <Col xs={24} md={12} xl={8} key={item.recordDate}>
-              <Card className="device-card" hoverable onClick={() => setSelectedDate(item)}>
-                <Space align="start" style={{ width: "100%", justifyContent: "space-between" }}>
-                  <Space direction="vertical" size={2}>
-                    <Typography.Text strong>{item.recordDate}</Typography.Text>
-                    <Typography.Text type="secondary">最近：{formatDateTime(item.latestRecordAt)}</Typography.Text>
-                  </Space>
-                  <CalendarOutlined className="card-icon" />
-                </Space>
-                <Row gutter={12} className="card-stats">
-                  <Col span={8}><Statistic title="总记录" value={item.totalCount} /></Col>
-                  <Col span={8}><Statistic title="视频" value={item.videoCount} /></Col>
-                  <Col span={8}><Statistic title="直播" value={item.liveCount} /></Col>
-                </Row>
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      </Card>
+      <div className="ops-page">
+        <header className="ops-topbar">
+          <div>
+            <h1>{selectedDevice.deviceName || selectedDevice.deviceCode}</h1>
+            <p>选择日期后查看当天采集记录，日期卡片按后台返回的记录日汇总展示。</p>
+          </div>
+          {renderToolbar(<button className="ops-btn" type="button" onClick={backToDevices}>返回手机列表</button>)}
+        </header>
+
+        <section className="ops-stats four">
+          <div className="ops-stat">
+            <div className="ops-stat-label">设备总记录</div>
+            <div className="ops-stat-value">{selectedDevice.totalCount}</div>
+            <div className="ops-stat-note">设备编号：{selectedDevice.deviceCode}</div>
+          </div>
+          <div className="ops-stat">
+            <div className="ops-stat-label">视频</div>
+            <div className="ops-stat-value">{selectedDevice.videoCount}</div>
+            <div className="ops-stat-note">短视频采集</div>
+          </div>
+          <div className="ops-stat">
+            <div className="ops-stat-label">直播</div>
+            <div className="ops-stat-value">{selectedDevice.liveCount}</div>
+            <div className="ops-stat-note">直播间采集</div>
+          </div>
+          <div className="ops-stat">
+            <div className="ops-stat-label">设备状态</div>
+            <div className="ops-stat-value">{statusText(selectedDevice.deviceStatus)}</div>
+            <div className="ops-stat-note">最近采集：{formatDateTime(selectedDevice.latestRecordAt)}</div>
+          </div>
+        </section>
+
+        <section className="ops-panel">
+          <div className="ops-panel-head">
+            <span>采集日期</span>
+            <span className="ops-small">点击日期卡片进入当天内容列表</span>
+          </div>
+          <div className="ops-panel-body">
+            {dateQuery.isLoading ? <Skeleton active /> : null}
+            {dateQuery.isError ? <Alert type="error" message="采集日期加载失败" description={dateQuery.error.message} showIcon /> : null}
+            {!dateQuery.isLoading && !dateQuery.isError && dates.length === 0 ? <div className="ops-empty">这台手机还没有采集日期</div> : null}
+            <div className="ops-card-grid">
+              {dates.map((item) => (
+                <button className="ops-device-card" key={item.recordDate} type="button" onClick={() => openDate(item.recordDate)}>
+                  <div className="ops-card-head">
+                    <div>
+                      <div className="ops-title">{item.recordDate}</div>
+                      <div className="ops-small">最近采集：{formatDateTime(item.latestRecordAt)}</div>
+                    </div>
+                    <span className="ops-tag blue">{item.totalCount} 条</span>
+                  </div>
+                  <div className="ops-mini-stats">
+                    <div className="ops-mini-stat"><span>总采集</span><strong>{item.totalCount}</strong></div>
+                    <div className="ops-mini-stat"><span>视频</span><strong>{item.videoCount}</strong></div>
+                    <div className="ops-mini-stat"><span>直播</span><strong>{item.liveCount}</strong></div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
+      </div>
     );
   }
 
-  const records = (recordsQuery.data?.data ?? []) as CollectionRecord[];
-
   return (
-    <Card
-      title={
-        <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => setSelectedDate(null)} />
-          <span>{selectedDevice.deviceName || selectedDevice.deviceCode} / {selectedDate.recordDate}</span>
-        </Space>
-      }
-      extra={
-        <Space>
-          <Select
-            allowClear
-            placeholder="阶段"
-            value={sceneType}
-            onChange={setSceneType}
-            style={{ width: 120 }}
-            options={[
-              { value: "video", label: "视频" },
-              { value: "live", label: "直播" }
-            ]}
-          />
-          <Input.Search placeholder="标题关键词" allowClear onSearch={setKeyword} style={{ width: 220 }} />
-          <RefreshSelect value={autoRefreshSeconds} onChange={setAutoRefreshSeconds} />
-        </Space>
-      }
-    >
-      {recordsQuery.isLoading ? <Skeleton active /> : null}
-      {recordsQuery.isError ? <Alert type="error" message="采集记录加载失败" description={recordsQuery.error.message} showIcon /> : null}
-      {!recordsQuery.isLoading && records.length === 0 ? <Empty description="当天暂无采集记录" /> : null}
-      <Table rowKey={(row) => String((row as CollectionRecord).id)} dataSource={records} scroll={{ x: 1200 }} pagination={{ pageSize: 20 }}>
-        <Table.Column title="采集时间" dataIndex="createdAt" width={180} render={(value) => formatDateTime(value as string | undefined)} />
-        <Table.Column title="阶段" dataIndex="sceneType" width={90} render={(value) => <Tag>{sceneText(value as string)}</Tag>} />
-        <Table.Column title="搜索词" dataIndex="keyword" width={140} />
-        <Table.Column title="命中词" width={160} render={(_, row) => matchedKeywordText((row as CollectionRecord).matchedKeywords)} />
-        <Table.Column title="作者" dataIndex="authorName" width={160} ellipsis />
-        <Table.Column title="标题/文案" dataIndex="titleText" ellipsis />
-        <Table.Column title="指标" dataIndex="metricsText" width={180} ellipsis />
-        <Table.Column title="操作" width={90} render={(_, row) => <Button size="small" onClick={() => setPreviewRecord(row as CollectionRecord)}>详情</Button>} />
-      </Table>
-      <Modal title="采集记录详情" open={!!previewRecord} onCancel={() => setPreviewRecord(null)} footer={null} width={820}>
-        {previewRecord ? (
-          <Space direction="vertical" style={{ width: "100%" }} size={12}>
-            <Row gutter={12}>
-              <Col span={8}><Statistic title="阶段" value={sceneText(previewRecord.sceneType)} /></Col>
-              <Col span={8}><Statistic title="搜索词" value={previewRecord.keyword || "-"} /></Col>
-              <Col span={8}><Statistic title="作者" value={previewRecord.authorName || "-"} /></Col>
-            </Row>
-            <Card size="small" title="内容">
-              <Typography.Paragraph>{previewRecord.titleText || "-"}</Typography.Paragraph>
-              {previewRecord.subtitleText ? <Typography.Paragraph type="secondary">{previewRecord.subtitleText}</Typography.Paragraph> : null}
-            </Card>
-            <Card size="small" title="指标与命中">
-              <Space direction="vertical">
-                <Typography.Text>指标：{previewRecord.metricsText || "-"}</Typography.Text>
-                <Typography.Text>命中词：{matchedKeywordText(previewRecord.matchedKeywords)}</Typography.Text>
-              </Space>
-            </Card>
-            {previewRecord.hotCommentsJson?.length ? (
-              <Card size="small" title="热门评论">
-                <Space direction="vertical">
-                  {previewRecord.hotCommentsJson.map((comment, index) => <Typography.Text key={`${index}-${comment}`}>{comment}</Typography.Text>)}
-                </Space>
-              </Card>
-            ) : null}
-          </Space>
-        ) : null}
-      </Modal>
-    </Card>
-  );
-}
+    <div className="ops-page">
+      <header className="ops-topbar">
+        <div>
+          <h1>采集记录</h1>
+          <p>{selectedDevice.deviceName || selectedDevice.deviceCode} · {selectedDate}，查看当天采集内容和详情。</p>
+        </div>
+        {renderToolbar(
+          <>
+            <button className="ops-btn" type="button" onClick={backToDates}>返回日期</button>
+            <button className="ops-btn" type="button" onClick={backToDevices}>返回手机列表</button>
+          </>
+        )}
+      </header>
 
-function RefreshSelect(props: { value: number; onChange: (value: number) => void }) {
-  return (
-    <Select
-      style={{ width: 130 }}
-      value={props.value}
-      onChange={props.onChange}
-      options={[
-        { label: "5秒刷新", value: 5 },
-        { label: "15秒刷新", value: 15 },
-        { label: "30秒刷新", value: 30 },
-        { label: "暂停刷新", value: 0 }
-      ]}
-    />
+      <section className="ops-filter-panel three">
+        <div className="ops-field">
+          <label htmlFor="records-current-device">当前手机</label>
+          <input id="records-current-device" className="ops-input" readOnly value={`${selectedDevice.deviceName || selectedDevice.deviceCode} / ${selectedDevice.deviceCode}`} />
+        </div>
+        <div className="ops-field">
+          <label htmlFor="records-scene">来源</label>
+          <select id="records-scene" className="ops-input" value={sceneType} onChange={(event) => setSceneType(event.currentTarget.value)}>
+            <option value="">全部来源</option>
+            <option value="video">视频</option>
+            <option value="live">直播</option>
+          </select>
+        </div>
+        <div className="ops-field">
+          <label htmlFor="records-keyword">关键词</label>
+          <input id="records-keyword" className="ops-input" value={keyword} onChange={(event) => setKeyword(event.currentTarget.value)} placeholder="标题 / 作者 / 命中词" />
+        </div>
+        <button className="ops-btn" type="button" onClick={() => void recordsQuery.refetch()}>应用筛选</button>
+      </section>
+
+      <section className="ops-workbench wide-side">
+        <div className="ops-panel">
+          <div className="ops-panel-head">
+            <span>内容列表</span>
+            <span className="ops-small">{selectedDevice.deviceName || selectedDevice.deviceCode} · {selectedDate}</span>
+          </div>
+          {recordsQuery.isLoading ? <div className="ops-panel-body"><Skeleton active /></div> : null}
+          {recordsQuery.isError ? <div className="ops-panel-body"><Alert type="error" message="采集记录加载失败" description={recordsQuery.error.message} showIcon /></div> : null}
+          {!recordsQuery.isLoading && !recordsQuery.isError ? (
+            <div className="ops-table-wrap">
+              <table className="ops-table">
+                <thead>
+                  <tr>
+                    <th>采集时间</th>
+                    <th>内容</th>
+                    <th>来源</th>
+                    <th>作者 / 搜索词</th>
+                    <th>命中原因</th>
+                    <th>指标</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {records.length === 0 ? (
+                    <tr><td className="ops-empty" colSpan={6}>当前条件下没有采集记录</td></tr>
+                  ) : records.map((record) => (
+                    <tr key={record.id} className={record.id === selectedRecord?.id ? "selected" : ""} onClick={() => setPreviewRecordId(record.id)}>
+                      <td>{formatDateTime(record.createdAt)}</td>
+                      <td>
+                        <div className="ops-title">{compactText(record.titleText, "未识别标题", 72)}</div>
+                        <div className="ops-small">{compactText(record.subtitleText, "", 88)}</div>
+                      </td>
+                      <td><span className={`ops-tag ${sceneTone(record.sceneType)}`}>{sceneText(record.sceneType)}</span></td>
+                      <td>
+                        <div>{record.authorName || "-"}</div>
+                        <div className="ops-small">{record.keyword || "无搜索词"}</div>
+                      </td>
+                      <td>{matchedKeywordText(record.matchedKeywords)}</td>
+                      <td>{compactText(record.metricsText, "-", 42)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+
+        <aside className="ops-panel">
+          <div className="ops-panel-head">
+            <span>记录详情</span>
+            <span className={`ops-tag ${sceneTone(selectedRecord?.sceneType)}`}>{selectedRecord ? sceneText(selectedRecord.sceneType) : "未选择"}</span>
+          </div>
+          <div className="ops-panel-body">
+            <div className="ops-kv">
+              <div className="ops-k">设备</div><div>{selectedDevice.deviceName || selectedDevice.deviceCode || "-"}</div>
+              <div className="ops-k">设备状态</div><div><span className={`ops-tag ${statusTone(selectedDevice.deviceStatus)}`}>{statusText(selectedDevice.deviceStatus)}</span></div>
+              <div className="ops-k">日期记录</div><div>{selectedDateSummary?.totalCount ?? records.length} 条</div>
+              <div className="ops-k">视频 / 直播</div><div>{selectedDateSummary?.videoCount ?? 0} / {selectedDateSummary?.liveCount ?? 0}</div>
+              <div className="ops-k">最近采集</div><div>{formatDateTime(selectedDateSummary?.latestRecordAt || selectedDevice.latestRecordAt)}</div>
+            </div>
+
+            {selectedRecord ? (
+              <>
+                <div className="ops-panel-note" style={{ marginTop: 14 }}>标题 / 文案</div>
+                <div className="ops-title" style={{ marginTop: 6 }}>{selectedRecord.titleText || "-"}</div>
+                {selectedRecord.subtitleText ? <div className="ops-small" style={{ marginTop: 4 }}>{selectedRecord.subtitleText}</div> : null}
+
+                <div className="ops-kv" style={{ marginTop: 14 }}>
+                  <div className="ops-k">作者</div><div>{selectedRecord.authorName || "-"}</div>
+                  <div className="ops-k">搜索词</div><div>{selectedRecord.keyword || "-"}</div>
+                  <div className="ops-k">命中词</div><div>{matchedKeywordText(selectedRecord.matchedKeywords)}</div>
+                  <div className="ops-k">指标</div><div>{selectedRecord.metricsText || "-"}</div>
+                </div>
+
+                {selectedRecord.hotCommentsJson?.length ? (
+                  <>
+                    <div className="ops-panel-note" style={{ marginTop: 14 }}>热门评论</div>
+                    <div className="ops-log-box">{selectedRecord.hotCommentsJson.map((comment, index) => `${index + 1}. ${comment}`).join("\n")}</div>
+                  </>
+                ) : null}
+
+                {selectedRecord.screenText ? (
+                  <>
+                    <div className="ops-panel-note" style={{ marginTop: 14 }}>屏幕文本</div>
+                    <div className="ops-log-box">{selectedRecord.screenText}</div>
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <div className="ops-empty">请选择一条采集记录</div>
+            )}
+          </div>
+        </aside>
+      </section>
+    </div>
   );
 }

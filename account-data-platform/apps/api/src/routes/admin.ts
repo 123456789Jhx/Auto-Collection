@@ -1,4 +1,4 @@
-import { createAgentVersionSchema, createMobileCommandSchema, updateDeviceSchema, updateDeviceTaskConfigSchema, updateTaskSchema } from "@pkg/types";
+import { createAgentVersionSchema, createMobileCommandSchema, createTaskAssignmentSchema, updateDeviceSchema, updateDeviceTaskConfigSchema, updateTaskSchema } from "@pkg/types";
 import { Hono } from "hono";
 import { z } from "zod";
 import { validationError } from "../lib/validation";
@@ -7,6 +7,7 @@ import { loginAdmin } from "../services/auth.service";
 import { createCommand, getCommands } from "../services/command.service";
 import { clearDeviceToken, deleteDeviceRecord, getDeviceDailyProgress, getDeviceProgressHistory, getDeviceTaskConfig, getDevices, getLiveCommentActions, getLiveCommentDeviceSummary, getLogDates, getLogDeviceSummary, getLogFileDates, getLogFileDetail, getLogFiles, getLogs, getOverview, getRecordDates, getRecordDeviceSummary, getRecords, getTasks, rotateDeviceToken, updateDevice, updateDeviceTaskConfig, updateTaskConfig } from "../services/admin.service";
 import { getAgentVersions, publishAgentVersion } from "../services/agent-version.service";
+import { createTaskAssignmentFromAdmin, getTaskAssignments } from "../services/task-orchestrator.service";
 
 const adminLoginSchema = z.object({
   username: z.string().trim().min(1),
@@ -74,6 +75,14 @@ adminRoutes.patch("/tasks/:id", async (c) => {
   return c.json(await updateTaskConfig(c.req.param("id"), parsed.data));
 });
 adminRoutes.get("/mobile-commands", async (c) => c.json(await getCommands()));
+adminRoutes.get("/task-assignments", async (c) => c.json(await getTaskAssignments()));
+adminRoutes.post("/task-assignments", async (c) => {
+  const parsed = createTaskAssignmentSchema.safeParse(await c.req.json());
+  if (!parsed.success) {
+    return validationError(c, parsed.error);
+  }
+  return c.json(await createTaskAssignmentFromAdmin(parsed.data), 201);
+});
 adminRoutes.get("/agent-versions", async (c) => c.json(await getAgentVersions()));
 adminRoutes.post("/agent-versions", async (c) => {
   const parsed = createAgentVersionSchema.safeParse(await c.req.json());

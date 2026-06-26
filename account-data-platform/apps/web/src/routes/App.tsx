@@ -1,4 +1,4 @@
-import { BarChartOutlined, CommentOutlined, DatabaseOutlined, FileTextOutlined, LockOutlined, LoginOutlined, LogoutOutlined, MobileOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
+import { BarChartOutlined, CommentOutlined, ControlOutlined, DatabaseOutlined, FileTextOutlined, LockOutlined, LoginOutlined, LogoutOutlined, MobileOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Form, Input, Layout, Menu, Space, Spin, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
@@ -8,17 +8,19 @@ import { DevicesPage } from "./DevicesPage";
 import { LiveCommentsPage } from "./LiveCommentsPage";
 import { LogsPage } from "./LogsPage";
 import { RecordsPage } from "./RecordsPage";
+import { TaskSchedulerPage } from "./TaskSchedulerPage";
 import { TasksPage } from "./TasksPage";
 
 const { Header, Sider, Content } = Layout;
 
 const pages = {
-  dashboard: { title: "监控看板", component: <DashboardPage /> },
-  devices: { title: "设备", component: <DevicesPage /> },
+  dashboard: { title: "工作台", component: <DashboardPage /> },
+  devices: { title: "设备运行", component: <DevicesPage /> },
+  scheduler: { title: "任务调度", component: <TaskSchedulerPage /> },
   liveComments: { title: "直播评论", component: <LiveCommentsPage /> },
   records: { title: "采集记录", component: <RecordsPage /> },
-  logs: { title: "日志", component: <LogsPage /> },
-  tasks: { title: "任务配置", component: <TasksPage /> }
+  logs: { title: "日志中心", component: <LogsPage /> },
+  tasks: { title: "配置", component: <TasksPage /> }
 };
 
 type PageKey = keyof typeof pages;
@@ -126,19 +128,20 @@ export function App() {
   return (
     <Layout className="app-shell">
       <Sider width={220} className="sidebar">
-        <div className="brand">农业采集监控</div>
+        <div className="brand">燎原星火后台</div>
         <Menu
           theme="dark"
           mode="inline"
           selectedKeys={[page]}
           onClick={(item) => setPage(item.key as PageKey)}
           items={[
-            { key: "dashboard", icon: <BarChartOutlined />, label: "监控看板" },
-            { key: "devices", icon: <MobileOutlined />, label: "设备" },
+            { key: "dashboard", icon: <BarChartOutlined />, label: "工作台" },
+            { key: "devices", icon: <MobileOutlined />, label: "设备运行" },
+            { key: "scheduler", icon: <ControlOutlined />, label: "任务调度" },
             { key: "liveComments", icon: <CommentOutlined />, label: "直播评论" },
             { key: "records", icon: <DatabaseOutlined />, label: "采集记录" },
-            { key: "logs", icon: <FileTextOutlined />, label: "日志" },
-            { key: "tasks", icon: <SettingOutlined />, label: "任务配置" }
+            { key: "logs", icon: <FileTextOutlined />, label: "日志中心" },
+            { key: "tasks", icon: <SettingOutlined />, label: "配置" }
           ]}
         />
       </Sider>
@@ -148,7 +151,7 @@ export function App() {
             {current.title}
           </Typography.Title>
           <Space>
-            <Tag color="green">轻量监控后台</Tag>
+            <Tag color="green">运营后台</Tag>
             <Tag icon={<UserOutlined />}>{adminUser?.username ?? "admin"}</Tag>
             <Button icon={<LogoutOutlined />} onClick={logout}>
               退出

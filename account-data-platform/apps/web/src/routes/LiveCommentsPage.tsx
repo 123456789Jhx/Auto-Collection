@@ -1,9 +1,9 @@
-import { ArrowLeftOutlined, PauseOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
+import { PauseOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Checkbox, Col, Empty, Form, Input, InputNumber, Modal, Row, Select, Skeleton, Space, Statistic, Switch, Table, Tag, Typography, message } from "antd";
+import { Alert, Checkbox, Form, Input, InputNumber, Modal, Select, Skeleton, Space, Switch, message } from "antd";
 import { useMemo, useState } from "react";
 import { createMobileCommand, getDeviceTaskConfig, getLiveCommentActions, getLiveCommentDeviceSummary, updateDevice, updateDeviceTaskConfig } from "../lib/api-client";
-import { statusColor, statusText } from "../lib/display-maps";
+import { statusText } from "../lib/display-maps";
 
 type LiveCommentMode = "off" | "target_follow" | "agri_chatbot";
 
@@ -87,10 +87,10 @@ function shortText(value?: string | null, maxLength = 80) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
 }
 
-function actionStatusColor(value?: string) {
+function actionStatusTone(value?: string) {
   if (value === "sent") return "green";
   if (value === "failed") return "red";
-  if (value === "skipped") return "orange";
+  if (value === "skipped") return "amber";
   return "blue";
 }
 
@@ -107,6 +107,13 @@ function liveCommentModeText(value?: string) {
   if (value === "target_follow") return "跟随评论";
   if (value === "off") return "关闭";
   return "账号机器人";
+}
+
+function statusTone(value?: string | null) {
+  if (value === "error" || value === "risk_control") return "red";
+  if (value === "offline" || value === "stopped") return "gray";
+  if (value === "paused" || value === "idle" || value === "booting" || value === "updating") return "amber";
+  return "green";
 }
 
 const liveCommentModeOptions: Array<{ value: LiveCommentMode; label: string }> = [
@@ -427,176 +434,201 @@ export function LiveCommentsPage() {
   if (summaryQuery.isLoading) return <Skeleton active />;
   if (summaryQuery.isError) return <Alert type="error" message="直播评论汇总加载失败" description={summaryQuery.error.message} showIcon />;
 
-  if (selectedDevice) {
-    return (
-      <Space direction="vertical" size={16} style={{ width: "100%" }}>
-        {contextHolder}
-        <Card
-          title={
-            <Space>
-              <Button icon={<ArrowLeftOutlined />} onClick={() => setSelectedDevice(null)}>返回</Button>
-              <span>{selectedDevice.deviceName || selectedDevice.deviceCode}</span>
-            </Space>
-          }
-          extra={<RefreshSelect value={autoRefreshSeconds} onChange={setAutoRefreshSeconds} />}
-        >
-          <Space direction="vertical" style={{ width: "100%" }} size={12}>
-            <Space wrap>
-              <Tag color={statusColor(selectedDevice.deviceStatus)}>{statusText(selectedDevice.deviceStatus)}</Tag>
-              <Space size={4}>
-                <span>评论模式</span>
-                <Select
-                  size="small"
-                  value={(selectedConfig?.liveCommentMode || selectedDevice.liveCommentMode || "agri_chatbot") as LiveCommentMode}
-                  options={liveCommentModeOptions}
-                  style={{ width: 120 }}
-                  loading={modeMutation.isPending}
-                  onChange={(value) => changeLiveCommentMode(selectedDevice.deviceCode, value)}
-                />
-              </Space>
-              <Tag>配置来源：{configSourceText(selectedConfig?.source)}</Tag>
-              <Tag>阶段：{selectedDevice.lastMessage || "暂无心跳消息"}</Tag>
-              <Button icon={<ReloadOutlined />} onClick={() => sendCommand(selectedDevice.deviceCode, "REFRESH_CONFIG")}>刷新配置</Button>
-              <Button icon={<PlayCircleOutlined />} onClick={() => sendCommand(selectedDevice.deviceCode, "START")}>启动</Button>
-              <Button icon={<PauseOutlined />} onClick={() => sendCommand(selectedDevice.deviceCode, "PAUSE")}>暂停</Button>
-              <Button icon={<PlayCircleOutlined />} onClick={() => sendCommand(selectedDevice.deviceCode, "RESUME")}>恢复</Button>
-              <Button danger icon={<StopOutlined />} onClick={() => sendCommand(selectedDevice.deviceCode, "STOP")}>停止</Button>
-                <Button onClick={() => void openTargetRoomEditor(selectedDevice)}>指定直播间</Button>
-                <Button onClick={openProfileEditor}>编辑画像</Button>
-              </Space>
-            <Row gutter={12}>
-              <Col span={6}><Statistic title="总数" value={selectedDevice.totalCount} /></Col>
-              <Col span={6}><Statistic title="计划" value={selectedDevice.plannedCount} /></Col>
-              <Col span={6}><Statistic title="发送" value={selectedDevice.sentCount} /></Col>
-              <Col span={6}><Statistic title="跳过" value={selectedDevice.skippedCount} /></Col>
-            </Row>
-            <Row gutter={12}>
-              <Col xs={24} lg={12}>
-                <Card size="small" title="设备画像摘要">
-                  <Space direction="vertical" size={4}>
-                    <Typography.Text>画像名称：{String(selectedProfile.profileName || "-")}</Typography.Text>
-                    <Typography.Text>地区：{[getProfileField(selectedProfile, ["region", "province"]), getProfileField(selectedProfile, ["region", "city"]), getProfileField(selectedProfile, ["region", "county"])].filter(Boolean).join(" / ") || "-"}</Typography.Text>
-                    <Typography.Text>身份：{getProfileField(selectedProfile, ["identity", "role"]) || "-"}</Typography.Text>
-                    <Typography.Text>农产品：{Array.isArray(selectedProfile.products) && selectedProfile.products.length > 0 ? String((selectedProfile.products[0] as Record<string, unknown>)?.name || "-") : "-"}</Typography.Text>
-                  </Space>
-                </Card>
-              </Col>
-              <Col xs={24} lg={12}>
-                <Card size="small" title="公共模板摘要">
-                  <Row gutter={12}>
-                    <Col span={6}><Statistic title="每直播间" value={numberFromConfig(selectedConfig?.liveCommentBotConfig, "maxCommentsPerRoom", 3)} suffix="条" /></Col>
-                    <Col span={6}><Statistic title="每小时" value={numberFromConfig(selectedConfig?.liveCommentBotConfig, "maxCommentsPerHour", 10)} suffix="条" /></Col>
-                    <Col span={6}><Statistic title="最小间隔" value={numberFromConfig(selectedConfig?.liveCommentBotConfig, "minIntervalSeconds", 120)} suffix="秒" /></Col>
-                    <Col span={6}><Statistic title="相关阈值" value={numberFromConfig(selectedConfig?.liveCommentBotConfig, "roomRelevanceThreshold", 60)} /></Col>
-                  </Row>
-                </Card>
-              </Col>
-            </Row>
-          </Space>
-        </Card>
-
-        <Card
-          title={`${selectedDevice.deviceName || selectedDevice.deviceCode} 执行记录`}
-          extra={
-            <Space wrap>
-              <Select
-                allowClear
-                placeholder="状态"
-                value={status}
-                onChange={setStatus}
-                style={{ width: 130 }}
-                options={[
-                  { value: "planned", label: "已计划" },
-                  { value: "sent", label: "已发送" },
-                  { value: "failed", label: "失败" },
-                  { value: "skipped", label: "跳过" }
-                ]}
-              />
-              <Input.Search placeholder="直播间/账号/话术" allowClear onSearch={setRecordKeyword} style={{ width: 220 }} />
-            </Space>
-          }
-        >
-          {actionsQuery.isLoading ? <Skeleton active /> : null}
-          {actionsQuery.isError ? <Alert type="error" message="执行记录加载失败" description={actionsQuery.error.message} showIcon /> : null}
-          {!actionsQuery.isLoading && actions.length === 0 ? <Empty description="暂无直播评论执行记录" /> : null}
-          {actions.length > 0 ? <LiveActionTable actions={actions} /> : null}
-        </Card>
-
-        <ProfileModal open={profileOpen} form={profileForm} loading={deviceMutation.isPending} onCancel={() => setProfileOpen(false)} onSave={saveProfile} />
-        <TargetRoomModal
-          open={targetRoomOpen}
-          form={targetRoomForm}
-          loading={targetRoomMutation.isPending}
-          onCancel={closeTargetRoomEditor}
-          onSave={saveTargetRoom}
-        />
-      </Space>
-    );
-  }
+  const activeDevice = selectedDevice ?? filteredSummaries[0] ?? summaries[0] ?? null;
+  const totalCount = summaries.reduce((sum, item) => sum + Number(item.totalCount || 0), 0);
+  const plannedCount = summaries.reduce((sum, item) => sum + Number(item.plannedCount || 0), 0);
+  const sentCount = summaries.reduce((sum, item) => sum + Number(item.sentCount || 0), 0);
+  const failedCount = summaries.reduce((sum, item) => sum + Number(item.failedCount || 0), 0);
+  const skippedCount = summaries.reduce((sum, item) => sum + Number(item.skippedCount || 0), 0);
 
   return (
-    <Space direction="vertical" size={16} style={{ width: "100%" }}>
+    <div className="ops-page">
       {contextHolder}
-      <Card
-        title="直播评论运营"
-        extra={<RefreshSelect value={autoRefreshSeconds} onChange={setAutoRefreshSeconds} />}
-      >
-        <Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }} wrap>
-          <Space wrap>
-            <Input.Search placeholder="搜索设备名称/设备码" allowClear value={deviceKeyword} onChange={(event) => setDeviceKeyword(event.target.value)} style={{ width: 280 }} />
-            <Select
-              allowClear
-              placeholder="设备状态"
-              value={deviceStatus}
-              onChange={setDeviceStatus}
-              style={{ width: 140 }}
-              options={[
-                { value: "running", label: "运行中" },
-                { value: "paused", label: "已暂停" },
-                { value: "offline", label: "离线" },
-                { value: "error", label: "异常" },
-                { value: "idle", label: "未运行" }
-              ]}
-            />
-          </Space>
-          <Space wrap>
-            {batchMode ? (
+      <header className="ops-topbar">
+        <div>
+          <h1>直播评论</h1>
+          <p>按设备查看评论计划、发送、跳过和失败情况，目标直播间与账号画像放在右侧处理。</p>
+        </div>
+        <div className="ops-toolbar">
+          {batchMode ? (
+            <>
+              <button className="ops-btn" type="button" onClick={() => sendBatchCommand("REFRESH_CONFIG")}><ReloadOutlined /> 刷新配置</button>
+              <button className="ops-btn primary" type="button" onClick={() => sendBatchCommand("START")}><PlayCircleOutlined /> 启动</button>
+              <button className="ops-btn" type="button" onClick={() => sendBatchCommand("PAUSE")}><PauseOutlined /> 暂停</button>
+              <button className="ops-btn" type="button" onClick={() => sendBatchCommand("RESUME")}><PlayCircleOutlined /> 恢复</button>
+              <button className="ops-btn danger" type="button" onClick={() => sendBatchCommand("STOP")}><StopOutlined /> 停止</button>
+              <button className="ops-btn" type="button" onClick={leaveBatchMode}>退出批量</button>
+            </>
+          ) : (
+            <button className="ops-btn" type="button" onClick={enterBatchMode}>批量操作</button>
+          )}
+          <select className="ops-input" value={autoRefreshSeconds} onChange={(event) => setAutoRefreshSeconds(Number(event.currentTarget.value))}>
+            <option value={5}>5秒刷新</option>
+            <option value={15}>15秒刷新</option>
+            <option value={30}>30秒刷新</option>
+            <option value={0}>暂停刷新</option>
+          </select>
+        </div>
+      </header>
+
+      <section className="ops-stats">
+        <div className="ops-stat"><div className="ops-stat-label">总记录</div><div className="ops-stat-value">{totalCount}</div><div className="ops-stat-note">计划、发送、跳过、失败总量</div></div>
+        <div className="ops-stat"><div className="ops-stat-label">已计划</div><div className="ops-stat-value">{plannedCount}</div><div className="ops-stat-note">等待执行或真实发送</div></div>
+        <div className="ops-stat"><div className="ops-stat-label">已发送</div><div className="ops-stat-value ok">{sentCount}</div><div className="ops-stat-note">手机已执行发送</div></div>
+        <div className="ops-stat"><div className="ops-stat-label">跳过</div><div className="ops-stat-value warn">{skippedCount}</div><div className="ops-stat-note">规则判断不适合发送</div></div>
+        <div className="ops-stat"><div className="ops-stat-label">失败</div><div className="ops-stat-value danger">{failedCount}</div><div className="ops-stat-note">需要排查账号或直播间</div></div>
+      </section>
+
+      <section className="ops-filter-panel three">
+        <div className="ops-field">
+          <label htmlFor="live-device-keyword">设备搜索</label>
+          <input id="live-device-keyword" className="ops-input" placeholder="设备名称 / 设备码" value={deviceKeyword} onChange={(event) => setDeviceKeyword(event.currentTarget.value)} />
+        </div>
+        <div className="ops-field">
+          <label htmlFor="live-device-status">设备状态</label>
+          <select id="live-device-status" className="ops-input" value={deviceStatus ?? ""} onChange={(event) => setDeviceStatus(event.currentTarget.value || undefined)}>
+            <option value="">全部状态</option>
+            <option value="running">运行中</option>
+            <option value="paused">已暂停</option>
+            <option value="offline">离线</option>
+            <option value="error">异常</option>
+            <option value="idle">未运行</option>
+          </select>
+        </div>
+        <div className="ops-field">
+          <label htmlFor="live-action-status">执行状态</label>
+          <select id="live-action-status" className="ops-input" value={status ?? ""} onChange={(event) => setStatus(event.currentTarget.value || undefined)}>
+            <option value="">全部状态</option>
+            <option value="planned">已计划</option>
+            <option value="sent">已发送</option>
+            <option value="failed">失败</option>
+            <option value="skipped">跳过</option>
+          </select>
+        </div>
+        <button className="ops-btn" type="button" onClick={() => { void summaryQuery.refetch(); void actionsQuery.refetch(); }}>应用筛选</button>
+      </section>
+
+      <section className="ops-workbench wide-side">
+        <div className="ops-main">
+          <div className="ops-panel">
+            <div className="ops-panel-head">
+              <span>设备评论状态</span>
+              <span className="ops-small">{filteredSummaries.length} 台</span>
+            </div>
+            <div className="ops-table-wrap">
+              <table className="ops-table">
+                <thead>
+                  <tr>
+                    <th>设备</th>
+                    <th>模式 / 来源</th>
+                    <th>设备状态</th>
+                    <th>计划 / 发送 / 失败</th>
+                    <th>最近执行</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredSummaries.length === 0 ? <tr><td className="ops-empty" colSpan={6}>暂无设备</td></tr> : null}
+                  {filteredSummaries.map((item) => (
+                    <tr key={item.deviceCode || item.deviceName} className={item.deviceCode === activeDevice?.deviceCode ? "selected" : ""} onClick={() => {
+                      if (batchMode) {
+                        toggleDeviceChecked(item.deviceCode);
+                        return;
+                      }
+                      setSelectedDevice(item);
+                    }}>
+                      <td>
+                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                          {batchMode ? <Checkbox checked={!!item.deviceCode && checkedDeviceCodes.includes(item.deviceCode)} onClick={(event) => event.stopPropagation()} onChange={() => toggleDeviceChecked(item.deviceCode)} /> : null}
+                          <div><div className="ops-title">{item.deviceName || item.deviceCode || "未知设备"}</div><div className="ops-small">{item.deviceCode || "-"}</div></div>
+                        </div>
+                      </td>
+                      <td>
+                        <div onClick={(event) => event.stopPropagation()}>
+                          <Select size="small" value={item.liveCommentMode || "agri_chatbot"} options={liveCommentModeOptions} style={{ width: 120 }} onChange={(mode) => changeLiveCommentMode(item.deviceCode, mode)} />
+                        </div>
+                        <div className="ops-small">{configSourceText(item.configSource)}</div>
+                      </td>
+                      <td><span className={`ops-tag ${statusTone(item.deviceStatus)}`}>{statusText(item.deviceStatus)}</span></td>
+                      <td>{item.plannedCount} / {item.sentCount} / <span style={{ color: item.failedCount > 0 ? "#b91c1c" : undefined }}>{item.failedCount}</span></td>
+                      <td>
+                        <div>{formatDateTime(item.latestActionAt)}</div>
+                        <div className="ops-small">{item.lastMessage || "暂无心跳消息"}</div>
+                      </td>
+                      <td>
+                        <div className="ops-actions-cell" onClick={(event) => event.stopPropagation()}>
+                          <button className="ops-mini-btn" type="button" onClick={() => void openTargetRoomEditor(item)}>指定直播间</button>
+                          <button className="ops-mini-btn primary" type="button" onClick={() => { setSelectedDevice(item); sendCommand(item.deviceCode, "START"); }}>启动</button>
+                          <button className="ops-mini-btn" type="button" onClick={() => sendCommand(item.deviceCode, "REFRESH_CONFIG")}>刷新配置</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="ops-panel">
+            <div className="ops-panel-head">
+              <span>{activeDevice ? `${activeDevice.deviceName || activeDevice.deviceCode} 执行记录` : "执行记录"}</span>
+              <input className="ops-input" style={{ maxWidth: 260 }} placeholder="直播间 / 账号 / 话术" value={recordKeyword} onChange={(event) => setRecordKeyword(event.currentTarget.value)} />
+            </div>
+            {actionsQuery.isLoading ? <div className="ops-panel-body"><Skeleton active /></div> : null}
+            {actionsQuery.isError ? <div className="ops-panel-body"><Alert type="error" message="执行记录加载失败" description={actionsQuery.error.message} showIcon /></div> : null}
+            {!actionsQuery.isLoading && !actionsQuery.isError ? <LiveActionTable actions={actions} /> : null}
+          </div>
+        </div>
+
+        <aside className="ops-panel">
+          <div className="ops-panel-head">
+            <span>评论详情</span>
+            <span className={`ops-tag ${statusTone(activeDevice?.deviceStatus)}`}>{statusText(activeDevice?.deviceStatus)}</span>
+          </div>
+          <div className="ops-panel-body">
+            {activeDevice ? (
               <>
-                <Button icon={<ReloadOutlined />} onClick={() => sendBatchCommand("REFRESH_CONFIG")}>刷新配置</Button>
-                <Button icon={<PlayCircleOutlined />} onClick={() => sendBatchCommand("START")}>启动</Button>
-                <Button icon={<PauseOutlined />} onClick={() => sendBatchCommand("PAUSE")}>暂停</Button>
-                <Button icon={<PlayCircleOutlined />} onClick={() => sendBatchCommand("RESUME")}>恢复</Button>
-                <Button danger icon={<StopOutlined />} onClick={() => sendBatchCommand("STOP")}>停止</Button>
-                <Button onClick={leaveBatchMode}>退出批量</Button>
+                <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>{activeDevice.deviceName || activeDevice.deviceCode}</h2>
+                <div className="ops-kv">
+                  <div className="ops-k">设备编号</div><div>{activeDevice.deviceCode || "-"}</div>
+                  <div className="ops-k">评论模式</div><div>{liveCommentModeText(selectedConfig?.liveCommentMode || activeDevice.liveCommentMode)}</div>
+                  <div className="ops-k">配置来源</div><div>{configSourceText(selectedConfig?.source || activeDevice.configSource)}</div>
+                  <div className="ops-k">最近心跳</div><div>{formatDateTime(activeDevice.lastHeartbeatAt)}</div>
+                  <div className="ops-k">最近消息</div><div>{activeDevice.lastMessage || "-"}</div>
+                </div>
+                <div className="ops-mini-stats">
+                  <div className="ops-mini-stat"><span>计划</span><strong>{activeDevice.plannedCount}</strong></div>
+                  <div className="ops-mini-stat"><span>发送</span><strong>{activeDevice.sentCount}</strong></div>
+                  <div className="ops-mini-stat"><span>失败</span><strong>{activeDevice.failedCount}</strong></div>
+                </div>
+                <div className="ops-toolbar detail-toolbar">
+                  <button className="ops-btn primary" type="button" onClick={() => sendCommand(activeDevice.deviceCode, "START")}>启动</button>
+                  <button className="ops-btn" type="button" onClick={() => sendCommand(activeDevice.deviceCode, "PAUSE")}>暂停</button>
+                  <button className="ops-btn" type="button" onClick={() => sendCommand(activeDevice.deviceCode, "RESUME")}>恢复</button>
+                  <button className="ops-btn danger" type="button" onClick={() => sendCommand(activeDevice.deviceCode, "STOP")}>停止</button>
+                  <button className="ops-btn" type="button" onClick={() => void openTargetRoomEditor(activeDevice)}>指定直播间</button>
+                  <button className="ops-btn" type="button" onClick={() => { setSelectedDevice(activeDevice); openProfileEditor(); }}>编辑画像</button>
+                </div>
+                <div className="ops-panel-note" style={{ marginTop: 14 }}>设备画像摘要</div>
+                <div className="ops-kv" style={{ marginTop: 8 }}>
+                  <div className="ops-k">画像名称</div><div>{String(selectedProfile.profileName || "-")}</div>
+                  <div className="ops-k">地区</div><div>{[getProfileField(selectedProfile, ["region", "province"]), getProfileField(selectedProfile, ["region", "city"]), getProfileField(selectedProfile, ["region", "county"])].filter(Boolean).join(" / ") || "-"}</div>
+                  <div className="ops-k">身份</div><div>{getProfileField(selectedProfile, ["identity", "role"]) || "-"}</div>
+                  <div className="ops-k">农产品</div><div>{Array.isArray(selectedProfile.products) && selectedProfile.products.length > 0 ? String((selectedProfile.products[0] as Record<string, unknown>)?.name || "-") : "-"}</div>
+                </div>
+                <div className="ops-panel-note" style={{ marginTop: 14 }}>公共模板</div>
+                <div className="ops-kv" style={{ marginTop: 8 }}>
+                  <div className="ops-k">每直播间</div><div>{numberFromConfig(selectedConfig?.liveCommentBotConfig, "maxCommentsPerRoom", 3)} 条</div>
+                  <div className="ops-k">每小时</div><div>{numberFromConfig(selectedConfig?.liveCommentBotConfig, "maxCommentsPerHour", 10)} 条</div>
+                  <div className="ops-k">最小间隔</div><div>{numberFromConfig(selectedConfig?.liveCommentBotConfig, "minIntervalSeconds", 120)} 秒</div>
+                  <div className="ops-k">相关阈值</div><div>{numberFromConfig(selectedConfig?.liveCommentBotConfig, "roomRelevanceThreshold", 60)}</div>
+                </div>
               </>
-            ) : (
-              <Button onClick={enterBatchMode}>批量操作</Button>
-            )}
-          </Space>
-        </Space>
-        {filteredSummaries.length === 0 ? <Empty description="暂无设备" /> : null}
-        <Row gutter={[12, 12]}>
-          {filteredSummaries.map((item) => (
-            <Col xs={24} md={12} xl={8} key={item.deviceCode || item.deviceName}>
-              <DeviceCard
-                device={item}
-                batchMode={batchMode}
-                checked={!!item.deviceCode && checkedDeviceCodes.includes(item.deviceCode)}
-                onCheck={() => toggleDeviceChecked(item.deviceCode)}
-                onTargetRoom={() => void openTargetRoomEditor(item)}
-                onModeChange={(mode) => changeLiveCommentMode(item.deviceCode, mode)}
-                onOpen={() => {
-                  if (batchMode) {
-                    toggleDeviceChecked(item.deviceCode);
-                    return;
-                  }
-                  setSelectedDevice(item);
-                }}
-              />
-            </Col>
-          ))}
-        </Row>
-      </Card>
+            ) : <div className="ops-empty">暂无设备</div>}
+          </div>
+        </aside>
+      </section>
+
       <TargetRoomModal
         open={targetRoomOpen}
         form={targetRoomForm}
@@ -604,74 +636,46 @@ export function LiveCommentsPage() {
         onCancel={closeTargetRoomEditor}
         onSave={saveTargetRoom}
       />
-    </Space>
-  );
-}
-
-function DeviceCard(props: {
-  device: LiveCommentDeviceSummary;
-  batchMode: boolean;
-  checked: boolean;
-  onCheck: () => void;
-  onTargetRoom: () => void;
-  onModeChange: (mode: LiveCommentMode) => void;
-  onOpen: () => void;
-}) {
-  const item = props.device;
-  return (
-    <Card className="device-card" hoverable onClick={props.onOpen} style={{ borderColor: props.checked ? "#1677ff" : undefined }}>
-      <Space align="start" style={{ width: "100%", justifyContent: "space-between" }}>
-        <Space align="start">
-          {props.batchMode ? <Checkbox checked={props.checked} onClick={(event) => event.stopPropagation()} onChange={props.onCheck} /> : null}
-          <Space direction="vertical" size={2}>
-            <Typography.Text strong>{item.deviceName || item.deviceCode || "未知设备"}</Typography.Text>
-            <Typography.Text type="secondary">{item.deviceCode || "-"}</Typography.Text>
-          </Space>
-        </Space>
-        <Tag color={statusColor(item.deviceStatus)}>{statusText(item.deviceStatus)}</Tag>
-      </Space>
-      <Space style={{ marginTop: 12 }} wrap>
-        <div onClick={(event) => event.stopPropagation()}>
-          <Select
-            size="small"
-            value={item.liveCommentMode || "agri_chatbot"}
-            options={liveCommentModeOptions}
-            style={{ width: 120 }}
-            onChange={props.onModeChange}
-          />
-        </div>
-        <Tag>{configSourceText(item.configSource)}</Tag>
-        <Button size="small" onClick={(event) => { event.stopPropagation(); props.onTargetRoom(); }}>指定直播间</Button>
-      </Space>
-      <Row gutter={12} className="card-stats">
-        <Col span={6}><Statistic title="总数" value={item.totalCount} /></Col>
-        <Col span={6}><Statistic title="计划" value={item.plannedCount} valueStyle={{ color: "#722ed1" }} /></Col>
-        <Col span={6}><Statistic title="发送" value={item.sentCount} valueStyle={{ color: "#1677ff" }} /></Col>
-        <Col span={6}><Statistic title="失败" value={item.failedCount} valueStyle={{ color: item.failedCount > 0 ? "#cf1322" : undefined }} /></Col>
-        <Col span={6}><Statistic title="跳过" value={item.skippedCount} /></Col>
-      </Row>
-      <Space direction="vertical" size={0} style={{ marginTop: 8 }}>
-        <Typography.Text type="secondary">最近执行：{formatDateTime(item.latestActionAt)}</Typography.Text>
-        <Typography.Text type="secondary">最近心跳：{formatDateTime(item.lastHeartbeatAt)}，{item.lastMessage || "暂无消息"}</Typography.Text>
-      </Space>
-    </Card>
+      <ProfileModal open={profileOpen} form={profileForm} loading={deviceMutation.isPending} onCancel={() => setProfileOpen(false)} onSave={saveProfile} />
+    </div>
   );
 }
 
 function LiveActionTable(props: { actions: LiveCommentAction[] }) {
   return (
-    <Table rowKey={(row) => String(row.id)} dataSource={props.actions} scroll={{ x: 1280 }} pagination={{ pageSize: 20 }}>
-      <Table.Column title="时间" dataIndex="createdAt" width={180} render={(value) => formatDateTime(value as string | undefined)} />
-      <Table.Column title="设备" width={160} render={(_, row) => (row as LiveCommentAction).deviceName || (row as LiveCommentAction).deviceCode || "-"} />
-      <Table.Column title="直播间" dataIndex="roomName" width={160} render={(value) => shortText(value as string, 30) || "-"} />
-      <Table.Column title="带头账号" dataIndex="leaderAccountName" width={140} render={(value) => value || "-"} />
-      <Table.Column title="触发文本" dataIndex="triggerText" width={220} render={(value) => shortText(value as string, 60) || "-"} />
-      <Table.Column title="评论话术" dataIndex="replyText" width={220} render={(value) => shortText(value as string, 60)} />
-      <Table.Column title="延迟" dataIndex="plannedDelayMs" width={90} render={(value) => value == null ? "-" : `${value}ms`} />
-      <Table.Column title="状态" dataIndex="status" width={100} render={(value) => <Tag color={actionStatusColor(value as string)}>{actionStatusText(value as string)}</Tag>} />
-      <Table.Column title="原因" width={220} render={(_, row) => shortText((row as LiveCommentAction).failureReason || (row as LiveCommentAction).skipReason, 80) || "-"} />
-      <Table.Column title="发送时间" dataIndex="sentAt" width={180} render={(value) => formatDateTime(value as string | undefined)} />
-    </Table>
+    <div className="ops-table-wrap">
+      <table className="ops-table">
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>直播间</th>
+            <th>触发内容</th>
+            <th>评论话术</th>
+            <th>状态</th>
+            <th>原因 / 发送时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          {props.actions.length === 0 ? <tr><td className="ops-empty" colSpan={6}>暂无直播评论执行记录</td></tr> : null}
+          {props.actions.map((item) => (
+            <tr key={item.id}>
+              <td>{formatDateTime(item.createdAt)}</td>
+              <td>
+                <div className="ops-title">{shortText(item.roomName, 30) || "-"}</div>
+                <div className="ops-small">{item.leaderAccountName || "-"}</div>
+              </td>
+              <td>{shortText(item.triggerText, 60) || "-"}</td>
+              <td>{shortText(item.replyText, 60)}</td>
+              <td><span className={`ops-tag ${actionStatusTone(item.status)}`}>{actionStatusText(item.status)}</span></td>
+              <td>
+                <div>{shortText(item.failureReason || item.skipReason, 80) || "-"}</div>
+                <div className="ops-small">{formatDateTime(item.sentAt)}</div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -739,21 +743,5 @@ function TargetRoomModal(props: {
         </Space.Compact>
       </Form>
     </Modal>
-  );
-}
-
-function RefreshSelect(props: { value: number; onChange: (value: number) => void }) {
-  return (
-    <Select
-      style={{ width: 130 }}
-      value={props.value}
-      onChange={props.onChange}
-      options={[
-        { label: "5秒刷新", value: 5 },
-        { label: "15秒刷新", value: 15 },
-        { label: "30秒刷新", value: 30 },
-        { label: "暂停刷新", value: 0 }
-      ]}
-    />
   );
 }

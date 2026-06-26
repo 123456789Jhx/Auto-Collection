@@ -1,9 +1,8 @@
-import { CheckCircleOutlined, CloudSyncOutlined, ExclamationCircleOutlined, MobileOutlined, PauseCircleOutlined, PlayCircleOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Card, Col, Collapse, Drawer, Empty, Progress, Row, Skeleton, Space, Statistic, Table, Tag, Typography } from "antd";
-import { useState } from "react";
+import { Alert, Skeleton } from "antd";
+import { useMemo, useState } from "react";
 import { getDeviceDailyProgress, getDeviceProgressHistory, getOverview } from "../lib/api-client";
-import { sceneText, statusColor, statusText } from "../lib/display-maps";
+import { sceneText, statusText } from "../lib/display-maps";
 
 type DeviceProgress = {
   id: string;
@@ -43,9 +42,7 @@ type HeartbeatHistory = {
 
 type DailyProgress = {
   progressDate: string;
-  heartbeatCount?: number;
   latestHeartbeatAt?: string | null;
-  firstHeartbeatAt?: string | null;
   maxVideoElapsedMinutes?: number;
   maxVideoPlannedMinutes?: number;
   videoCompletionPercent?: number;
@@ -55,9 +52,6 @@ type DailyProgress = {
   maxViewedCount?: number;
   maxLiveViewedCount?: number;
   maxCapturedCount?: number;
-  runningCount?: number;
-  pausedCount?: number;
-  stoppedCount?: number;
   errorCount?: number;
   lastMessage?: string | null;
 };
@@ -86,181 +80,244 @@ function progressLabel(elapsed?: number | null, remaining?: number | null, plann
 }
 
 function currentTaskText(value?: string) {
-  return value && value !== "none" ? sceneText(value) : "无任务";
+  return value && value !== "none" ? sceneText(value) : "待命";
 }
 
-function progressBlock(title: string, elapsed?: number | null, remaining?: number | null, planned?: number | null, color?: string) {
+function statusTone(value?: string | null) {
+  if (value === "error" || value === "risk_control") return "red";
+  if (value === "offline" || value === "stopped") return "gray";
+  if (value === "paused" || value === "idle" || value === "booting" || value === "updating") return "amber";
+  return "green";
+}
+
+function taskTone(value?: string | null) {
+  if (value === "live") return "green";
+  if (value === "video") return "blue";
+  if (value === "live_comment") return "purple";
+  return "gray";
+}
+
+function needsAttention(device: DeviceProgress) {
+  return ["offline", "error", "risk_control", "stopped"].includes(device.status || "") || !device.lastHeartbeatAt;
+}
+
+function ProgressLine(props: { label: string; percent: number; note: string; tone?: "blue" | "purple" }) {
   return (
-    <Space direction="vertical" size={4} style={{ width: "100%" }}>
-      <Typography.Text type="secondary">{title}</Typography.Text>
-      <Progress
-        percent={progressPercent(elapsed, remaining, planned)}
-        size="small"
-        strokeColor={color}
-        format={() => progressLabel(elapsed, remaining, planned)}
-      />
-    </Space>
+    <div style={{ display: "grid", gap: 6 }}>
+      <div className="ops-card-head">
+        <span className="ops-small">{props.label}</span>
+        <span className="ops-small">{props.note}</span>
+      </div>
+      <div className={`ops-progress ${props.tone === "purple" ? "purple" : ""}`}>
+        <span style={{ width: `${props.percent}%` }} />
+      </div>
+    </div>
   );
 }
 
 export function DashboardPage() {
-  const [selectedDevice, setSelectedDevice] = useState<DeviceProgress | null>(null);
+  const [selectedDeviceCode, setSelectedDeviceCode] = useState("");
   const query = useQuery({ queryKey: ["overview"], queryFn: getOverview, refetchInterval: 15000 });
+  const data = query.data ?? {};
+  const devices = useMemo(() => (Array.isArray(data.deviceProgress) ? data.deviceProgress : []) as DeviceProgress[], [data.deviceProgress]);
+  const selected = useMemo(
+    () => devices.find((item) => item.deviceCode === selectedDeviceCode) ?? devices[0] ?? null,
+    [devices, selectedDeviceCode]
+  );
   const historyQuery = useQuery({
-    queryKey: ["device-progress-history", selectedDevice?.deviceCode],
-    queryFn: () => getDeviceProgressHistory(selectedDevice?.deviceCode || "", { limit: 80 }),
-    enabled: !!selectedDevice?.deviceCode,
-    refetchInterval: selectedDevice ? 15000 : false
+    queryKey: ["device-progress-history", selected?.deviceCode],
+    queryFn: () => getDeviceProgressHistory(selected?.deviceCode || "", { limit: 8 }),
+    enabled: !!selected?.deviceCode,
+    refetchInterval: selected ? 15000 : false
   });
   const dailyProgressQuery = useQuery({
-    queryKey: ["device-daily-progress", selectedDevice?.deviceCode],
-    queryFn: () => getDeviceDailyProgress(selectedDevice?.deviceCode || "", { limit: 30 }),
-    enabled: !!selectedDevice?.deviceCode,
-    refetchInterval: selectedDevice ? 15000 : false
+    queryKey: ["device-daily-progress", selected?.deviceCode],
+    queryFn: () => getDeviceDailyProgress(selected?.deviceCode || "", { limit: 7 }),
+    enabled: !!selected?.deviceCode,
+    refetchInterval: selected ? 15000 : false
   });
 
   if (query.isLoading) return <Skeleton active />;
-  if (query.isError) return <Alert type="error" message="看板加载失败" description={query.error.message} showIcon />;
+  if (query.isError) return <Alert type="error" message="工作台加载失败" description={query.error.message} showIcon />;
 
-  const data = query.data ?? {};
-  const devices = (Array.isArray(data.deviceProgress) ? data.deviceProgress : []) as DeviceProgress[];
-  const selected = selectedDevice ? devices.find((item) => item.deviceCode === selectedDevice.deviceCode) ?? selectedDevice : null;
+  const attentionDevices = devices.filter(needsAttention);
+  const dailyRows = (dailyProgressQuery.data ?? []) as DailyProgress[];
+  const heartbeatRows = (historyQuery.data ?? []) as HeartbeatHistory[];
 
   return (
-    <div>
-      <Row gutter={[12, 12]} className="metrics">
-        <Col xs={24} md={8} xl={4}>
-          <Card className="metric-card"><Statistic title="设备总数" value={Number(data.deviceCount ?? 0)} prefix={<MobileOutlined />} /></Card>
-        </Col>
-        <Col xs={24} md={8} xl={4}>
-          <Card className="metric-card"><Statistic title="运行中" value={Number(data.runningCount ?? 0)} prefix={<PlayCircleOutlined />} valueStyle={{ color: "#1677ff" }} /></Card>
-        </Col>
-        <Col xs={24} md={8} xl={4}>
-          <Card className="metric-card"><Statistic title="暂停" value={Number(data.pausedCount ?? 0)} prefix={<PauseCircleOutlined />} /></Card>
-        </Col>
-        <Col xs={24} md={8} xl={4}>
-          <Card className="metric-card"><Statistic title="今日采集" value={Number(data.todayRecordCount ?? 0)} prefix={<CheckCircleOutlined />} /></Card>
-        </Col>
-        <Col xs={24} md={8} xl={4}>
-          <Card className="metric-card"><Statistic title="今日直播" value={Number(data.todayLiveRecordCount ?? 0)} prefix={<CloudSyncOutlined />} /></Card>
-        </Col>
-        <Col xs={24} md={8} xl={4}>
-          <Card className="metric-card"><Statistic title="今日异常" value={Number(data.todayErrorCount ?? 0)} prefix={<ExclamationCircleOutlined />} valueStyle={{ color: Number(data.todayErrorCount ?? 0) > 0 ? "#cf1322" : undefined }} /></Card>
-        </Col>
-      </Row>
+    <div className="ops-page">
+      <header className="ops-topbar">
+        <div>
+          <h1>工作台</h1>
+          <p>查看今日设备运行、采集进度和需要人工处理的问题。</p>
+        </div>
+        <div className="ops-toolbar">
+          <button className="ops-btn" type="button" onClick={() => void query.refetch()}>刷新</button>
+          <span className="ops-tag green">自动刷新 15 秒</span>
+        </div>
+      </header>
 
-      <Card title="手机任务进度">
-        {devices.length === 0 ? <Empty description="暂无设备" /> : null}
-        <Row gutter={[12, 12]}>
-          {devices.map((item) => (
-            <Col xs={24} md={12} xl={8} key={item.id || item.deviceCode}>
-              <Card className="device-card progress-device-card" hoverable onClick={() => setSelectedDevice(item)}>
-                <Space align="start" style={{ width: "100%", justifyContent: "space-between" }}>
-                  <Space direction="vertical" size={2}>
-                    <Typography.Text strong>{item.deviceName || item.deviceCode}</Typography.Text>
-                    <Typography.Text type="secondary">{item.deviceCode}</Typography.Text>
-                  </Space>
-                  <Tag color={statusColor(item.status)}>{statusText(item.status)}</Tag>
-                </Space>
-                <Space direction="vertical" size={10} style={{ width: "100%", marginTop: 14 }}>
-                  <Space>
-                    <Typography.Text type="secondary">当前任务</Typography.Text>
-                    <Tag>{currentTaskText(item.currentTask)}</Tag>
-                  </Space>
-                  {progressBlock("视频进度", item.videoElapsedMinutes, item.videoRemainingMinutes, item.plannedVideoMinutes, "#1677ff")}
-                  {progressBlock("直播进度", item.liveElapsedMinutes, item.liveRemainingMinutes, item.plannedLiveMinutes, "#722ed1")}
-                  <Row gutter={12}>
-                    <Col span={8}><Statistic title="视频浏览" value={item.viewedCount ?? 0} /></Col>
-                    <Col span={8}><Statistic title="直播浏览" value={item.liveViewedCount ?? 0} /></Col>
-                    <Col span={8}><Statistic title="采集数" value={item.capturedCount ?? 0} /></Col>
-                  </Row>
-                  <Typography.Text type="secondary">最后心跳：{formatDateTime(item.lastHeartbeatAt)}</Typography.Text>
-                </Space>
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      </Card>
+      <section className="ops-stats">
+        <div className="ops-stat">
+          <div className="ops-stat-label">设备总数</div>
+          <div className="ops-stat-value">{Number(data.deviceCount ?? devices.length)}</div>
+          <div className="ops-stat-note">已接入后台的手机</div>
+        </div>
+        <div className="ops-stat">
+          <div className="ops-stat-label">运行中</div>
+          <div className="ops-stat-value ok">{Number(data.runningCount ?? 0)}</div>
+          <div className="ops-stat-note">正在执行采集任务</div>
+        </div>
+        <div className="ops-stat">
+          <div className="ops-stat-label">暂停</div>
+          <div className="ops-stat-value warn">{Number(data.pausedCount ?? 0)}</div>
+          <div className="ops-stat-note">等待恢复或继续</div>
+        </div>
+        <div className="ops-stat">
+          <div className="ops-stat-label">今日采集</div>
+          <div className="ops-stat-value">{Number(data.todayRecordCount ?? 0)}</div>
+          <div className="ops-stat-note">视频和直播内容</div>
+        </div>
+        <div className="ops-stat">
+          <div className="ops-stat-label">今日异常</div>
+          <div className="ops-stat-value danger">{Number(data.todayErrorCount ?? 0)}</div>
+          <div className="ops-stat-note">需要排查的事件</div>
+        </div>
+      </section>
 
-      <Drawer
-        title={selected ? `${selected.deviceName || selected.deviceCode} 任务进度` : "任务进度"}
-        open={!!selected}
-        onClose={() => setSelectedDevice(null)}
-        width={860}
-      >
-        {selected ? (
-          <Space direction="vertical" size={16} style={{ width: "100%" }}>
-            <Card size="small" title="当前状态">
-              <Row gutter={[16, 16]}>
-                <Col xs={24} md={8}><Statistic title="状态" value={statusText(selected.status)} /></Col>
-                <Col xs={24} md={8}><Statistic title="当前任务" value={currentTaskText(selected.currentTask)} /></Col>
-                <Col xs={24} md={8}><Statistic title="最后心跳" value={formatDateTime(selected.lastHeartbeatAt)} /></Col>
-                <Col span={24}>{progressBlock("视频进度", selected.videoElapsedMinutes, selected.videoRemainingMinutes, selected.plannedVideoMinutes, "#1677ff")}</Col>
-                <Col span={24}>{progressBlock("直播进度", selected.liveElapsedMinutes, selected.liveRemainingMinutes, selected.plannedLiveMinutes, "#722ed1")}</Col>
-              </Row>
-              {selected.heartbeat?.lastMessage ? <Alert style={{ marginTop: 12 }} type="info" message={selected.heartbeat.lastMessage} /> : null}
-            </Card>
-            <Card size="small" title="每日任务完成情况">
-              {dailyProgressQuery.isLoading ? <Skeleton active /> : null}
-              {dailyProgressQuery.isError ? <Alert type="error" message="每日进度加载失败" description={dailyProgressQuery.error.message} showIcon /> : null}
-              {!dailyProgressQuery.isLoading && ((dailyProgressQuery.data ?? []) as DailyProgress[]).length === 0 ? <Empty description="暂无每日任务进度" /> : null}
-              <Space direction="vertical" style={{ width: "100%" }} size={12}>
-                {((dailyProgressQuery.data ?? []) as DailyProgress[]).map((item) => (
-                  <Card size="small" key={item.progressDate} className="daily-progress-card">
-                    <Row gutter={[12, 12]} align="middle">
-                      <Col xs={24} md={4}>
-                        <Typography.Text strong>{item.progressDate}</Typography.Text>
-                        <br />
-                        <Typography.Text type="secondary">{formatDateTime(item.latestHeartbeatAt)}</Typography.Text>
-                      </Col>
-                      <Col xs={24} md={8}>
-                        <Typography.Text type="secondary">视频完成度</Typography.Text>
-                        <Progress percent={item.videoCompletionPercent ?? 0} size="small" format={() => `${item.maxVideoElapsedMinutes ?? 0} / ${item.maxVideoPlannedMinutes ?? 0} 分钟`} />
-                      </Col>
-                      <Col xs={24} md={8}>
-                        <Typography.Text type="secondary">直播完成度</Typography.Text>
-                        <Progress percent={item.liveCompletionPercent ?? 0} size="small" strokeColor="#722ed1" format={() => `${item.maxLiveElapsedMinutes ?? 0} / ${item.maxLivePlannedMinutes ?? 0} 分钟`} />
-                      </Col>
-                      <Col xs={24} md={4}>
-                        <Space size={6} wrap>
-                          <Tag color="blue">视频 {item.maxViewedCount ?? 0}</Tag>
-                          <Tag color="purple">直播 {item.maxLiveViewedCount ?? 0}</Tag>
-                          <Tag color="green">采集 {item.maxCapturedCount ?? 0}</Tag>
-                          {item.errorCount ? <Tag color="red">异常 {item.errorCount}</Tag> : null}
-                        </Space>
-                      </Col>
-                      <Col span={24}>
-                        <Typography.Text type="secondary">最后消息：{item.lastMessage || "-"}</Typography.Text>
-                      </Col>
-                    </Row>
-                  </Card>
-                ))}
-              </Space>
-            </Card>
-            <Collapse
-              items={[{
-                key: "heartbeat",
-                label: "最近心跳明细（排查用）",
-                children: (
-                  <>
-                    {historyQuery.isLoading ? <Skeleton active /> : null}
-                    {historyQuery.isError ? <Alert type="error" message="心跳历史加载失败" description={historyQuery.error.message} showIcon /> : null}
-                    <Table rowKey={(row) => String((row as HeartbeatHistory).id)} dataSource={(historyQuery.data ?? []) as HeartbeatHistory[]} size="small" scroll={{ x: 900 }} pagination={{ pageSize: 10 }}>
-                      <Table.Column title="上报时间" dataIndex="reportedAt" width={180} render={(value) => formatDateTime(value as string | undefined)} />
-                      <Table.Column title="状态" dataIndex="status" width={100} render={(value) => <Tag color={statusColor(value as string)}>{statusText(value as string)}</Tag>} />
-                      <Table.Column title="阶段" dataIndex="sceneType" width={90} render={(value) => sceneText(value as string)} />
-                      <Table.Column title="已用/剩余" width={120} render={(_, row) => `${(row as HeartbeatHistory).elapsedMinutes ?? 0} / ${(row as HeartbeatHistory).remainingMinutes ?? "-"}`} />
-                      <Table.Column title="浏览" width={120} render={(_, row) => `${(row as HeartbeatHistory).viewedCount ?? 0} / ${(row as HeartbeatHistory).liveViewedCount ?? 0}`} />
-                      <Table.Column title="采集" dataIndex="capturedCount" width={80} />
-                      <Table.Column title="消息" dataIndex="lastMessage" ellipsis />
-                    </Table>
-                  </>
-                )
-              }]}
-            />
-          </Space>
-        ) : null}
-      </Drawer>
+      <section className="ops-workbench wide-side">
+        <div className="ops-main">
+          <div className="ops-panel">
+            <div className="ops-panel-head">
+              <span>需要处理</span>
+              <span className="ops-small">离线、异常、风控或没有心跳的设备</span>
+            </div>
+            {attentionDevices.length === 0 ? (
+              <div className="ops-empty">当前没有需要处理的问题</div>
+            ) : (
+              <div className="ops-table-wrap">
+                <table className="ops-table">
+                  <thead>
+                    <tr>
+                      <th>设备</th>
+                      <th>状态</th>
+                      <th>当前任务</th>
+                      <th>最后心跳</th>
+                      <th>建议处理</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {attentionDevices.map((item) => (
+                      <tr key={item.deviceCode} onClick={() => setSelectedDeviceCode(item.deviceCode)}>
+                        <td>
+                          <div className="ops-title">{item.deviceName || item.deviceCode}</div>
+                          <div className="ops-small">{item.deviceCode}</div>
+                        </td>
+                        <td><span className={`ops-tag ${statusTone(item.status)}`}>{statusText(item.status)}</span></td>
+                        <td><span className={`ops-tag ${taskTone(item.currentTask)}`}>{currentTaskText(item.currentTask)}</span></td>
+                        <td>{formatDateTime(item.lastHeartbeatAt)}</td>
+                        <td>{item.status === "offline" ? "检查手机网络或脚本是否常驻" : "打开日志中心查看最近异常"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="ops-panel">
+            <div className="ops-panel-head">
+              <span>设备任务进度</span>
+              <span className="ops-small">{devices.length} 台设备</span>
+            </div>
+            <div className="ops-panel-body">
+              {devices.length === 0 ? <div className="ops-empty">暂无设备</div> : null}
+              <div className="ops-card-grid">
+                {devices.map((item) => {
+                  const videoPercent = progressPercent(item.videoElapsedMinutes, item.videoRemainingMinutes, item.plannedVideoMinutes);
+                  const livePercent = progressPercent(item.liveElapsedMinutes, item.liveRemainingMinutes, item.plannedLiveMinutes);
+                  return (
+                    <div
+                      className={`ops-device-card ${item.deviceCode === selected?.deviceCode ? "selected" : ""}`}
+                      key={item.id || item.deviceCode}
+                      onClick={() => setSelectedDeviceCode(item.deviceCode)}
+                    >
+                      <div className="ops-card-head">
+                        <div>
+                          <div className="ops-title">{item.deviceName || item.deviceCode}</div>
+                          <div className="ops-small">{item.deviceCode}</div>
+                        </div>
+                        <span className={`ops-tag ${statusTone(item.status)}`}>{statusText(item.status)}</span>
+                      </div>
+                      <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+                        <div><span className={`ops-tag ${taskTone(item.currentTask)}`}>{currentTaskText(item.currentTask)}</span></div>
+                        <ProgressLine label="视频进度" percent={videoPercent} note={progressLabel(item.videoElapsedMinutes, item.videoRemainingMinutes, item.plannedVideoMinutes)} />
+                        <ProgressLine label="直播进度" percent={livePercent} note={progressLabel(item.liveElapsedMinutes, item.liveRemainingMinutes, item.plannedLiveMinutes)} tone="purple" />
+                      </div>
+                      <div className="ops-mini-stats">
+                        <div className="ops-mini-stat"><span>视频浏览</span><strong>{item.viewedCount ?? 0}</strong></div>
+                        <div className="ops-mini-stat"><span>直播浏览</span><strong>{item.liveViewedCount ?? 0}</strong></div>
+                        <div className="ops-mini-stat"><span>采集数</span><strong>{item.capturedCount ?? 0}</strong></div>
+                      </div>
+                      <div className="ops-small" style={{ marginTop: 10 }}>最后心跳：{formatDateTime(item.lastHeartbeatAt)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside className="ops-panel">
+          <div className="ops-panel-head">
+            <span>设备详情</span>
+            <span className={`ops-tag ${statusTone(selected?.status)}`}>{statusText(selected?.status)}</span>
+          </div>
+          <div className="ops-panel-body">
+            {selected ? (
+              <>
+                <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>{selected.deviceName || selected.deviceCode}</h2>
+                <div className="ops-kv">
+                  <div className="ops-k">设备编号</div><div>{selected.deviceCode}</div>
+                  <div className="ops-k">当前任务</div><div><span className={`ops-tag ${taskTone(selected.currentTask)}`}>{currentTaskText(selected.currentTask)}</span></div>
+                  <div className="ops-k">最后心跳</div><div>{formatDateTime(selected.lastHeartbeatAt)}</div>
+                  <div className="ops-k">最近消息</div><div>{selected.heartbeat?.lastMessage || "-"}</div>
+                </div>
+                <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+                  <ProgressLine label="视频进度" percent={progressPercent(selected.videoElapsedMinutes, selected.videoRemainingMinutes, selected.plannedVideoMinutes)} note={progressLabel(selected.videoElapsedMinutes, selected.videoRemainingMinutes, selected.plannedVideoMinutes)} />
+                  <ProgressLine label="直播进度" percent={progressPercent(selected.liveElapsedMinutes, selected.liveRemainingMinutes, selected.plannedLiveMinutes)} note={progressLabel(selected.liveElapsedMinutes, selected.liveRemainingMinutes, selected.plannedLiveMinutes)} tone="purple" />
+                </div>
+
+                <div className="ops-panel-note" style={{ marginTop: 16 }}>最近 7 天完成情况</div>
+                {dailyProgressQuery.isLoading ? <Skeleton active paragraph={{ rows: 2 }} /> : null}
+                {!dailyProgressQuery.isLoading && dailyRows.length === 0 ? <div className="ops-empty">暂无每日进度</div> : null}
+                <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                  {dailyRows.map((item) => (
+                    <div className="ops-device-card" key={item.progressDate}>
+                      <div className="ops-card-head">
+                        <strong>{item.progressDate}</strong>
+                        {item.errorCount ? <span className="ops-tag red">异常 {item.errorCount}</span> : <span className="ops-tag green">正常</span>}
+                      </div>
+                      <div className="ops-small" style={{ marginTop: 6 }}>
+                        视频 {item.maxVideoElapsedMinutes ?? 0}/{item.maxVideoPlannedMinutes ?? 0} 分钟 · 直播 {item.maxLiveElapsedMinutes ?? 0}/{item.maxLivePlannedMinutes ?? 0} 分钟
+                      </div>
+                      <div className="ops-small">采集 {item.maxCapturedCount ?? 0} · 最近 {formatDateTime(item.latestHeartbeatAt)}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="ops-panel-note" style={{ marginTop: 16 }}>最近心跳</div>
+                {historyQuery.isLoading ? <Skeleton active paragraph={{ rows: 2 }} /> : null}
+                <div className="ops-log-box">
+                  {heartbeatRows.length === 0 ? "暂无心跳明细" : heartbeatRows.map((item) => `${formatDateTime(item.reportedAt || item.createdAt)}  ${statusText(item.status)}  ${sceneText(item.sceneType)}  ${item.lastMessage || ""}`).join("\n")}
+                </div>
+              </>
+            ) : (
+              <div className="ops-empty">暂无设备</div>
+            )}
+          </div>
+        </aside>
+      </section>
     </div>
   );
 }

@@ -188,6 +188,24 @@ export function getTasks() {
   return request<unknown[]>("/admin/tasks");
 }
 
+export function getTaskAssignments() {
+  return request<unknown[]>("/admin/task-assignments");
+}
+
+export function createTaskAssignment(payload: {
+  deviceId: string;
+  taskType: "video" | "live" | "live_comment";
+  commandType?: "START" | "RESUME" | "PAUSE" | "STOP";
+  reason?: string;
+  priority?: number;
+  source?: string;
+  targetContext?: string;
+  payload?: Record<string, unknown>;
+  expiresInSeconds?: number;
+}) {
+  return mutate<unknown>("/admin/task-assignments", payload);
+}
+
 export function getDeviceTaskConfig(deviceCode: string, platform?: string) {
   return request<Record<string, unknown>>(`/admin/devices/${encodeURIComponent(deviceCode)}/task-config`, { platform });
 }
