@@ -102,6 +102,46 @@ function actionStatusText(value?: string) {
   return value || "-";
 }
 
+function reasonText(value?: string | null) {
+  const text = String(value || "").trim();
+  if (!text) return "-";
+  const map: Record<string, string> = {
+    bot_disabled: "评论机器人已关闭",
+    low_room_relevance: "直播间相关度不足",
+    room_comment_limit: "当前直播间已达评论上限",
+    hour_comment_limit: "当前小时已达评论上限",
+    comment_interval_limit: "评论间隔未满足",
+    safety_rejected: "话术未通过安全规则",
+    target_room_disabled: "指定直播间模式未启用",
+    target_room_empty_rule: "指定直播间规则为空",
+    target_room_keyword_not_found: "未匹配指定直播间关键词",
+    target_room_not_matched: "未匹配指定直播间",
+    missing_trigger_event: "缺少触发事件",
+    duplicate_trigger_event: "重复触发事件",
+    low_confidence: "触发置信度不足",
+    device_cooldown: "设备冷却中",
+    task_comment_limit: "当前任务已达评论上限",
+    consecutive_failure_limit: "连续失败次数过多",
+    empty_reply_pool: "话术池为空",
+    send_adapter_missing: "手机端发送能力缺失",
+    send_failed: "手机端发送失败",
+    empty_reply_text: "评论内容为空",
+    reply_not_configured: "未配置评论话术",
+    douyin_not_foreground: "抖音不在前台",
+    douyin_not_foreground_after_delay: "等待后抖音不在前台",
+    live_room_not_visible: "未识别到直播间",
+    live_room_not_visible_after_delay: "等待后未识别到直播间",
+    comment_input_not_found: "未找到评论输入框",
+    comment_input_click_failed: "评论输入框点击失败",
+    set_text_failed: "评论内容输入失败",
+    send_button_not_found: "未找到发送按钮",
+    send_button_click_failed: "发送按钮点击失败",
+    unknown: "未知原因"
+  };
+  const [prefix] = text.split(":");
+  return map[text] || map[prefix] || text;
+}
+
 function liveCommentModeText(value?: string) {
   if (value === "agri_chatbot") return "账号机器人";
   if (value === "target_follow") return "跟随评论";
@@ -238,7 +278,7 @@ export function LiveCommentsPage() {
   const [deviceStatus, setDeviceStatus] = useState<string>();
   const [status, setStatus] = useState<string>();
   const [recordKeyword, setRecordKeyword] = useState("");
-  const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(15);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [targetRoomOpen, setTargetRoomOpen] = useState(false);
   const [targetRoomDevice, setTargetRoomDevice] = useState<LiveCommentDeviceSummary | null>(null);
@@ -248,8 +288,7 @@ export function LiveCommentsPage() {
 
   const summaryQuery = useQuery({
     queryKey: ["live-comment-device-summary"],
-    queryFn: () => getLiveCommentDeviceSummary(),
-    refetchInterval: autoRefreshSeconds > 0 ? autoRefreshSeconds * 1000 : false
+    queryFn: () => getLiveCommentDeviceSummary()
   });
 
   const taskConfigQuery = useQuery({
@@ -271,7 +310,6 @@ export function LiveCommentsPage() {
         pageSize: 100
       }),
     enabled: !!selectedDevice?.deviceCode,
-    refetchInterval: selectedDevice && autoRefreshSeconds > 0 ? autoRefreshSeconds * 1000 : false
   });
 
   const commandMutation = useMutation({
@@ -380,6 +418,16 @@ export function LiveCommentsPage() {
     modeMutation.mutate({ deviceCode, liveCommentMode });
   }
 
+  function refreshData() {
+    void summaryQuery.refetch();
+    if (selectedDevice?.deviceCode) void actionsQuery.refetch();
+  }
+
+  function openDeviceDetail(device: LiveCommentDeviceSummary) {
+    setSelectedDevice(device);
+    setDetailOpen(true);
+  }
+
   function openProfileEditor() {
     profileForm.setFieldsValue(emptyProfileFormValues(selectedProfile));
     setProfileOpen(true);
@@ -434,7 +482,7 @@ export function LiveCommentsPage() {
   if (summaryQuery.isLoading) return <Skeleton active />;
   if (summaryQuery.isError) return <Alert type="error" message="直播评论汇总加载失败" description={summaryQuery.error.message} showIcon />;
 
-  const activeDevice = selectedDevice ?? filteredSummaries[0] ?? summaries[0] ?? null;
+  const activeDevice = selectedDevice;
   const totalCount = summaries.reduce((sum, item) => sum + Number(item.totalCount || 0), 0);
   const plannedCount = summaries.reduce((sum, item) => sum + Number(item.plannedCount || 0), 0);
   const sentCount = summaries.reduce((sum, item) => sum + Number(item.sentCount || 0), 0);
@@ -462,12 +510,7 @@ export function LiveCommentsPage() {
           ) : (
             <button className="ops-btn" type="button" onClick={enterBatchMode}>批量操作</button>
           )}
-          <select className="ops-input" value={autoRefreshSeconds} onChange={(event) => setAutoRefreshSeconds(Number(event.currentTarget.value))}>
-            <option value={5}>5秒刷新</option>
-            <option value={15}>15秒刷新</option>
-            <option value={30}>30秒刷新</option>
-            <option value={0}>暂停刷新</option>
-          </select>
+          <button className="ops-btn" type="button" disabled={summaryQuery.isFetching || actionsQuery.isFetching} onClick={refreshData}><ReloadOutlined /> 刷新</button>
         </div>
       </header>
 
@@ -505,15 +548,15 @@ export function LiveCommentsPage() {
             <option value="skipped">跳过</option>
           </select>
         </div>
-        <button className="ops-btn" type="button" onClick={() => { void summaryQuery.refetch(); void actionsQuery.refetch(); }}>应用筛选</button>
+        <button className="ops-btn" type="button" onClick={refreshData}>刷新结果</button>
       </section>
 
-      <section className="ops-workbench wide-side">
+      <section className="ops-main">
         <div className="ops-main">
           <div className="ops-panel">
             <div className="ops-panel-head">
               <span>设备评论状态</span>
-              <span className="ops-small">{filteredSummaries.length} 台</span>
+              <span className="ops-small">{filteredSummaries.length} 台，点击设备查看参数和操作</span>
             </div>
             <div className="ops-table-wrap">
               <table className="ops-table">
@@ -535,7 +578,7 @@ export function LiveCommentsPage() {
                         toggleDeviceChecked(item.deviceCode);
                         return;
                       }
-                      setSelectedDevice(item);
+                      openDeviceDetail(item);
                     }}>
                       <td>
                         <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
@@ -559,6 +602,7 @@ export function LiveCommentsPage() {
                         <div className="ops-actions-cell" onClick={(event) => event.stopPropagation()}>
                           <button className="ops-mini-btn" type="button" onClick={() => void openTargetRoomEditor(item)}>指定直播间</button>
                           <button className="ops-mini-btn primary" type="button" onClick={() => { setSelectedDevice(item); sendCommand(item.deviceCode, "START"); }}>启动</button>
+                          <button className="ops-mini-btn" type="button" onClick={() => sendCommand(item.deviceCode, "PAUSE")}>暂停</button>
                           <button className="ops-mini-btn" type="button" onClick={() => sendCommand(item.deviceCode, "REFRESH_CONFIG")}>刷新配置</button>
                         </div>
                       </td>
@@ -579,55 +623,68 @@ export function LiveCommentsPage() {
             {!actionsQuery.isLoading && !actionsQuery.isError ? <LiveActionTable actions={actions} /> : null}
           </div>
         </div>
+      </section>
 
-        <aside className="ops-panel">
-          <div className="ops-panel-head">
-            <span>评论详情</span>
-            <span className={`ops-tag ${statusTone(activeDevice?.deviceStatus)}`}>{statusText(activeDevice?.deviceStatus)}</span>
+      {detailOpen && activeDevice ? (
+        <aside className="ops-detail-drawer" aria-label="评论详情">
+          <div className="ops-detail-drawer-head">
+            <div>
+              <h2>{activeDevice.deviceName || activeDevice.deviceCode}</h2>
+              <p>{activeDevice.deviceCode || "-"}</p>
+            </div>
+            <button className="ops-drawer-close" type="button" onClick={() => setDetailOpen(false)}>关闭</button>
           </div>
-          <div className="ops-panel-body">
-            {activeDevice ? (
-              <>
-                <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>{activeDevice.deviceName || activeDevice.deviceCode}</h2>
-                <div className="ops-kv">
-                  <div className="ops-k">设备编号</div><div>{activeDevice.deviceCode || "-"}</div>
-                  <div className="ops-k">评论模式</div><div>{liveCommentModeText(selectedConfig?.liveCommentMode || activeDevice.liveCommentMode)}</div>
-                  <div className="ops-k">配置来源</div><div>{configSourceText(selectedConfig?.source || activeDevice.configSource)}</div>
-                  <div className="ops-k">最近心跳</div><div>{formatDateTime(activeDevice.lastHeartbeatAt)}</div>
-                  <div className="ops-k">最近消息</div><div>{activeDevice.lastMessage || "-"}</div>
-                </div>
-                <div className="ops-mini-stats">
-                  <div className="ops-mini-stat"><span>计划</span><strong>{activeDevice.plannedCount}</strong></div>
-                  <div className="ops-mini-stat"><span>发送</span><strong>{activeDevice.sentCount}</strong></div>
-                  <div className="ops-mini-stat"><span>失败</span><strong>{activeDevice.failedCount}</strong></div>
-                </div>
-                <div className="ops-toolbar detail-toolbar">
-                  <button className="ops-btn primary" type="button" onClick={() => sendCommand(activeDevice.deviceCode, "START")}>启动</button>
-                  <button className="ops-btn" type="button" onClick={() => sendCommand(activeDevice.deviceCode, "PAUSE")}>暂停</button>
-                  <button className="ops-btn" type="button" onClick={() => sendCommand(activeDevice.deviceCode, "RESUME")}>恢复</button>
-                  <button className="ops-btn danger" type="button" onClick={() => sendCommand(activeDevice.deviceCode, "STOP")}>停止</button>
-                  <button className="ops-btn" type="button" onClick={() => void openTargetRoomEditor(activeDevice)}>指定直播间</button>
-                  <button className="ops-btn" type="button" onClick={() => { setSelectedDevice(activeDevice); openProfileEditor(); }}>编辑画像</button>
-                </div>
-                <div className="ops-panel-note" style={{ marginTop: 14 }}>设备画像摘要</div>
-                <div className="ops-kv" style={{ marginTop: 8 }}>
-                  <div className="ops-k">画像名称</div><div>{String(selectedProfile.profileName || "-")}</div>
-                  <div className="ops-k">地区</div><div>{[getProfileField(selectedProfile, ["region", "province"]), getProfileField(selectedProfile, ["region", "city"]), getProfileField(selectedProfile, ["region", "county"])].filter(Boolean).join(" / ") || "-"}</div>
-                  <div className="ops-k">身份</div><div>{getProfileField(selectedProfile, ["identity", "role"]) || "-"}</div>
-                  <div className="ops-k">农产品</div><div>{Array.isArray(selectedProfile.products) && selectedProfile.products.length > 0 ? String((selectedProfile.products[0] as Record<string, unknown>)?.name || "-") : "-"}</div>
-                </div>
-                <div className="ops-panel-note" style={{ marginTop: 14 }}>公共模板</div>
-                <div className="ops-kv" style={{ marginTop: 8 }}>
-                  <div className="ops-k">每直播间</div><div>{numberFromConfig(selectedConfig?.liveCommentBotConfig, "maxCommentsPerRoom", 3)} 条</div>
-                  <div className="ops-k">每小时</div><div>{numberFromConfig(selectedConfig?.liveCommentBotConfig, "maxCommentsPerHour", 10)} 条</div>
-                  <div className="ops-k">最小间隔</div><div>{numberFromConfig(selectedConfig?.liveCommentBotConfig, "minIntervalSeconds", 120)} 秒</div>
-                  <div className="ops-k">相关阈值</div><div>{numberFromConfig(selectedConfig?.liveCommentBotConfig, "roomRelevanceThreshold", 60)}</div>
-                </div>
-              </>
-            ) : <div className="ops-empty">暂无设备</div>}
+          <div className="ops-detail-drawer-body">
+            <div className="ops-kv">
+              <div className="ops-k">设备状态</div><div><span className={`ops-tag ${statusTone(activeDevice.deviceStatus)}`}>{statusText(activeDevice.deviceStatus)}</span></div>
+              <div className="ops-k">评论模式</div><div>{liveCommentModeText(selectedConfig?.liveCommentMode || activeDevice.liveCommentMode)}</div>
+              <div className="ops-k">配置来源</div><div>{configSourceText(selectedConfig?.source || activeDevice.configSource)}</div>
+              <div className="ops-k">最近心跳</div><div>{formatDateTime(activeDevice.lastHeartbeatAt)}</div>
+              <div className="ops-k">最近消息</div><div>{activeDevice.lastMessage || "-"}</div>
+            </div>
+
+            <div className="ops-mini-stats">
+              <div className="ops-mini-stat"><span>计划</span><strong>{activeDevice.plannedCount}</strong></div>
+              <div className="ops-mini-stat"><span>发送</span><strong>{activeDevice.sentCount}</strong></div>
+              <div className="ops-mini-stat"><span>失败</span><strong>{activeDevice.failedCount}</strong></div>
+            </div>
+
+            <div className="drawer-section-title">直播评论操作</div>
+            <div className="drawer-action-grid">
+              <button className="ops-btn primary" type="button" onClick={() => sendCommand(activeDevice.deviceCode, "START")}>启动评论</button>
+              <button className="ops-btn" type="button" onClick={() => sendCommand(activeDevice.deviceCode, "PAUSE")}>暂停</button>
+              <button className="ops-btn" type="button" onClick={() => sendCommand(activeDevice.deviceCode, "RESUME")}>恢复</button>
+              <button className="ops-btn danger" type="button" onClick={() => sendCommand(activeDevice.deviceCode, "STOP")}>停止</button>
+              <button className="ops-btn" type="button" onClick={() => sendCommand(activeDevice.deviceCode, "REFRESH_CONFIG")}>刷新配置</button>
+            </div>
+
+            <div className="drawer-section-title">参数配置</div>
+            <div className="drawer-action-grid">
+              <button className="ops-btn primary" type="button" onClick={() => void openTargetRoomEditor(activeDevice)}>指定直播间</button>
+              <button className="ops-btn" type="button" onClick={() => { setSelectedDevice(activeDevice); openProfileEditor(); }}>编辑画像</button>
+              <button className="ops-btn" type="button" onClick={() => changeLiveCommentMode(activeDevice.deviceCode, "agri_chatbot")}>账号机器人</button>
+              <button className="ops-btn" type="button" onClick={() => changeLiveCommentMode(activeDevice.deviceCode, "target_follow")}>跟随评论</button>
+              <button className="ops-btn" type="button" onClick={() => changeLiveCommentMode(activeDevice.deviceCode, "off")}>关闭评论</button>
+            </div>
+
+            <div className="drawer-section-title">设备画像摘要</div>
+            <div className="ops-kv">
+              <div className="ops-k">画像名称</div><div>{String(selectedProfile.profileName || "-")}</div>
+              <div className="ops-k">地区</div><div>{[getProfileField(selectedProfile, ["region", "province"]), getProfileField(selectedProfile, ["region", "city"]), getProfileField(selectedProfile, ["region", "county"])].filter(Boolean).join(" / ") || "-"}</div>
+              <div className="ops-k">身份</div><div>{getProfileField(selectedProfile, ["identity", "role"]) || "-"}</div>
+              <div className="ops-k">农产品</div><div>{Array.isArray(selectedProfile.products) && selectedProfile.products.length > 0 ? String((selectedProfile.products[0] as Record<string, unknown>)?.name || "-") : "-"}</div>
+            </div>
+
+            <div className="drawer-section-title">公共模板</div>
+            <div className="ops-kv">
+              <div className="ops-k">每直播间</div><div>{numberFromConfig(selectedConfig?.liveCommentBotConfig, "maxCommentsPerRoom", 3)} 条</div>
+              <div className="ops-k">每小时</div><div>{numberFromConfig(selectedConfig?.liveCommentBotConfig, "maxCommentsPerHour", 10)} 条</div>
+              <div className="ops-k">最小间隔</div><div>{numberFromConfig(selectedConfig?.liveCommentBotConfig, "minIntervalSeconds", 120)} 秒</div>
+              <div className="ops-k">相关阈值</div><div>{numberFromConfig(selectedConfig?.liveCommentBotConfig, "roomRelevanceThreshold", 60)}</div>
+            </div>
           </div>
         </aside>
-      </section>
+      ) : null}
 
       <TargetRoomModal
         open={targetRoomOpen}
@@ -668,7 +725,7 @@ function LiveActionTable(props: { actions: LiveCommentAction[] }) {
               <td>{shortText(item.replyText, 60)}</td>
               <td><span className={`ops-tag ${actionStatusTone(item.status)}`}>{actionStatusText(item.status)}</span></td>
               <td>
-                <div>{shortText(item.failureReason || item.skipReason, 80) || "-"}</div>
+                <div>{shortText(reasonText(item.failureReason || item.skipReason), 80)}</div>
                 <div className="ops-small">{formatDateTime(item.sentAt)}</div>
               </td>
             </tr>

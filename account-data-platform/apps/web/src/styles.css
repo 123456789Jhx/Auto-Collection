@@ -311,6 +311,11 @@ body {
   grid-template-columns: minmax(680px, 1fr) 400px;
 }
 
+.ops-page > .ops-main {
+  display: grid;
+  gap: 12px;
+}
+
 .ops-main {
   display: grid;
   gap: 12px;
@@ -592,6 +597,215 @@ body {
   white-space: pre-wrap;
 }
 
+.device-overview-list {
+  display: grid;
+  gap: 12px;
+}
+
+.device-run-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1.2fr) minmax(260px, 1.4fr) minmax(220px, 1fr);
+  gap: 14px;
+  align-items: stretch;
+  border: 1px solid var(--ops-line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+  color: var(--ops-text);
+  cursor: pointer;
+}
+
+.device-run-card:hover,
+.device-run-card.selected {
+  border-color: #93c5fd;
+  background: #f8fbff;
+}
+
+.device-run-card:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+.device-run-main,
+.device-run-progress,
+.device-run-actions {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.heartbeat-status {
+  display: grid;
+  gap: 6px;
+  min-height: 82px;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8fafc;
+}
+
+.heartbeat-status strong {
+  display: block;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.heartbeat-status span,
+.heartbeat-detail span {
+  color: var(--ops-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.heartbeat-status.ok,
+.heartbeat-detail.ok {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.heartbeat-status.warn,
+.heartbeat-detail.warn {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.heartbeat-status.danger,
+.heartbeat-detail.danger {
+  border-color: #fecaca;
+  background: #fff7f7;
+  color: #b91c1c;
+}
+
+.device-progress-line {
+  display: grid;
+  gap: 6px;
+}
+
+.device-run-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.device-run-stats div {
+  border-radius: 6px;
+  padding: 8px;
+  background: #f8fafc;
+}
+
+.device-run-stats span {
+  display: block;
+  color: var(--ops-muted);
+  font-size: 12px;
+}
+
+.device-run-stats strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 18px;
+}
+
+.device-run-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.device-run-actions .ops-mini-btn {
+  width: 100%;
+  min-height: 32px;
+}
+
+.ops-detail-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 20;
+  width: min(440px, 100vw);
+  height: 100vh;
+  border-left: 1px solid var(--ops-line);
+  background: #fff;
+  box-shadow: -16px 0 36px rgba(15, 23, 42, 0.16);
+  overflow: hidden;
+}
+
+.ops-detail-drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--ops-line);
+  background: #fff;
+}
+
+.ops-detail-drawer-head h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.ops-detail-drawer-head p {
+  margin: 0;
+  color: var(--ops-muted);
+  font-size: 12px;
+}
+
+.ops-drawer-close {
+  min-height: 32px;
+  border: 1px solid var(--ops-line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: #fff;
+  color: var(--ops-text);
+  cursor: pointer;
+}
+
+.ops-detail-drawer-body {
+  height: calc(100vh - 69px);
+  overflow: auto;
+  padding: 16px 18px 24px;
+}
+
+.heartbeat-detail,
+.ops-advice-box {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+  border: 1px solid var(--ops-line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.drawer-section-title {
+  margin: 16px 0 10px;
+  font-weight: 700;
+}
+
+.drawer-progress-block,
+.drawer-day-list {
+  display: grid;
+  gap: 10px;
+}
+
+.drawer-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.drawer-action-grid .ops-btn {
+  width: 100%;
+}
+
+.drawer-day-card {
+  border: 1px solid var(--ops-line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+}
+
 .ops-empty {
   padding: 28px 12px;
   color: var(--ops-muted);
@@ -669,6 +883,14 @@ body {
   .ops-workbench,
   .ops-workbench.wide-side {
     grid-template-columns: 1fr;
+  }
+
+  .device-run-card {
+    grid-template-columns: 1fr;
+  }
+
+  .ops-detail-drawer {
+    width: 100vw;
   }
 
   .ops-panel-head {
@@ -1011,6 +1233,10 @@ body {
   min-width: 172px;
 }
 
+.scheduler-actions-cell.compact {
+  min-width: 168px;
+}
+
 .scheduler-mini-btn {
   min-height: 28px;
   border: 1px solid var(--scheduler-line);
@@ -1027,6 +1253,49 @@ body {
 .scheduler-mini-btn.danger {
   border-color: #fecaca;
   color: var(--scheduler-red);
+}
+
+.scheduler-action-btn {
+  min-height: 30px;
+  border: 1px solid var(--scheduler-line);
+  border-radius: 6px;
+  padding: 5px 9px;
+  background: #fff;
+  color: var(--scheduler-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.scheduler-action-btn.video {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.scheduler-action-btn.live {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.scheduler-action-btn.comment {
+  border-color: #ddd6fe;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.scheduler-action-btn.stop {
+  border-color: #fecaca;
+  background: #fff7f7;
+  color: var(--scheduler-red);
+}
+
+.scheduler-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .scheduler-detail {
@@ -1088,20 +1357,6 @@ body {
 .scheduler-step-title {
   margin-bottom: 2px;
   font-weight: 700;
-}
-
-.scheduler-json-box {
-  max-height: 240px;
-  overflow: auto;
-  margin: 10px 0 0;
-  border-radius: 6px;
-  padding: 10px;
-  background: #0f172a;
-  color: #dbeafe;
-  font-family: Consolas, "SFMono-Regular", monospace;
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre-wrap;
 }
 
 .detail-toolbar {

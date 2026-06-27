@@ -65,7 +65,6 @@ type DeviceTaskState = {
   assignment?: AssignmentRow;
   deviceCode: string;
   deviceName?: string;
-  group: string;
   actualTask?: string;
   lastHeartbeatAt?: string | null;
   deviceStatus?: string;
@@ -104,15 +103,15 @@ function taskTypeTone(value?: string | null) {
 
 function assignmentStatusText(value?: string | null) {
   const map: Record<string, string> = {
-    PENDING: "PLANNED",
-    ISSUED: "DISPATCHED",
-    ACKED: "ACKED",
-    ACTIVE: "RUNNING",
-    PAUSED: "PAUSED",
-    STOPPED: "STOPPED",
-    SUPERSEDED: "SUPERSEDED",
-    EXPIRED: "EXPIRED",
-    FAILED: "FAILED"
+    PENDING: "待下发",
+    ISSUED: "已下发",
+    ACKED: "手机已确认",
+    ACTIVE: "执行中",
+    PAUSED: "已暂停",
+    STOPPED: "已停止",
+    SUPERSEDED: "已被新任务替换",
+    EXPIRED: "已过期",
+    FAILED: "失败"
   };
   return value ? (map[value] ?? value) : "未分配";
 }
@@ -135,23 +134,23 @@ function detailStatusText(value?: string | null) {
 }
 
 function commandText(value?: string | null) {
-  if (value === "START") return "START";
-  if (value === "RESUME") return "RESUME";
-  if (value === "PAUSE") return "PAUSE";
-  if (value === "STOP") return "STOP";
+  if (value === "START") return "启动";
+  if (value === "RESUME") return "恢复";
+  if (value === "PAUSE") return "暂停";
+  if (value === "STOP") return "停止";
   return value || "-";
 }
 
 function commandStatusText(value?: string | null) {
   const map: Record<string, string> = {
-    PENDING: "PENDING",
-    SENT: "FETCHED",
-    ACKED: "ACKED",
-    DONE: "DONE",
-    FAILED: "FAILED",
-    EXPIRED: "EXPIRED"
+    PENDING: "等待领取",
+    SENT: "手机已领取",
+    ACKED: "手机已回执",
+    DONE: "执行完成",
+    FAILED: "执行失败",
+    EXPIRED: "已过期"
   };
-  return value ? (map[value] ?? value) : "PENDING";
+  return value ? (map[value] ?? value) : "等待领取";
 }
 
 function commandStatusTone(value?: string | null) {
@@ -173,16 +172,6 @@ function actualTaskFromDevice(device?: DeviceRow | null) {
   if (rawTaskType) return rawTaskType;
   if (device.currentTask && device.currentTask !== "none") return device.currentTask;
   return device.latestHeartbeat?.sceneType || "";
-}
-
-function resolveDeviceGroup(device: DeviceRow) {
-  const raw = device.latestHeartbeat?.rawPayload || {};
-  const groupFromHeartbeat = raw.deviceGroup || raw.group || raw.groupName;
-  if (typeof groupFromHeartbeat === "string" && groupFromHeartbeat.trim()) return groupFromHeartbeat.trim();
-  if (device.deviceGroup) return device.deviceGroup;
-  if (device.group) return device.group;
-  const match = device.deviceCode.match(/[_-]([A-Z])[_-]?\d*$/i);
-  return match ? `${match[1].toUpperCase()} 组` : "默认组";
 }
 
 function relativeHeartbeat(device?: DeviceRow | null) {
@@ -223,19 +212,28 @@ function latestCommandTime(assignment?: AssignmentRow | null) {
     || null;
 }
 
-function selectedPayload(assignment?: AssignmentRow | null) {
-  if (!assignment) {
-    return {
-      taskType: "none",
-      targetContext: "-",
-      reason: "no_active_assignment"
-    };
-  }
-  return assignment.desiredPayload || {
-    taskType: assignment.taskType || "none",
-    targetContext: assignment.targetContext || "-",
-    reason: assignment.reason || "manual_assignment"
-  };
+function targetContextText(value?: string | null) {
+  if (value === "target_live_room_context") return "指定直播间";
+  if (value === "live_room_context") return "直播间";
+  if (value === "video_context") return "视频采集";
+  if (value === "live_context") return "直播采集";
+  if (value === "comment_context" || value === "live_comment_context") return "直播评论";
+  return value || "-";
+}
+
+function sourceText(value?: string | null) {
+  if (value === "manual") return "手动调整";
+  if (value === "scheduler") return "自动调度";
+  if (value === "system") return "系统下发";
+  if (value === "recommendation") return "调度建议";
+  return value || "-";
+}
+
+function reasonText(value?: string | null) {
+  if (!value) return "-";
+  if (value === "manual" || value === "manual_assignment") return "手动调整";
+  if (value === "no_active_assignment") return "暂无活跃任务";
+  return value;
 }
 
 export function TaskSchedulerPage() {
@@ -243,7 +241,6 @@ export function TaskSchedulerPage() {
   const [deviceKeyword, setDeviceKeyword] = useState("");
   const [taskFilter, setTaskFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [groupFilter, setGroupFilter] = useState("");
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string>();
   const [selectedDeviceCode, setSelectedDeviceCode] = useState<string>();
   const [notice, setNotice] = useState<Notice>(null);
@@ -294,24 +291,19 @@ export function TaskSchedulerPage() {
       assignment,
       deviceCode: device.deviceCode,
       deviceName: device.deviceName,
-      group: resolveDeviceGroup(device),
       actualTask: actualTaskFromDevice(device),
       lastHeartbeatAt: device.latestHeartbeat?.reportedAt || device.lastHeartbeatAt,
       deviceStatus: device.effectiveStatus || device.status
     };
   }), [assignmentByDeviceCode, devices]);
-  const groupOptions = useMemo(
-    () => Array.from(new Set(deviceTaskRows.map((item) => item.group))).filter(Boolean),
-    [deviceTaskRows]
-  );
   const filteredDeviceTaskRows = useMemo(() => deviceTaskRows.filter((item) => {
-    const deviceText = `${item.deviceName || ""} ${item.deviceCode || ""} ${item.group}`.toLowerCase();
+    const deviceText = `${item.deviceName || ""} ${item.deviceCode || ""}`.toLowerCase();
     if (deviceKeyword && !deviceText.includes(deviceKeyword.toLowerCase())) return false;
-    if (taskFilter && item.assignment?.taskType !== taskFilter) return false;
+    if (taskFilter === "none" && item.assignment) return false;
+    if (taskFilter && taskFilter !== "none" && item.assignment?.taskType !== taskFilter) return false;
     if (statusFilter && item.assignment?.status !== statusFilter && item.deviceStatus !== statusFilter) return false;
-    if (groupFilter && item.group !== groupFilter) return false;
     return true;
-  }), [deviceKeyword, deviceTaskRows, groupFilter, statusFilter, taskFilter]);
+  }), [deviceKeyword, deviceTaskRows, statusFilter, taskFilter]);
   const selectedAssignment = useMemo(
     () => assignments.find((item) => item.id === selectedAssignmentId) ?? null,
     [assignments, selectedAssignmentId]
@@ -353,14 +345,6 @@ export function TaskSchedulerPage() {
     });
   }
 
-  function showReadOnlyRecommendation() {
-    setNotice({ kind: "info", text: "只读推荐用于观察调度建议，不会向手机下发命令。" });
-  }
-
-  function showLogHint() {
-    setNotice({ kind: "info", text: "请在左侧打开运行日志，按当前设备编号筛选日志。" });
-  }
-
   if (devicesQuery.isLoading || assignmentsQuery.isLoading) {
     return (
       <div className="scheduler-page">
@@ -388,19 +372,10 @@ export function TaskSchedulerPage() {
       <header className="scheduler-topbar">
         <div>
           <h1>任务调度中心</h1>
-          <p>后台期望任务与手机实际任务对账，统一分配视频、直播、直播评论任务。</p>
+          <p>查看每台设备的任务安排和手机实际执行情况，快速切换视频、直播和评论任务。</p>
         </div>
         <div className="scheduler-toolbar">
           <button className="scheduler-btn" type="button" onClick={refreshData}>刷新</button>
-          <button className="scheduler-btn" type="button" onClick={showReadOnlyRecommendation}>只读推荐</button>
-          <button
-            className="scheduler-btn primary"
-            type="button"
-            disabled={!selectedDeviceState || mutation.isPending}
-            onClick={() => selectedDeviceState && assignTask(selectedDeviceState, isTaskType(detailAssignment?.taskType) ? detailAssignment.taskType : "video")}
-          >
-            手动分配
-          </button>
         </div>
       </header>
 
@@ -411,14 +386,14 @@ export function TaskSchedulerPage() {
           <div className="scheduler-stat-note">3 分钟内有心跳</div>
         </div>
         <div className="scheduler-stat-card">
-          <div className="scheduler-stat-label">期望运行</div>
+          <div className="scheduler-stat-label">已安排任务</div>
           <div className="scheduler-stat-value">{desiredRunningCount}</div>
           <div className="scheduler-stat-note">含视频、直播、直播评论</div>
         </div>
         <div className="scheduler-stat-card">
-          <div className="scheduler-stat-label">任务一致</div>
+          <div className="scheduler-stat-label">执行一致</div>
           <div className="scheduler-stat-value">{taskConsistentCount}</div>
-          <div className="scheduler-stat-note">desired = actual</div>
+          <div className="scheduler-stat-note">安排任务和手机实际一致</div>
         </div>
         <div className="scheduler-stat-card">
           <div className="scheduler-stat-label">待确认</div>
@@ -440,57 +415,52 @@ export function TaskSchedulerPage() {
             className="scheduler-input"
             value={deviceKeyword}
             onChange={(event) => setDeviceKeyword(event.currentTarget.value)}
-            placeholder="设备编号 / 名称 / 分组"
+            placeholder="设备编号 / 名称"
           />
         </div>
         <div className="scheduler-field">
-          <label htmlFor="scheduler-task-filter">期望任务</label>
+          <label htmlFor="scheduler-task-filter">任务类型</label>
           <select id="scheduler-task-filter" className="scheduler-input" value={taskFilter} onChange={(event) => setTaskFilter(event.currentTarget.value)}>
             <option value="">全部任务</option>
             <option value="video">视频</option>
             <option value="live">直播</option>
             <option value="live_comment">直播评论</option>
+            <option value="none">待命</option>
           </select>
         </div>
         <div className="scheduler-field">
           <label htmlFor="scheduler-status-filter">调度状态</label>
           <select id="scheduler-status-filter" className="scheduler-input" value={statusFilter} onChange={(event) => setStatusFilter(event.currentTarget.value)}>
             <option value="">全部状态</option>
-            <option value="PENDING">PLANNED</option>
-            <option value="ISSUED">DISPATCHED</option>
-            <option value="ACKED">ACKED</option>
-            <option value="ACTIVE">RUNNING</option>
-            <option value="FAILED">FAILED</option>
+            <option value="PENDING">待下发</option>
+            <option value="ISSUED">已下发</option>
+            <option value="ACKED">手机已确认</option>
+            <option value="ACTIVE">执行中</option>
+            <option value="PAUSED">已暂停</option>
+            <option value="STOPPED">已停止</option>
+            <option value="FAILED">失败</option>
             <option value="offline">离线</option>
             <option value="running">运行中</option>
             <option value="idle">待命</option>
           </select>
         </div>
-        <div className="scheduler-field">
-          <label htmlFor="scheduler-group-filter">设备分组</label>
-          <select id="scheduler-group-filter" className="scheduler-input" value={groupFilter} onChange={(event) => setGroupFilter(event.currentTarget.value)}>
-            <option value="">A / B / C / 全部</option>
-            {groupOptions.map((group) => <option key={group} value={group}>{group}</option>)}
-          </select>
-        </div>
-        <button className="scheduler-btn" type="button" onClick={() => setNotice({ kind: "info", text: "筛选条件已应用。" })}>应用筛选</button>
       </section>
 
       <section className="scheduler-workbench">
         <div className="scheduler-panel">
           <div className="scheduler-panel-head">
             <span>设备任务分配</span>
-            <span className="scheduler-small">每台设备同一时间只允许一个 active assignment</span>
+            <span className="scheduler-small">每台设备同一时间只执行一个主任务</span>
           </div>
           <div className="scheduler-table-wrap">
             <table className="scheduler-native-table">
               <thead>
                 <tr>
                   <th>设备</th>
-                  <th>任务对账</th>
+                  <th>任务安排</th>
                   <th>调度状态</th>
-                  <th>原因 / 优先级</th>
                   <th>最近命令</th>
+                  <th>最近心跳</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -501,7 +471,6 @@ export function TaskSchedulerPage() {
                   </tr>
                 ) : filteredDeviceTaskRows.map((row) => {
                   const assignment = row.assignment;
-                  const desiredTask = isTaskType(assignment?.taskType) ? assignment.taskType : undefined;
                   const actualTone = taskTypeTone(row.actualTask);
                   return (
                     <tr
@@ -516,7 +485,7 @@ export function TaskSchedulerPage() {
                       <td>
                         <div className="scheduler-compare">
                           <div className="scheduler-compare-row">
-                            <span className="scheduler-compare-label">期望</span>
+                            <span className="scheduler-compare-label">安排</span>
                             <span className={`scheduler-tag ${taskTypeTone(assignment?.taskType)}`}>{assignment ? taskTypeText(assignment.taskType) : "待命"}</span>
                           </div>
                           <div className="scheduler-compare-row">
@@ -529,23 +498,19 @@ export function TaskSchedulerPage() {
                         <span className={`scheduler-tag ${assignmentStatusTone(assignment?.status)}`}>{assignmentStatusText(assignment?.status)}</span>
                       </td>
                       <td>
-                        <div>{compactText(assignment?.reason || row.device.latestHeartbeat?.lastMessage, "暂无调度原因")}</div>
-                        <div className="scheduler-small">priority {assignment?.priority ?? "-"} · {assignment?.source || row.group}</div>
-                      </td>
-                      <td>
                         <div>{commandText(assignment?.commandType)} · <span className={`scheduler-inline-status ${commandStatusTone(assignment?.commandStatus)}`}>{commandStatusText(assignment?.commandStatus)}</span></div>
                         <div className="scheduler-small">{formatDateTime(latestCommandTime(assignment))} · {assignment?.commandId || "-"}</div>
                       </td>
                       <td>
-                        <div className="scheduler-actions-cell" onClick={(event) => event.stopPropagation()}>
-                          {desiredTask ? (
-                            <button className="scheduler-mini-btn" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, desiredTask, "START", "手动重新下发当前分配")}>重发</button>
-                          ) : (
-                            <button className="scheduler-mini-btn" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "video")}>切视频</button>
-                          )}
-                          <button className="scheduler-mini-btn" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live")}>切直播</button>
-                          <button className="scheduler-mini-btn" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live_comment")}>切评论</button>
-                          {desiredTask ? <button className="scheduler-mini-btn danger" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, desiredTask, "STOP")}>停止</button> : null}
+                        <div>{formatDateTime(row.lastHeartbeatAt)}</div>
+                        <div className="scheduler-small">{compactText(row.device.latestHeartbeat?.lastMessage, "暂无心跳消息")}</div>
+                      </td>
+                      <td>
+                        <div className="scheduler-actions-cell compact" onClick={(event) => event.stopPropagation()}>
+                          <button className="scheduler-action-btn video" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "video")}>视频</button>
+                          <button className="scheduler-action-btn live" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live")}>直播</button>
+                          <button className="scheduler-action-btn comment" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live_comment")}>评论</button>
+                          <button className="scheduler-action-btn stop" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, isTaskType(assignment?.taskType) ? assignment.taskType : "video", "STOP")}>停止</button>
                         </div>
                       </td>
                     </tr>
@@ -564,12 +529,12 @@ export function TaskSchedulerPage() {
           <div className="scheduler-detail">
             <h2>{selectedDeviceState?.deviceName || selectedDeviceState?.deviceCode || "未选择设备"}</h2>
             <div className="scheduler-kv">
-              <div className="scheduler-k">Assignment</div><div>{detailAssignment?.id || "-"}</div>
-              <div className="scheduler-k">期望任务</div><div><span className={`scheduler-tag ${taskTypeTone(detailAssignment?.taskType)}`}>{detailAssignment ? taskTypeText(detailAssignment.taskType) : "待命"}</span></div>
-              <div className="scheduler-k">实际任务</div><div><span className={`scheduler-tag ${taskTypeTone(selectedDeviceState?.actualTask)}`}>{selectedDeviceState?.actualTask ? taskTypeText(selectedDeviceState.actualTask) : "未知"}</span></div>
-              <div className="scheduler-k">目标上下文</div><div>{detailAssignment?.targetContext || "-"}</div>
-              <div className="scheduler-k">调度来源</div><div>{detailAssignment?.source || "-"}</div>
-              <div className="scheduler-k">调度原因</div><div>{detailAssignment?.reason || "-"}</div>
+              <div className="scheduler-k">分配编号</div><div>{detailAssignment?.id || "-"}</div>
+              <div className="scheduler-k">任务安排</div><div><span className={`scheduler-tag ${taskTypeTone(detailAssignment?.taskType)}`}>{detailAssignment ? taskTypeText(detailAssignment.taskType) : "待命"}</span></div>
+              <div className="scheduler-k">手机实际</div><div><span className={`scheduler-tag ${taskTypeTone(selectedDeviceState?.actualTask)}`}>{selectedDeviceState?.actualTask ? taskTypeText(selectedDeviceState.actualTask) : "未知"}</span></div>
+              <div className="scheduler-k">目标上下文</div><div>{targetContextText(detailAssignment?.targetContext)}</div>
+              <div className="scheduler-k">调度来源</div><div>{sourceText(detailAssignment?.source)}</div>
+              <div className="scheduler-k">调度原因</div><div>{reasonText(detailAssignment?.reason)}</div>
               <div className="scheduler-k">最后心跳</div><div>{formatDateTime(selectedDeviceState?.lastHeartbeatAt)}</div>
               <div className="scheduler-k">失败原因</div><div>{detailAssignment?.status === "FAILED" ? compactText(String(detailAssignment.commandResult?.message || detailAssignment.commandResult?.error || detailAssignment.reason || "-")) : "-"}</div>
             </div>
@@ -578,52 +543,44 @@ export function TaskSchedulerPage() {
               <div className="scheduler-step">
                 <span className={`scheduler-dot ${detailAssignment ? "done" : ""}`} />
                 <div>
-                  <div className="scheduler-step-title">PLANNED</div>
-                  <div className="scheduler-small">{detailAssignment ? `调度器选择 ${selectedDeviceState?.group || "默认组"} 设备，priority ${detailAssignment.priority ?? "-"}` : "尚未创建任务分配"}</div>
+                  <div className="scheduler-step-title">创建任务</div>
+                  <div className="scheduler-small">{detailAssignment ? `已创建任务安排，优先级 ${detailAssignment.priority ?? "-"}` : "尚未创建任务分配"}</div>
                 </div>
               </div>
               <div className="scheduler-step">
                 <span className={`scheduler-dot ${detailAssignment?.commandId ? "done" : ""}`} />
                 <div>
-                  <div className="scheduler-step-title">DISPATCHED</div>
+                  <div className="scheduler-step-title">下发命令</div>
                   <div className="scheduler-small">{detailAssignment?.commandId ? `已创建 ${commandText(detailAssignment.commandType)} 命令 ${detailAssignment.commandId}` : "尚未创建命令"}</div>
                 </div>
               </div>
               <div className="scheduler-step">
                 <span className={`scheduler-dot ${detailAssignment?.commandFetchedAt || detailAssignment?.acknowledgedAt ? "active" : detailAssignment ? "warn" : ""}`} />
                 <div>
-                  <div className="scheduler-step-title">ACK / RUNNING</div>
-                  <div className="scheduler-small">{detailAssignment ? `等待手机心跳上报 currentTaskType=${detailAssignment.taskType || "-"}` : "等待后台下发任务"}</div>
+                  <div className="scheduler-step-title">手机确认 / 执行中</div>
+                  <div className="scheduler-small">{detailAssignment ? `等待手机心跳确认任务：${taskTypeText(detailAssignment.taskType)}` : "等待后台下发任务"}</div>
                 </div>
               </div>
               <div className="scheduler-step">
                 <span className={`scheduler-dot ${detailAssignment?.completedAt ? "done" : ""}`} />
                 <div>
-                  <div className="scheduler-step-title">COMPLETED</div>
+                  <div className="scheduler-step-title">执行完成</div>
                   <div className="scheduler-small">{detailAssignment?.completedAt ? formatDateTime(detailAssignment.completedAt) : "任务结束或被新任务抢占"}</div>
                 </div>
               </div>
             </div>
 
-            <pre className="scheduler-json-box">{JSON.stringify(selectedPayload(detailAssignment), null, 2)}</pre>
-
             <div className="scheduler-toolbar detail-toolbar">
-              <button
-                className="scheduler-btn primary"
-                type="button"
-                disabled={!selectedDeviceState || !isTaskType(detailAssignment?.taskType) || mutation.isPending}
-                onClick={() => selectedDeviceState && isTaskType(detailAssignment?.taskType) && assignTask(selectedDeviceState, detailAssignment.taskType, "START", "手动重新下发当前分配")}
-              >
-                重新下发
-              </button>
-              <button className="scheduler-btn" type="button" onClick={showLogHint}>查看日志</button>
+              <button className="scheduler-btn primary" type="button" disabled={!selectedDeviceState || mutation.isPending} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "video")}>切视频</button>
+              <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "live")}>切直播</button>
+              <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "live_comment")}>切评论</button>
               <button
                 className="scheduler-btn danger"
                 type="button"
-                disabled={!selectedDeviceState || !isTaskType(detailAssignment?.taskType) || mutation.isPending}
-                onClick={() => selectedDeviceState && isTaskType(detailAssignment?.taskType) && assignTask(selectedDeviceState, detailAssignment.taskType, "STOP")}
+                disabled={!selectedDeviceState || mutation.isPending}
+                onClick={() => selectedDeviceState && assignTask(selectedDeviceState, isTaskType(detailAssignment?.taskType) ? detailAssignment.taskType : "video", "STOP")}
               >
-                取消分配
+                停止
               </button>
             </div>
           </div>

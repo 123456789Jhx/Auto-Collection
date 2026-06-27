@@ -1,10 +1,9 @@
-import { BarChartOutlined, CommentOutlined, ControlOutlined, DatabaseOutlined, FileTextOutlined, LockOutlined, LoginOutlined, LogoutOutlined, MobileOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
+import { BarChartOutlined, CommentOutlined, ControlOutlined, DatabaseOutlined, FileTextOutlined, LockOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Form, Input, Layout, Menu, Space, Spin, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { clearAdminToken, getAdminToken, getCurrentAdmin, loginAdmin, setAdminToken, type AdminUser } from "../lib/api-client";
 import { DashboardPage } from "./DashboardPage";
-import { DevicesPage } from "./DevicesPage";
 import { LiveCommentsPage } from "./LiveCommentsPage";
 import { LogsPage } from "./LogsPage";
 import { RecordsPage } from "./RecordsPage";
@@ -15,7 +14,6 @@ const { Header, Sider, Content } = Layout;
 
 const pages = {
   dashboard: { title: "工作台", component: <DashboardPage /> },
-  devices: { title: "设备运行", component: <DevicesPage /> },
   scheduler: { title: "任务调度", component: <TaskSchedulerPage /> },
   liveComments: { title: "直播评论", component: <LiveCommentsPage /> },
   records: { title: "采集记录", component: <RecordsPage /> },
@@ -136,7 +134,6 @@ export function App() {
           onClick={(item) => setPage(item.key as PageKey)}
           items={[
             { key: "dashboard", icon: <BarChartOutlined />, label: "工作台" },
-            { key: "devices", icon: <MobileOutlined />, label: "设备运行" },
             { key: "scheduler", icon: <ControlOutlined />, label: "任务调度" },
             { key: "liveComments", icon: <CommentOutlined />, label: "直播评论" },
             { key: "records", icon: <DatabaseOutlined />, label: "采集记录" },
