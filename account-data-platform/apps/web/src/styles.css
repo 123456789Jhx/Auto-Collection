@@ -130,21 +130,22 @@ body {
 }
 
 .ops-page {
-  --ops-bg: #f5f7fb;
+  --ops-bg: #f4f6f8;
   --ops-panel: #ffffff;
-  --ops-line: #d8dee9;
-  --ops-line-soft: #edf0f5;
-  --ops-text: #1f2937;
-  --ops-muted: #6b7280;
-  --ops-blue: #2563eb;
-  --ops-green: #16a34a;
-  --ops-amber: #d97706;
-  --ops-red: #dc2626;
-  --ops-purple: #7c3aed;
+  --ops-line: #dde3ea;
+  --ops-line-soft: #edf1f5;
+  --ops-text: #17202a;
+  --ops-muted: #64748b;
+  --ops-blue: #2463eb;
+  --ops-green: #16803c;
+  --ops-amber: #c56a09;
+  --ops-red: #c53030;
+  --ops-purple: #6d4aff;
   --ops-gray: #64748b;
+  --ops-shadow: 0 10px 28px rgba(15, 23, 42, 0.07);
   min-height: calc(100vh - 92px);
   margin: -18px;
-  padding: 18px 22px 28px;
+  padding: 20px 22px 28px;
   background: var(--ops-bg);
   color: var(--ops-text);
 }
@@ -216,8 +217,8 @@ body {
 .ops-stats {
   display: grid;
   grid-template-columns: repeat(5, minmax(120px, 1fr));
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 14px;
+  margin-bottom: 14px;
 }
 
 .ops-stats.four {
@@ -225,11 +226,35 @@ body {
 }
 
 .ops-stat {
-  min-height: 82px;
-  padding: 12px;
-  border: 1px solid var(--ops-line);
+  position: relative;
+  overflow: hidden;
+  min-height: 100px;
+  padding: 16px 18px;
+  border: 1px solid var(--ops-line-soft);
   border-radius: 8px;
   background: var(--ops-panel);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+}
+
+.ops-stat::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: #cbd5e1;
+}
+
+.ops-stat:nth-child(2)::before {
+  background: var(--ops-green);
+}
+
+.ops-stat:nth-child(3)::before,
+.ops-stat:nth-child(5)::before {
+  background: var(--ops-red);
+}
+
+.ops-stat:nth-child(4)::before {
+  background: var(--ops-blue);
 }
 
 .ops-stat-label {
@@ -239,8 +264,8 @@ body {
 }
 
 .ops-stat-value {
-  font-size: 24px;
-  font-weight: 700;
+  font-size: 28px;
+  font-weight: 760;
   line-height: 1;
 }
 
@@ -265,13 +290,14 @@ body {
 .ops-filter-panel {
   display: grid;
   grid-template-columns: minmax(220px, 1.5fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr) auto;
-  gap: 10px;
+  gap: 12px;
   align-items: end;
-  margin-bottom: 12px;
-  padding: 12px;
-  border: 1px solid var(--ops-line);
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--ops-line-soft);
   border-radius: 8px;
   background: var(--ops-panel);
+  box-shadow: var(--ops-shadow);
 }
 
 .ops-filter-panel.three {
@@ -324,24 +350,25 @@ body {
 
 .ops-panel {
   overflow: hidden;
-  border: 1px solid var(--ops-line);
+  border: 1px solid var(--ops-line-soft);
   border-radius: 8px;
   background: var(--ops-panel);
+  box-shadow: var(--ops-shadow);
 }
 
 .ops-panel-head {
-  min-height: 52px;
+  min-height: 50px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--ops-line);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--ops-line-soft);
   font-weight: 700;
 }
 
 .ops-panel-body {
-  padding: 14px;
+  padding: 14px 16px;
 }
 
 .ops-panel-note,
@@ -363,7 +390,7 @@ body {
 
 .ops-table th,
 .ops-table td {
-  padding: 10px 12px;
+  padding: 11px 14px;
   border-bottom: 1px solid var(--ops-line-soft);
   text-align: left;
   vertical-align: top;
@@ -382,7 +409,7 @@ body {
 }
 
 .ops-table tbody tr.selected {
-  background: #eff6ff;
+  background: #f0f6ff;
 }
 
 .ops-table tbody tr:hover {
@@ -447,30 +474,37 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  min-width: 150px;
+  min-width: 180px;
 }
 
 .ops-mini-btn {
-  min-height: 28px;
-  border: 1px solid var(--ops-line);
-  border-radius: 5px;
-  padding: 5px 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  border: 1px solid #d8e0ea;
+  border-radius: 6px;
+  padding: 5px 9px;
   background: #fff;
   color: var(--ops-text);
   font-size: 12px;
+  font-weight: 700;
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .ops-mini-btn.primary {
-  border-color: #bfdbfe;
-  color: #1d4ed8;
+  border-color: var(--ops-blue);
+  background: var(--ops-blue);
+  color: #fff;
 }
 
 .ops-mini-btn.danger {
-  border-color: #fecaca;
-  color: var(--ops-red);
+  border-color: var(--ops-red);
+  background: var(--ops-red);
+  color: #fff;
 }
 
 .ops-kv {
@@ -532,8 +566,8 @@ body {
 
 .ops-mini-stat {
   border-radius: 6px;
-  background: #f8fafc;
-  padding: 8px;
+  background: #f6f8fb;
+  padding: 10px;
 }
 
 .ops-mini-stat span {
@@ -565,10 +599,10 @@ body {
 }
 
 .ops-progress {
-  height: 8px;
+  height: 7px;
   overflow: hidden;
   border-radius: 999px;
-  background: #e5e7eb;
+  background: #e6ebf1;
 }
 
 .ops-progress > span {
@@ -603,22 +637,46 @@ body {
 }
 
 .device-run-card {
+  position: relative;
+  overflow: hidden;
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1.2fr) minmax(260px, 1.4fr) minmax(220px, 1fr);
-  gap: 14px;
-  align-items: stretch;
-  border: 1px solid var(--ops-line);
+  grid-template-columns: minmax(210px, 0.95fr) minmax(230px, 1fr) minmax(300px, 1.35fr) minmax(190px, 0.78fr) minmax(300px, 0.9fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 104px;
+  border: 1px solid #d9e4f1;
   border-radius: 8px;
-  padding: 12px;
-  background: #fff;
+  padding: 12px 14px 12px 18px;
+  background: linear-gradient(90deg, #f8fbff 0, #ffffff 44%, #ffffff 100%);
   color: var(--ops-text);
   cursor: pointer;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.055);
+}
+
+.device-run-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: #94a3b8;
+}
+
+.device-run-card.heartbeat-ok::before {
+  background: var(--ops-green);
+}
+
+.device-run-card.heartbeat-warn::before {
+  background: var(--ops-amber);
+}
+
+.device-run-card.heartbeat-danger::before {
+  background: var(--ops-red);
 }
 
 .device-run-card:hover,
 .device-run-card.selected {
-  border-color: #93c5fd;
-  background: #f8fbff;
+  border-color: #8fbdf6;
+  box-shadow: 0 8px 22px rgba(36, 99, 235, 0.10);
 }
 
 .device-run-card:focus-visible {
@@ -631,23 +689,35 @@ body {
 .device-run-actions {
   display: grid;
   gap: 8px;
-  align-content: start;
+  align-content: center;
+}
+
+.device-run-identity .ops-title {
+  margin-bottom: 4px;
+  font-size: 15px;
+}
+
+.device-run-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .heartbeat-status {
   display: grid;
-  gap: 6px;
-  min-height: 82px;
+  gap: 8px;
+  min-height: 74px;
   border: 1px solid #dbe4ef;
   border-radius: 8px;
-  padding: 10px;
+  padding: 12px 14px;
   background: #f8fafc;
 }
 
 .heartbeat-status strong {
   display: block;
-  font-size: 20px;
-  line-height: 1.2;
+  font-size: 23px;
+  font-weight: 780;
+  line-height: 1.05;
 }
 
 .heartbeat-status span,
@@ -680,7 +750,7 @@ body {
 
 .device-progress-line {
   display: grid;
-  gap: 6px;
+  gap: 7px;
 }
 
 .device-run-stats {
@@ -690,9 +760,10 @@ body {
 }
 
 .device-run-stats div {
+  border: 1px solid #e9eef5;
   border-radius: 6px;
-  padding: 8px;
-  background: #f8fafc;
+  padding: 10px;
+  background: #f7f9fc;
 }
 
 .device-run-stats span {
@@ -703,17 +774,37 @@ body {
 
 .device-run-stats strong {
   display: block;
-  margin-top: 4px;
+  margin-top: 5px;
   font-size: 18px;
+  line-height: 1;
 }
 
 .device-run-actions {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 6px;
+  border: 1px solid #e7edf5;
+  border-radius: 8px;
+  padding: 7px;
+  background: #f8fafc;
 }
 
 .device-run-actions .ops-mini-btn {
   width: 100%;
-  min-height: 32px;
+  min-width: 0;
+  min-height: 34px;
+  border-radius: 6px;
+  font-weight: 700;
+}
+
+.device-run-actions .ops-mini-btn.danger {
+  min-width: 56px;
+}
+
+.device-run-actions .anticon,
+.ops-mini-btn .anticon {
+  font-size: 13px;
 }
 
 .ops-detail-drawer {
@@ -908,21 +999,22 @@ body {
 }
 
 .scheduler-page {
-  --scheduler-bg: #f5f7fb;
+  --scheduler-bg: #f4f6f8;
   --scheduler-panel: #ffffff;
-  --scheduler-line: #d8dee9;
-  --scheduler-line-soft: #edf0f5;
-  --scheduler-text: #1f2937;
-  --scheduler-muted: #6b7280;
-  --scheduler-blue: #2563eb;
-  --scheduler-green: #16a34a;
-  --scheduler-amber: #d97706;
-  --scheduler-red: #dc2626;
-  --scheduler-purple: #7c3aed;
+  --scheduler-line: #dde3ea;
+  --scheduler-line-soft: #edf1f5;
+  --scheduler-text: #17202a;
+  --scheduler-muted: #64748b;
+  --scheduler-blue: #2463eb;
+  --scheduler-green: #16803c;
+  --scheduler-amber: #c56a09;
+  --scheduler-red: #c53030;
+  --scheduler-purple: #6d4aff;
   --scheduler-gray: #64748b;
+  --scheduler-shadow: 0 10px 28px rgba(15, 23, 42, 0.07);
   min-height: calc(100vh - 92px);
   margin: -18px;
-  padding: 18px 22px 28px;
+  padding: 20px 22px 28px;
   background: var(--scheduler-bg);
   color: var(--scheduler-text);
 }
@@ -994,16 +1086,40 @@ body {
 .scheduler-stats {
   display: grid;
   grid-template-columns: repeat(5, minmax(120px, 1fr));
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 14px;
+  margin-bottom: 14px;
 }
 
 .scheduler-stat-card {
-  min-height: 82px;
-  padding: 12px;
-  border: 1px solid var(--scheduler-line);
+  position: relative;
+  overflow: hidden;
+  min-height: 96px;
+  padding: 15px 16px;
+  border: 1px solid var(--scheduler-line-soft);
   border-radius: 8px;
   background: var(--scheduler-panel);
+  box-shadow: var(--scheduler-shadow);
+}
+
+.scheduler-stat-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: #cbd5e1;
+}
+
+.scheduler-stat-card:nth-child(2)::before {
+  background: var(--scheduler-blue);
+}
+
+.scheduler-stat-card:nth-child(3)::before {
+  background: var(--scheduler-green);
+}
+
+.scheduler-stat-card:nth-child(4)::before,
+.scheduler-stat-card:nth-child(5)::before {
+  background: var(--scheduler-red);
 }
 
 .scheduler-stat-label {
@@ -1030,14 +1146,15 @@ body {
 
 .scheduler-filter-panel {
   display: grid;
-  grid-template-columns: minmax(220px, 1.5fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: minmax(260px, 1.4fr) minmax(160px, 1fr) minmax(160px, 1fr);
+  gap: 12px;
   align-items: end;
-  margin-bottom: 12px;
-  padding: 12px;
-  border: 1px solid var(--scheduler-line);
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--scheduler-line-soft);
   border-radius: 8px;
   background: var(--scheduler-panel);
+  box-shadow: var(--scheduler-shadow);
 }
 
 .scheduler-field label {
@@ -1064,26 +1181,27 @@ body {
 
 .scheduler-workbench {
   display: grid;
-  grid-template-columns: minmax(720px, 1fr) 360px;
-  gap: 12px;
+  grid-template-columns: minmax(760px, 1fr) 360px;
+  gap: 14px;
   align-items: start;
 }
 
 .scheduler-panel {
   overflow: hidden;
-  border: 1px solid var(--scheduler-line);
+  border: 1px solid var(--scheduler-line-soft);
   border-radius: 8px;
   background: var(--scheduler-panel);
+  box-shadow: var(--scheduler-shadow);
 }
 
 .scheduler-panel-head {
-  min-height: 52px;
+  min-height: 50px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--scheduler-line);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--scheduler-line-soft);
   font-weight: 700;
 }
 
@@ -1099,7 +1217,7 @@ body {
 
 .scheduler-native-table th,
 .scheduler-native-table td {
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--scheduler-line-soft);
   text-align: left;
   vertical-align: top;
@@ -1118,7 +1236,7 @@ body {
 }
 
 .scheduler-native-table tbody tr.selected {
-  background: #eff6ff;
+  background: #f0f6ff;
 }
 
 .scheduler-native-table tbody tr:hover {
@@ -1230,11 +1348,11 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  min-width: 172px;
+  min-width: 220px;
 }
 
 .scheduler-actions-cell.compact {
-  min-width: 168px;
+  min-width: 220px;
 }
 
 .scheduler-mini-btn {
@@ -1256,10 +1374,14 @@ body {
 }
 
 .scheduler-action-btn {
-  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 32px;
   border: 1px solid var(--scheduler-line);
   border-radius: 6px;
-  padding: 5px 9px;
+  padding: 6px 10px;
   background: #fff;
   color: var(--scheduler-text);
   font-size: 12px;
@@ -1270,20 +1392,20 @@ body {
 }
 
 .scheduler-action-btn.video {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
+  border-color: var(--scheduler-blue);
+  background: var(--scheduler-blue);
+  color: #fff;
 }
 
 .scheduler-action-btn.live {
-  border-color: #bbf7d0;
-  background: #f0fdf4;
+  border-color: #9be7b1;
+  background: #ecfdf3;
   color: #15803d;
 }
 
 .scheduler-action-btn.comment {
-  border-color: #ddd6fe;
-  background: #f5f3ff;
+  border-color: #d4c8ff;
+  background: #f4f1ff;
   color: #6d28d9;
 }
 
@@ -1299,7 +1421,7 @@ body {
 }
 
 .scheduler-detail {
-  padding: 14px;
+  padding: 16px;
 }
 
 .scheduler-detail h2 {

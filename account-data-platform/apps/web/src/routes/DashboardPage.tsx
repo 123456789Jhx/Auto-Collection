@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Skeleton, message } from "antd";
+import { PauseOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined, SyncOutlined } from "@ant-design/icons";
 import { useMemo, useState } from "react";
 import { createMobileCommand, getDeviceDailyProgress, getDeviceProgressHistory, getOverview } from "../lib/api-client";
 import { sceneText, statusText } from "../lib/display-maps";
@@ -226,7 +227,7 @@ export function DashboardPage() {
 
       <section className="ops-panel">
         <div className="ops-panel-head">
-          <span>设备运行看板</span>
+          <span>设备监控看板</span>
           <span className="ops-small">卡片内可直接操作，点击卡片打开详情</span>
         </div>
         <div className="ops-panel-body">
@@ -238,7 +239,7 @@ export function DashboardPage() {
               const heartbeat = heartbeatInfo(item);
               return (
                 <article
-                  className={`device-run-card ${item.deviceCode === selected?.deviceCode && detailOpen ? "selected" : ""}`}
+                  className={`device-run-card heartbeat-${heartbeat.tone} ${item.deviceCode === selected?.deviceCode && detailOpen ? "selected" : ""}`}
                   key={item.id || item.deviceCode}
                   onClick={() => openDetail(item.deviceCode)}
                   role="button"
@@ -248,12 +249,14 @@ export function DashboardPage() {
                   }}
                 >
                   <div className="device-run-main">
-                    <div>
+                    <div className="device-run-identity">
                       <div className="ops-title">{item.deviceName || item.deviceCode}</div>
                       <div className="ops-small">{item.deviceCode}</div>
                     </div>
-                    <span className={`ops-tag ${statusTone(item.status)}`}>{statusText(item.status)}</span>
-                    <span className={`ops-tag ${taskTone(item.currentTask)}`}>{currentTaskText(item.currentTask)}</span>
+                    <div className="device-run-tags">
+                      <span className={`ops-tag ${statusTone(item.status)}`}>{statusText(item.status)}</span>
+                      <span className={`ops-tag ${taskTone(item.currentTask)}`}>{currentTaskText(item.currentTask)}</span>
+                    </div>
                   </div>
                   <div className={`heartbeat-status ${heartbeat.tone}`}>
                     <strong>{heartbeat.text}</strong>
@@ -269,11 +272,11 @@ export function DashboardPage() {
                     <div><span>采集数</span><strong>{item.capturedCount ?? 0}</strong></div>
                   </div>
                   <div className="device-run-actions" onClick={(event) => event.stopPropagation()}>
-                    <button className="ops-mini-btn primary" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "START")}>启动</button>
-                    <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "PAUSE")}>暂停</button>
-                    <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "RESUME")}>恢复</button>
-                    <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "REFRESH_CONFIG")}>刷新配置</button>
-                    <button className="ops-mini-btn danger" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "STOP")}>停止</button>
+                    <button className="ops-mini-btn primary" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "START")}><PlayCircleOutlined />启动</button>
+                    <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "PAUSE")}><PauseOutlined />暂停</button>
+                    <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "RESUME")}><SyncOutlined />恢复</button>
+                    <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "REFRESH_CONFIG")}><ReloadOutlined />配置</button>
+                    <button className="ops-mini-btn danger" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "STOP")}><StopOutlined />停止</button>
                   </div>
                 </article>
               );

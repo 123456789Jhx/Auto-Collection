@@ -601,9 +601,9 @@ export function LiveCommentsPage() {
                       <td>
                         <div className="ops-actions-cell" onClick={(event) => event.stopPropagation()}>
                           <button className="ops-mini-btn" type="button" onClick={() => void openTargetRoomEditor(item)}>指定直播间</button>
-                          <button className="ops-mini-btn primary" type="button" onClick={() => { setSelectedDevice(item); sendCommand(item.deviceCode, "START"); }}>启动</button>
-                          <button className="ops-mini-btn" type="button" onClick={() => sendCommand(item.deviceCode, "PAUSE")}>暂停</button>
-                          <button className="ops-mini-btn" type="button" onClick={() => sendCommand(item.deviceCode, "REFRESH_CONFIG")}>刷新配置</button>
+                          <button className="ops-mini-btn primary" type="button" onClick={() => { setSelectedDevice(item); sendCommand(item.deviceCode, "START"); }}><PlayCircleOutlined />启动</button>
+                          <button className="ops-mini-btn" type="button" onClick={() => sendCommand(item.deviceCode, "PAUSE")}><PauseOutlined />暂停</button>
+                          <button className="ops-mini-btn" type="button" onClick={() => sendCommand(item.deviceCode, "REFRESH_CONFIG")}><ReloadOutlined />配置</button>
                         </div>
                       </td>
                     </tr>

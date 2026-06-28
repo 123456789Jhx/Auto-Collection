@@ -1,3 +1,4 @@
+import { CommentOutlined, PauseCircleOutlined, PlaySquareOutlined, VideoCameraOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { createTaskAssignment, getDevices, getTaskAssignments } from "../lib/api-client";
@@ -507,10 +508,10 @@ export function TaskSchedulerPage() {
                       </td>
                       <td>
                         <div className="scheduler-actions-cell compact" onClick={(event) => event.stopPropagation()}>
-                          <button className="scheduler-action-btn video" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "video")}>视频</button>
-                          <button className="scheduler-action-btn live" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live")}>直播</button>
-                          <button className="scheduler-action-btn comment" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live_comment")}>评论</button>
-                          <button className="scheduler-action-btn stop" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, isTaskType(assignment?.taskType) ? assignment.taskType : "video", "STOP")}>停止</button>
+                          <button className="scheduler-action-btn video" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "video")}><VideoCameraOutlined />视频</button>
+                          <button className="scheduler-action-btn live" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live")}><PlaySquareOutlined />直播</button>
+                          <button className="scheduler-action-btn comment" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live_comment")}><CommentOutlined />评论</button>
+                          <button className="scheduler-action-btn stop" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, isTaskType(assignment?.taskType) ? assignment.taskType : "video", "STOP")}><PauseCircleOutlined />停止</button>
                         </div>
                       </td>
                     </tr>
