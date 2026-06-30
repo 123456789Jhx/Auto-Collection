@@ -9,6 +9,26 @@ import { findCurrentTask, findDeviceTaskConfig, findTaskByCode, resolveTaskConfi
 import { findDeviceByCode, findDeviceByToken, registerDeviceByToken, resolveDeviceByToken } from "../repositories/device.repository";
 import type { MobileCollectionRecordPayload, MobileHeartbeatPayload, MobileLiveCommentActionPayload, MobileLogFilePayload, MobileRuntimeLogPayload } from "@pkg/types";
 
+function normalizeDouyinAccountName(value: unknown) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text || text.length > 100) {
+    return undefined;
+  }
+  if (/^(首页|朋友|消息|我|关注|粉丝|获赞|作品|喜欢|私密|编辑资料|编辑主页|抖音号|账号与安全|设置)$/.test(text)) {
+    return undefined;
+  }
+  if (/抖音号[:：]|^\d+\s*(获赞|关注|粉丝)$/.test(text)) {
+    return undefined;
+  }
+  return text;
+}
+
+function resolveDouyinAccountName(payload: MobileHeartbeatPayload) {
+  return normalizeDouyinAccountName(payload.douyinAccountName) ??
+    normalizeDouyinAccountName(payload.rawPayload?.douyinAccountName) ??
+    normalizeDouyinAccountName(payload.rawPayload?.accountName);
+}
+
 async function resolveMobileDevice(values: {
   deviceId: string;
   deviceToken?: string;
@@ -146,6 +166,12 @@ export async function saveCollectionRecord(payload: MobileCollectionRecordPayloa
 }
 
 export async function saveHeartbeat(payload: MobileHeartbeatPayload, clientIp?: string, deviceToken?: string) {
+  const douyinAccountName = resolveDouyinAccountName(payload);
+  const rawPayload: Record<string, unknown> = { ...(payload.rawPayload ?? {}), appVersion: payload.appVersion };
+  delete rawPayload.douyinAccountName;
+  if (douyinAccountName) {
+    rawPayload.douyinAccountName = douyinAccountName;
+  }
   const [task, device] = await Promise.all([
     findTaskByCode(payload.taskId),
     resolveMobileDevice({ deviceId: payload.deviceId, deviceToken, appVersion: payload.appVersion, clientIp })
@@ -166,7 +192,7 @@ export async function saveHeartbeat(payload: MobileHeartbeatPayload, clientIp?: 
     capturedCount: payload.capturedCount,
     lastMessage: payload.lastMessage,
     expectedEndAt: parseOptionalDate(payload.expectedEndAt ?? undefined),
-    rawPayload: { ...(payload.rawPayload ?? {}), appVersion: payload.appVersion },
+    rawPayload,
     reportedAt: parseOptionalDate(payload.reportedAt) ?? new Date(),
     createdBy: "mobile_agent",
     updatedBy: "mobile_agent"

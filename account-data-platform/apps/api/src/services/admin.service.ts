@@ -60,6 +60,18 @@ function numberFromRaw(raw: unknown, key: string) {
   return null;
 }
 
+function stringFromRaw(raw: unknown, key: string) {
+  if (!raw || typeof raw !== "object") return null;
+  const value = (raw as Record<string, unknown>)[key];
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  return text || null;
+}
+
+function douyinAccountNameFromHeartbeat(heartbeat?: { rawPayload?: Record<string, unknown> | null } | null) {
+  return stringFromRaw(heartbeat?.rawPayload, "douyinAccountName");
+}
+
 export async function getOverview() {
   const todayStart = startOfToday();
   const todayKey = utcDateKey();
@@ -97,6 +109,7 @@ export async function getOverview() {
       id: device.id,
       deviceCode: device.deviceCode,
       deviceName: device.deviceName,
+      douyinAccountName: douyinAccountNameFromHeartbeat(heartbeat),
       status: device.effectiveStatus,
       currentTask,
       videoElapsedMinutes: videoElapsed,
@@ -136,6 +149,7 @@ export async function getDevices() {
     const activeTask = latestHeartbeat?.status === "running" && (latestHeartbeat.sceneType === "video" || latestHeartbeat.sceneType === "live");
     return hideDeviceSecret({
       ...deviceStatus,
+      douyinAccountName: douyinAccountNameFromHeartbeat(latestHeartbeat),
       currentTask: activeTask ? latestHeartbeat.sceneType : "none",
       latestHeartbeat
     });
@@ -216,14 +230,21 @@ export async function getRecords(rawQuery: unknown) {
 export async function getRecordDeviceSummary(rawQuery: unknown) {
   const raw = (rawQuery ?? {}) as Record<string, string | undefined>;
   const createdFrom = parseOptionalDate(raw.createdFrom) ?? new Date(0);
-  const [devices, summaries] = await Promise.all([listDevices(), getRecordDeviceSummaries(createdFrom)]);
+  const devices = await listDevices();
+  const [summaries, latestHeartbeats] = await Promise.all([
+    getRecordDeviceSummaries(createdFrom),
+    listLatestHeartbeatsByDeviceIds(devices.map((device) => device.id))
+  ]);
   const summaryByDeviceCode = new Map(summaries.map((summary) => [summary.deviceCode, summary]));
+  const latestHeartbeatByDeviceId = new Map(latestHeartbeats.filter((heartbeat) => heartbeat.deviceId).map((heartbeat) => [heartbeat.deviceId, heartbeat]));
   return devices.map((device) => {
     const summary = summaryByDeviceCode.get(device.deviceCode);
+    const latestHeartbeat = latestHeartbeatByDeviceId.get(device.id);
     return {
       deviceId: device.id,
       deviceCode: device.deviceCode,
       deviceName: device.deviceName,
+      douyinAccountName: douyinAccountNameFromHeartbeat(latestHeartbeat),
       totalCount: summary?.totalCount ?? 0,
       videoCount: summary?.videoCount ?? 0,
       liveCount: summary?.liveCount ?? 0,
@@ -254,20 +275,24 @@ export async function getLogs(rawQuery: unknown) {
 export async function getLogDeviceSummary(rawQuery: unknown) {
   const raw = (rawQuery ?? {}) as Record<string, string | undefined>;
   const createdFrom = parseOptionalDate(raw.createdFrom) ?? new Date(0);
-  const [devices, logSummaries, fileSummaries] = await Promise.all([
-    listDevices(),
+  const devices = await listDevices();
+  const [logSummaries, fileSummaries, latestHeartbeats] = await Promise.all([
     getLogDeviceSummaries(createdFrom),
-    getLogFileDeviceSummaries(createdFrom)
+    getLogFileDeviceSummaries(createdFrom),
+    listLatestHeartbeatsByDeviceIds(devices.map((device) => device.id))
   ]);
   const logsByDeviceCode = new Map(logSummaries.map((summary) => [summary.deviceCode, summary]));
   const filesByDeviceCode = new Map(fileSummaries.map((summary) => [summary.deviceCode, summary]));
+  const latestHeartbeatByDeviceId = new Map(latestHeartbeats.filter((heartbeat) => heartbeat.deviceId).map((heartbeat) => [heartbeat.deviceId, heartbeat]));
   return devices.map((device) => {
     const logSummary = logsByDeviceCode.get(device.deviceCode);
     const fileSummary = filesByDeviceCode.get(device.deviceCode);
+    const latestHeartbeat = latestHeartbeatByDeviceId.get(device.id);
     return {
       deviceId: device.id,
       deviceCode: device.deviceCode,
       deviceName: device.deviceName,
+      douyinAccountName: douyinAccountNameFromHeartbeat(latestHeartbeat),
       totalCount: logSummary?.totalCount ?? 0,
       infoCount: logSummary?.infoCount ?? 0,
       warnCount: logSummary?.warnCount ?? 0,
@@ -434,6 +459,7 @@ export async function getLiveCommentDeviceSummary(rawQuery: unknown) {
       deviceId: device.id,
       deviceCode: device.deviceCode,
       deviceName: device.deviceName,
+      douyinAccountName: douyinAccountNameFromHeartbeat(latestHeartbeat),
       totalCount: summary?.totalCount ?? 0,
       plannedCount: summary?.plannedCount ?? 0,
       sentCount: summary?.sentCount ?? 0,

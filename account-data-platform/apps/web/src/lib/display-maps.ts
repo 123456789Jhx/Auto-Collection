@@ -73,3 +73,21 @@ export function commandText(value?: string | null) {
   };
   return value ? (map[value] ?? value) : "-";
 }
+
+export type DeviceDisplayLike = {
+  deviceCode?: string | null;
+  deviceName?: string | null;
+  douyinAccountName?: string | null;
+};
+
+export function deviceDisplayName(device?: DeviceDisplayLike | null) {
+  return device?.douyinAccountName || device?.deviceName || device?.deviceCode || "未知设备";
+}
+
+export function deviceSubTitle(device?: DeviceDisplayLike | null) {
+  const code = device?.deviceCode || "未上报设备编号";
+  if (device?.douyinAccountName && device?.deviceName && device.deviceName !== device.douyinAccountName) {
+    return `${code} / ${device.deviceName}`;
+  }
+  return code;
+}

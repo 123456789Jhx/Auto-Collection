@@ -134,8 +134,13 @@ export async function listTaskAssignments(limit = 200) {
 
   return rows.map((row) => {
     const heartbeat = latestHeartbeatByDeviceId.get(row.deviceId) ?? null;
+    const rawPayload = heartbeat?.rawPayload && typeof heartbeat.rawPayload === "object" ? heartbeat.rawPayload as Record<string, unknown> : {};
+    const douyinAccountName = typeof rawPayload.douyinAccountName === "string" && rawPayload.douyinAccountName.trim()
+      ? rawPayload.douyinAccountName.trim()
+      : null;
     return {
       ...row,
+      douyinAccountName,
       latestHeartbeat: heartbeat
     };
   });

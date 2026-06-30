@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Checkbox, Form, Input, InputNumber, Modal, Select, Skeleton, Space, Switch, message } from "antd";
 import { useMemo, useState } from "react";
 import { createMobileCommand, getDeviceTaskConfig, getLiveCommentActions, getLiveCommentDeviceSummary, updateDevice, updateDeviceTaskConfig } from "../lib/api-client";
-import { statusText } from "../lib/display-maps";
+import { deviceDisplayName, deviceSubTitle, statusText } from "../lib/display-maps";
 
 type LiveCommentMode = "off" | "target_follow" | "agri_chatbot";
 
@@ -11,6 +11,7 @@ type LiveCommentDeviceSummary = {
   deviceId?: string;
   deviceCode?: string;
   deviceName?: string;
+  douyinAccountName?: string | null;
   totalCount: number;
   plannedCount: number;
   sentCount: number;
@@ -376,7 +377,7 @@ export function LiveCommentsPage() {
   const filteredSummaries = useMemo(() => {
     const keyword = deviceKeyword.trim().toLowerCase();
     return summaries.filter((item) => {
-      const matchesKeyword = !keyword || `${item.deviceName || ""} ${item.deviceCode || ""}`.toLowerCase().includes(keyword);
+      const matchesKeyword = !keyword || `${item.douyinAccountName || ""} ${item.deviceName || ""} ${item.deviceCode || ""}`.toLowerCase().includes(keyword);
       const matchesStatus = !deviceStatus || item.deviceStatus === deviceStatus;
       return matchesKeyword && matchesStatus;
     });
@@ -583,7 +584,7 @@ export function LiveCommentsPage() {
                       <td>
                         <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                           {batchMode ? <Checkbox checked={!!item.deviceCode && checkedDeviceCodes.includes(item.deviceCode)} onClick={(event) => event.stopPropagation()} onChange={() => toggleDeviceChecked(item.deviceCode)} /> : null}
-                          <div><div className="ops-title">{item.deviceName || item.deviceCode || "未知设备"}</div><div className="ops-small">{item.deviceCode || "-"}</div></div>
+                          <div><div className="ops-title">{deviceDisplayName(item)}</div><div className="ops-small">{deviceSubTitle(item)}</div></div>
                         </div>
                       </td>
                       <td>
@@ -615,7 +616,7 @@ export function LiveCommentsPage() {
 
           <div className="ops-panel">
             <div className="ops-panel-head">
-              <span>{activeDevice ? `${activeDevice.deviceName || activeDevice.deviceCode} 执行记录` : "执行记录"}</span>
+              <span>{activeDevice ? `${deviceDisplayName(activeDevice)} 执行记录` : "执行记录"}</span>
               <input className="ops-input" style={{ maxWidth: 260 }} placeholder="直播间 / 账号 / 话术" value={recordKeyword} onChange={(event) => setRecordKeyword(event.currentTarget.value)} />
             </div>
             {actionsQuery.isLoading ? <div className="ops-panel-body"><Skeleton active /></div> : null}
@@ -629,14 +630,16 @@ export function LiveCommentsPage() {
         <aside className="ops-detail-drawer" aria-label="评论详情">
           <div className="ops-detail-drawer-head">
             <div>
-              <h2>{activeDevice.deviceName || activeDevice.deviceCode}</h2>
-              <p>{activeDevice.deviceCode || "-"}</p>
+              <h2>{deviceDisplayName(activeDevice)}</h2>
+              <p>{deviceSubTitle(activeDevice)}</p>
             </div>
             <button className="ops-drawer-close" type="button" onClick={() => setDetailOpen(false)}>关闭</button>
           </div>
           <div className="ops-detail-drawer-body">
             <div className="ops-kv">
               <div className="ops-k">设备状态</div><div><span className={`ops-tag ${statusTone(activeDevice.deviceStatus)}`}>{statusText(activeDevice.deviceStatus)}</span></div>
+              <div className="ops-k">抖音账号</div><div>{activeDevice.douyinAccountName || "-"}</div>
+              <div className="ops-k">设备名称</div><div>{activeDevice.deviceName || "-"}</div>
               <div className="ops-k">评论模式</div><div>{liveCommentModeText(selectedConfig?.liveCommentMode || activeDevice.liveCommentMode)}</div>
               <div className="ops-k">配置来源</div><div>{configSourceText(selectedConfig?.source || activeDevice.configSource)}</div>
               <div className="ops-k">最近心跳</div><div>{formatDateTime(activeDevice.lastHeartbeatAt)}</div>

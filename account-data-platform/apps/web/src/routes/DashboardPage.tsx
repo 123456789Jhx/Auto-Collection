@@ -3,12 +3,13 @@ import { Alert, Skeleton, message } from "antd";
 import { PauseOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined, SyncOutlined } from "@ant-design/icons";
 import { useMemo, useState } from "react";
 import { createMobileCommand, getDeviceDailyProgress, getDeviceProgressHistory, getOverview } from "../lib/api-client";
-import { sceneText, statusText } from "../lib/display-maps";
+import { deviceDisplayName, deviceSubTitle, sceneText, statusText } from "../lib/display-maps";
 
 type DeviceProgress = {
   id: string;
   deviceCode: string;
   deviceName?: string;
+  douyinAccountName?: string | null;
   status?: string;
   currentTask?: string;
   videoElapsedMinutes?: number | null;
@@ -250,8 +251,8 @@ export function DashboardPage() {
                 >
                   <div className="device-run-main">
                     <div className="device-run-identity">
-                      <div className="ops-title">{item.deviceName || item.deviceCode}</div>
-                      <div className="ops-small">{item.deviceCode}</div>
+                      <div className="ops-title">{deviceDisplayName(item)}</div>
+                      <div className="ops-small">{deviceSubTitle(item)}</div>
                     </div>
                     <div className="device-run-tags">
                       <span className={`ops-tag ${statusTone(item.status)}`}>{statusText(item.status)}</span>
@@ -289,14 +290,16 @@ export function DashboardPage() {
         <aside className="ops-detail-drawer" aria-label="设备详情">
           <div className="ops-detail-drawer-head">
             <div>
-              <h2>{selected.deviceName || selected.deviceCode}</h2>
-              <p>{selected.deviceCode}</p>
+              <h2>{deviceDisplayName(selected)}</h2>
+              <p>{deviceSubTitle(selected)}</p>
             </div>
             <button className="ops-drawer-close" type="button" onClick={() => setDetailOpen(false)}>关闭</button>
           </div>
           <div className="ops-detail-drawer-body">
             <div className="ops-kv">
               <div className="ops-k">设备状态</div><div><span className={`ops-tag ${statusTone(selected.status)}`}>{statusText(selected.status)}</span></div>
+              <div className="ops-k">抖音账号</div><div>{selected.douyinAccountName || "-"}</div>
+              <div className="ops-k">设备名称</div><div>{selected.deviceName || "-"}</div>
               <div className="ops-k">当前任务</div><div><span className={`ops-tag ${taskTone(selected.currentTask)}`}>{currentTaskText(selected.currentTask)}</span></div>
               <div className="ops-k">最后心跳</div><div>{formatDateTime(selected.lastHeartbeatAt)}</div>
               <div className="ops-k">最近消息</div><div>{selected.heartbeat?.lastMessage || "-"}</div>

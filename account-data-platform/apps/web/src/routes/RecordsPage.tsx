@@ -3,11 +3,13 @@ import { Alert, Skeleton } from "antd";
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { getRecordDates, getRecordDeviceSummary, getRecords } from "../lib/api-client";
+import { deviceDisplayName, deviceSubTitle } from "../lib/display-maps";
 import { sceneText, statusText } from "../lib/display-maps";
 
 type RecordDeviceSummary = {
   deviceCode?: string;
   deviceName?: string;
+  douyinAccountName?: string | null;
   totalCount: number;
   videoCount: number;
   liveCount: number;
@@ -240,8 +242,8 @@ export function RecordsPage() {
                 >
                   <div className="ops-card-head">
                     <div>
-                      <div className="ops-title">{item.deviceName || item.deviceCode || "未知设备"}</div>
-                      <div className="ops-small">{item.deviceCode || "未上报设备编号"}</div>
+                      <div className="ops-title">{deviceDisplayName(item)}</div>
+                      <div className="ops-small">{deviceSubTitle(item)}</div>
                     </div>
                     <span className={`ops-tag ${statusTone(item.deviceStatus)}`}>{statusText(item.deviceStatus)}</span>
                   </div>
@@ -282,7 +284,7 @@ export function RecordsPage() {
       <div className="ops-page">
         <header className="ops-topbar">
           <div>
-            <h1>{selectedDevice.deviceName || selectedDevice.deviceCode}</h1>
+            <h1>{deviceDisplayName(selectedDevice)}</h1>
             <p>选择日期后查看当天采集记录，日期卡片按后台返回的记录日汇总展示。</p>
           </div>
           {renderToolbar(<button className="ops-btn" type="button" onClick={backToDevices}>返回手机列表</button>)}
@@ -349,7 +351,7 @@ export function RecordsPage() {
       <header className="ops-topbar">
         <div>
           <h1>采集记录</h1>
-          <p>{selectedDevice.deviceName || selectedDevice.deviceCode} · {selectedDate}，查看当天采集内容和详情。</p>
+          <p>{deviceDisplayName(selectedDevice)} · {selectedDate}，查看当天采集内容和详情。</p>
         </div>
         {renderToolbar(
           <>
@@ -362,7 +364,7 @@ export function RecordsPage() {
       <section className="ops-filter-panel three">
         <div className="ops-field">
           <label htmlFor="records-current-device">当前手机</label>
-          <input id="records-current-device" className="ops-input" readOnly value={`${selectedDevice.deviceName || selectedDevice.deviceCode} / ${selectedDevice.deviceCode}`} />
+          <input id="records-current-device" className="ops-input" readOnly value={`${deviceDisplayName(selectedDevice)} / ${selectedDevice.deviceCode}`} />
         </div>
         <div className="ops-field">
           <label htmlFor="records-scene">来源</label>
@@ -383,7 +385,7 @@ export function RecordsPage() {
         <div className="ops-panel">
           <div className="ops-panel-head">
             <span>内容列表</span>
-            <span className="ops-small">{selectedDevice.deviceName || selectedDevice.deviceCode} · {selectedDate}</span>
+            <span className="ops-small">{deviceDisplayName(selectedDevice)} · {selectedDate}</span>
           </div>
           {recordsQuery.isLoading ? <div className="ops-panel-body"><Skeleton active /></div> : null}
           {recordsQuery.isError ? <div className="ops-panel-body"><Alert type="error" message="采集记录加载失败" description={recordsQuery.error.message} showIcon /></div> : null}
@@ -432,7 +434,8 @@ export function RecordsPage() {
           </div>
           <div className="ops-panel-body">
             <div className="ops-kv">
-              <div className="ops-k">设备</div><div>{selectedDevice.deviceName || selectedDevice.deviceCode || "-"}</div>
+              <div className="ops-k">设备</div><div>{deviceDisplayName(selectedDevice)}</div>
+              <div className="ops-k">设备名称</div><div>{selectedDevice.deviceName || "-"}</div>
               <div className="ops-k">设备状态</div><div><span className={`ops-tag ${statusTone(selectedDevice.deviceStatus)}`}>{statusText(selectedDevice.deviceStatus)}</span></div>
               <div className="ops-k">日期记录</div><div>{selectedDateSummary?.totalCount ?? records.length} 条</div>
               <div className="ops-k">视频 / 直播</div><div>{selectedDateSummary?.videoCount ?? 0} / {selectedDateSummary?.liveCount ?? 0}</div>

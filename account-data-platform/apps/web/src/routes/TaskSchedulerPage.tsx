@@ -2,6 +2,7 @@ import { CommentOutlined, PauseCircleOutlined, PlaySquareOutlined, VideoCameraOu
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { createTaskAssignment, getDevices, getTaskAssignments } from "../lib/api-client";
+import { deviceDisplayName, deviceSubTitle } from "../lib/display-maps";
 
 type TaskType = "video" | "live" | "live_comment";
 type CommandType = "START" | "RESUME" | "PAUSE" | "STOP";
@@ -10,6 +11,7 @@ type DeviceRow = {
   id?: string;
   deviceCode: string;
   deviceName?: string;
+  douyinAccountName?: string | null;
   deviceGroup?: string | null;
   group?: string | null;
   effectiveStatus?: string;
@@ -32,6 +34,7 @@ type AssignmentRow = {
   id: string;
   deviceCode?: string;
   deviceName?: string;
+  douyinAccountName?: string | null;
   deviceStatus?: string;
   taskType?: string;
   targetContext?: string | null;
@@ -66,6 +69,7 @@ type DeviceTaskState = {
   assignment?: AssignmentRow;
   deviceCode: string;
   deviceName?: string;
+  douyinAccountName?: string | null;
   actualTask?: string;
   lastHeartbeatAt?: string | null;
   deviceStatus?: string;
@@ -292,13 +296,14 @@ export function TaskSchedulerPage() {
       assignment,
       deviceCode: device.deviceCode,
       deviceName: device.deviceName,
+      douyinAccountName: device.douyinAccountName,
       actualTask: actualTaskFromDevice(device),
       lastHeartbeatAt: device.latestHeartbeat?.reportedAt || device.lastHeartbeatAt,
       deviceStatus: device.effectiveStatus || device.status
     };
   }), [assignmentByDeviceCode, devices]);
   const filteredDeviceTaskRows = useMemo(() => deviceTaskRows.filter((item) => {
-    const deviceText = `${item.deviceName || ""} ${item.deviceCode || ""}`.toLowerCase();
+    const deviceText = `${item.douyinAccountName || ""} ${item.deviceName || ""} ${item.deviceCode || ""}`.toLowerCase();
     if (deviceKeyword && !deviceText.includes(deviceKeyword.toLowerCase())) return false;
     if (taskFilter === "none" && item.assignment) return false;
     if (taskFilter && taskFilter !== "none" && item.assignment?.taskType !== taskFilter) return false;
@@ -480,8 +485,8 @@ export function TaskSchedulerPage() {
                       onClick={() => selectDevice(row)}
                     >
                       <td>
-                        <div className="scheduler-device">{row.deviceName || row.deviceCode}</div>
-                        <div className="scheduler-small">{row.deviceCode} · {heartbeatLine(row)}</div>
+                        <div className="scheduler-device">{deviceDisplayName(row)}</div>
+                        <div className="scheduler-small">{deviceSubTitle(row)} · {heartbeatLine(row)}</div>
                       </td>
                       <td>
                         <div className="scheduler-compare">
@@ -528,7 +533,7 @@ export function TaskSchedulerPage() {
             <span className={`scheduler-tag ${assignmentStatusTone(detailAssignment?.status)}`}>{detailStatusText(detailAssignment?.status)}</span>
           </div>
           <div className="scheduler-detail">
-            <h2>{selectedDeviceState?.deviceName || selectedDeviceState?.deviceCode || "未选择设备"}</h2>
+            <h2>{deviceDisplayName(selectedDeviceState)}</h2>
             <div className="scheduler-kv">
               <div className="scheduler-k">分配编号</div><div>{detailAssignment?.id || "-"}</div>
               <div className="scheduler-k">任务安排</div><div><span className={`scheduler-tag ${taskTypeTone(detailAssignment?.taskType)}`}>{detailAssignment ? taskTypeText(detailAssignment.taskType) : "待命"}</span></div>

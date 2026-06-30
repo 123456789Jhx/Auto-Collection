@@ -415,6 +415,7 @@ function createUploader(config, logger, storage) {
         liveRejectedCount: payload.liveRejectedCount,
         capturedCount: payload.capturedCount,
         lastMessage: payload.lastMessage,
+        douyinAccountName: payload.douyinAccountName,
         expectedEndAt: payload.expectedEndAt,
         rawPayload: payload,
         reportedAt: payload.reportedAt || new Date().toISOString()

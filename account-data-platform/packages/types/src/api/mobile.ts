@@ -65,6 +65,7 @@ export const mobileHeartbeatSchema = z.object({
   liveRejectedCount: z.number().int().optional(),
   capturedCount: z.number().int().optional(),
   lastMessage: z.string().optional(),
+  douyinAccountName: z.preprocess((value) => value === "" || value === null ? undefined : value, z.string().trim().min(1).max(100).optional()),
   expectedEndAt: z.string().nullable().optional(),
   rawPayload: z.record(z.unknown()).optional(),
   reportedAt: z.string().optional()

@@ -3,13 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Dropdown, Form, Input, InputNumber, Modal, Popconfirm, Select, Skeleton, Space, Switch, message } from "antd";
 import { useState } from "react";
 import { createMobileCommand, getDeviceTaskConfig, getDevices, updateDevice, updateDeviceTaskConfig } from "../lib/api-client";
-import { statusText } from "../lib/display-maps";
+import { deviceDisplayName, deviceSubTitle, statusText } from "../lib/display-maps";
 import { defaultLiveCommentBotConfig, parseLiveCommentConfig, parseP3ExtensionsConfig, stringifyLiveCommentConfig, stringifyP3ExtensionsConfig } from "../lib/live-comment-config";
 
 type DeviceRow = {
   id: string;
   deviceCode: string;
   deviceName?: string;
+  douyinAccountName?: string | null;
   platform?: string;
   status: string;
   reportedStatus?: string;
@@ -337,7 +338,7 @@ export function DevicesPage() {
 
   const allDevices = (query.data ?? []) as DeviceRow[];
   const devices = allDevices.filter((item) => {
-    const text = `${item.deviceCode} ${item.deviceName ?? ""} ${item.platform ?? ""}`.toLowerCase();
+    const text = `${item.deviceCode} ${item.deviceName ?? ""} ${item.douyinAccountName ?? ""} ${item.platform ?? ""}`.toLowerCase();
     const matchedKeyword = !keyword || text.includes(keyword.toLowerCase());
     const matchedStatus = !statusFilter || item.effectiveStatus === statusFilter || item.reportedStatus === statusFilter;
     return matchedKeyword && matchedStatus;
@@ -452,8 +453,8 @@ export function DevicesPage() {
                   {devices.map((device) => (
                     <tr key={device.id || device.deviceCode} className={device.deviceCode === selectedDevice?.deviceCode ? "selected" : ""} onClick={() => setSelectedDeviceCode(device.deviceCode)}>
                       <td>
-                        <div className="ops-title">{device.deviceName || device.deviceCode}</div>
-                        <div className="ops-small">{device.deviceCode}</div>
+                        <div className="ops-title">{deviceDisplayName(device)}</div>
+                        <div className="ops-small">{deviceSubTitle(device)}</div>
                       </td>
                       <td><span className={`ops-tag ${statusTone(device.effectiveStatus || device.status)}`}>{statusText(device.effectiveStatus || device.status)}</span></td>
                       <td><span className={`ops-tag ${taskTone(device.currentTask)}`}>{taskText(device.currentTask)}</span></td>
@@ -516,8 +517,10 @@ export function DevicesPage() {
             <div className="ops-panel-body">
               {selectedDevice ? (
                 <>
-                  <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>{selectedDevice.deviceName || selectedDevice.deviceCode}</h2>
+                  <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>{deviceDisplayName(selectedDevice)}</h2>
                   <div className="ops-kv">
+                    <div className="ops-k">抖音账号</div><div>{selectedDevice.douyinAccountName || "-"}</div>
+                    <div className="ops-k">设备名称</div><div>{selectedDevice.deviceName || "-"}</div>
                     <div className="ops-k">设备编号</div><div>{selectedDevice.deviceCode}</div>
                     <div className="ops-k">当前任务</div><div><span className={`ops-tag ${taskTone(selectedDevice.currentTask)}`}>{taskText(selectedDevice.currentTask)}</span></div>
                     <div className="ops-k">平台</div><div>{selectedDevice.platform || "-"}</div>

@@ -5,8 +5,62 @@ function createHeartbeatService(context) {
   var floatyControl = context.floatyControl;
   var counters = context.counters;
   var heartbeat = context.heartbeat;
+  var douyin = context.douyin;
+
+  heartbeat.douyinAccountName = heartbeat.douyinAccountName || "";
+  heartbeat.douyinAccountNameLastAt = heartbeat.douyinAccountNameLastAt || 0;
+  heartbeat.douyinAccountNameRefreshing = false;
+
   function currentTaskType() {
     return context.taskScheduler && context.taskScheduler.getActiveTaskType ? context.taskScheduler.getActiveTaskType() : "";
+  }
+
+  function accountRefreshIntervalMs() {
+    return Math.max(10 * 60 * 1000, Number(config.runtime.douyinAccountNameRefreshMinutes || 360) * 60 * 1000);
+  }
+
+  function accountPayload() {
+    return {
+      douyinAccountName: heartbeat.douyinAccountName || "",
+      douyinAccountNameUpdatedAt: heartbeat.douyinAccountNameLastAt ? new Date(heartbeat.douyinAccountNameLastAt).toISOString() : ""
+    };
+  }
+
+  function shouldRefreshDouyinAccountName(force) {
+    if (force) {
+      return true;
+    }
+    if (!config.runtime.syncDouyinAccountName) {
+      return false;
+    }
+    return !heartbeat.douyinAccountName || Date.now() - heartbeat.douyinAccountNameLastAt >= accountRefreshIntervalMs();
+  }
+
+  function refreshDouyinAccountName(force) {
+    if (!shouldRefreshDouyinAccountName(force)) {
+      return { success: true, skipped: true, accountName: heartbeat.douyinAccountName || "" };
+    }
+    if (heartbeat.douyinAccountNameRefreshing) {
+      return { success: false, skipped: true, message: "refreshing" };
+    }
+    if (!douyin || !douyin.readCurrentAccountName) {
+      return { success: false, skipped: true, message: "reader_missing" };
+    }
+    heartbeat.douyinAccountNameRefreshing = true;
+    try {
+      var result = douyin.readCurrentAccountName({ restoreFeed: true, allowOpenApp: false });
+      if (result && result.success && result.accountName) {
+        heartbeat.douyinAccountName = result.accountName;
+        heartbeat.douyinAccountNameLastAt = Date.now();
+        logger.info("抖音账号名缓存已刷新", accountPayload());
+      }
+      return result || { success: false, message: "empty_result" };
+    } catch (error) {
+      logger.warn("刷新抖音账号名失败", { message: String(error) });
+      return { success: false, message: String(error) };
+    } finally {
+      heartbeat.douyinAccountNameRefreshing = false;
+    }
   }
 
   function writeHeartbeat(sceneType, startMs, endAt) {
@@ -48,6 +102,8 @@ function createHeartbeatService(context) {
       status: floatyControl.state.paused ? "paused" : "running",
       currentTaskType: currentTaskType(),
       lastMessage: floatyControl.state.lastMessage,
+      douyinAccountName: heartbeat.douyinAccountName || "",
+      douyinAccountNameUpdatedAt: heartbeat.douyinAccountNameLastAt ? new Date(heartbeat.douyinAccountNameLastAt).toISOString() : "",
       reportedAt: new Date(now).toISOString()
     };
     logger.info("采集心跳", payload);
@@ -80,6 +136,8 @@ function createHeartbeatService(context) {
       status: heartbeatStatus,
       currentTaskType: currentTaskType(),
       lastMessage: message || floatyControl.state.lastMessage,
+      douyinAccountName: heartbeat.douyinAccountName || "",
+      douyinAccountNameUpdatedAt: heartbeat.douyinAccountNameLastAt ? new Date(heartbeat.douyinAccountNameLastAt).toISOString() : "",
       reportedAt: new Date().toISOString()
     };
     logger.info("即时状态心跳", payload);
@@ -99,7 +157,8 @@ function createHeartbeatService(context) {
   return {
     writeHeartbeat: writeHeartbeat,
     reportImmediateHeartbeat: reportImmediateHeartbeat,
-    reportAgentHeartbeat: reportAgentHeartbeat
+    reportAgentHeartbeat: reportAgentHeartbeat,
+    refreshDouyinAccountName: refreshDouyinAccountName
   };
 }
 

@@ -3,11 +3,13 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Alert, Button, Empty, Input, Select, Skeleton, message } from "antd";
 import { useMemo, useState } from "react";
 import { createMobileCommand, getLogDates, getLogDeviceSummary, getLogFileDetail, getLogFiles, getLogs } from "../lib/api-client";
+import { deviceDisplayName, deviceSubTitle } from "../lib/display-maps";
 import { levelText, statusText, stopReasonText } from "../lib/display-maps";
 
 type LogDeviceSummary = {
   deviceCode?: string;
   deviceName?: string;
+  douyinAccountName?: string | null;
   totalCount: number;
   infoCount: number;
   warnCount: number;
@@ -320,12 +322,12 @@ export function LogsPage() {
   if (summaryQuery.isLoading) return <Skeleton active />;
   if (summaryQuery.isError) return <Alert type="error" message="日志加载失败" description={summaryQuery.error.message} showIcon />;
 
-  const title = `${selectedDevice?.deviceName || selectedDevice?.deviceCode || "未选择设备"} / ${effectiveDate || "未选择日期"}`;
+  const title = `${deviceDisplayName(selectedDevice)} / ${effectiveDate || "未选择日期"}`;
   const latestUploadedAt = selectedFile?.uploadedAt || selectedDate?.latestUploadedAt || selectedDevice?.latestFileUploadedAt;
   const syncState = latestUploadedAt ? relativeTime(latestUploadedAt) : "未同步";
   const deviceOptions = summaries
     .filter((item) => item.deviceCode)
-    .map((item) => ({ value: item.deviceCode as string, label: `${item.deviceName || item.deviceCode} / ${item.deviceCode}` }));
+    .map((item) => ({ value: item.deviceCode as string, label: `${deviceDisplayName(item)} / ${item.deviceCode}` }));
 
   const totalLogs = summaries.reduce((sum, item) => sum + Number(item.totalCount || 0), 0);
   const warnLogs = summaries.reduce((sum, item) => sum + Number(item.warnCount || 0), 0);
@@ -438,8 +440,8 @@ export function LogsPage() {
                 >
                   <div className="log-center-card-head">
                     <div>
-                      <div className="log-center-card-title">{item.deviceName || item.deviceCode || "未知设备"}</div>
-                      <div className="log-center-panel-note">{item.deviceCode || "未上报设备编号"}</div>
+                      <div className="log-center-card-title">{deviceDisplayName(item)}</div>
+                      <div className="log-center-panel-note">{deviceSubTitle(item)}</div>
                     </div>
                     <span className="log-center-badge info">{statusText(item.deviceStatus)}</span>
                   </div>
@@ -486,7 +488,7 @@ export function LogsPage() {
           <div className="log-center-title-wrap">
             <button className="log-center-back" type="button" aria-label="返回手机列表" onClick={backToDevices}>‹</button>
             <div>
-              <h1 className="log-center-title">{selectedDevice.deviceName || selectedDevice.deviceCode}</h1>
+              <h1 className="log-center-title">{deviceDisplayName(selectedDevice)}</h1>
               <div className="log-center-subtitle">选择日期后查看运行动态、异常汇总和完整日志。</div>
             </div>
           </div>
