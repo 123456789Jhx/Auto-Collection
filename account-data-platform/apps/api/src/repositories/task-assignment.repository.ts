@@ -46,6 +46,7 @@ export async function expireActiveAssignmentsByDevice(deviceId: string, reason: 
     .update(deviceTaskAssignments)
     .set({
       status: "SUPERSEDED",
+      reason,
       completedAt: now,
       updatedAt: now,
       updatedBy: "admin"
