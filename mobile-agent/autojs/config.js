@@ -1,7 +1,7 @@
 module.exports = {
   app: {
     name: "燎原星火",
-    version: "1.0.9"
+    version: "1.0.16"
   },
 
   device: {
@@ -229,6 +229,8 @@ module.exports = {
     heartbeatMinutes: 1,
     idleHeartbeatSeconds: 60,
     agentIdleLoopMs: 1000,
+    syncDouyinAccountName: false,
+    douyinAccountNameRefreshMinutes: 360,
     riskWords: [
       "验证码",
       "安全验证",
