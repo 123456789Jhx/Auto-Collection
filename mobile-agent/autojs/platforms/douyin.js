@@ -1,9 +1,11 @@
 function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedScreenRecognizer) {
   var autojsUtils = require(files.join(config.runtime.scriptDir, "utils/autojs-utils.js"));
+  var liveCardGeometry = require(files.join(config.runtime.scriptDir, "platforms/live-card-geometry.js"));
   var createScreenRecognizer = require(files.join(config.runtime.scriptDir, "core/screen-recognizer.js")).createScreenRecognizer;
   var packageName = "com.ss.android.ugc.aweme";
   var activeSearchKeyword = "";
   var pendingTargetLiveEntry = null;
+  var lastTargetLiveSearchResult = null;
   var screenRecognizer = injectedScreenRecognizer || createScreenRecognizer(config, logger, ocrEngine, { expectedPackage: packageName });
 
   function recognitionOptions() {
@@ -1009,6 +1011,24 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return true;
   }
 
+  function setTargetLiveSearchResult(reason, extra) {
+    lastTargetLiveSearchResult = {
+      reason: reason || "",
+      at: new Date().toISOString()
+    };
+    extra = extra || {};
+    for (var key in extra) {
+      if (Object.prototype.hasOwnProperty.call(extra, key)) {
+        lastTargetLiveSearchResult[key] = extra[key];
+      }
+    }
+    return lastTargetLiveSearchResult;
+  }
+
+  function getLastTargetLiveSearchResult() {
+    return lastTargetLiveSearchResult || {};
+  }
+
   function openTargetLiveRoomFromSearch(options) {
     options = options || {};
     var targetRoom = options.targetRoom || {};
@@ -1019,10 +1039,23 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     }
     if (!keyword) {
       logger.warn("target live search skipped: empty keyword");
+      setTargetLiveSearchResult("target_keyword_empty", {
+        keyword: "",
+        targetKeywords: targetKeywords
+      });
       return false;
     }
 
+    setTargetLiveSearchResult("target_search_started", {
+      keyword: keyword,
+      targetKeywords: targetKeywords
+    });
+
     if (!openLiveSearch(keyword)) {
+      setTargetLiveSearchResult("target_search_open_failed", {
+        keyword: keyword,
+        targetKeywords: targetKeywords
+      });
       return false;
     }
 
@@ -1032,11 +1065,22 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       if (isLiveRoomVisible()) {
         if (confirmTargetLiveRoom(keyword, targetKeywords, attempt, "already_in_live_room")) {
           logger.info("target live search already in target live room", { attempt: attempt, keyword: keyword });
+          setTargetLiveSearchResult("room_verified", {
+            keyword: keyword,
+            targetKeywords: targetKeywords,
+            attempt: attempt,
+            source: "already_in_live_room"
+          });
           return true;
         }
         logger.warn("current live room is not target room, exit before target search", {
           attempt: attempt,
           keyword: keyword
+        });
+        setTargetLiveSearchResult("current_live_room_not_matched", {
+          keyword: keyword,
+          targetKeywords: targetKeywords,
+          attempt: attempt
         });
         back();
         autojsUtils.sleepRandom(1200, 1800);
@@ -1047,20 +1091,54 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         continue;
       }
 
+      if (clickVisibleTargetLiveBadgeCardFromSearch(keyword, targetKeywords, targetRoom, attempt)) {
+        setTargetLiveSearchResult("room_verified", {
+          keyword: keyword,
+          targetKeywords: targetKeywords,
+          attempt: attempt,
+          source: "visible_live_badge_card"
+        });
+        return true;
+      }
+
       if (clickTargetUserLiveEntryFromSearch(keyword, targetKeywords, targetRoom, attempt)) {
+        setTargetLiveSearchResult("room_verified", {
+          keyword: keyword,
+          targetKeywords: targetKeywords,
+          attempt: attempt,
+          source: "target_user_live_entry"
+        });
         return true;
       }
 
       if (clickVisibleTargetLiveCardFromSearch(keyword, targetKeywords, attempt)) {
+        setTargetLiveSearchResult("room_verified", {
+          keyword: keyword,
+          targetKeywords: targetKeywords,
+          attempt: attempt,
+          source: "visible_target_live_card"
+        });
         return true;
       }
 
       if (clickVisibleTargetLiveCardByTextFallback(keyword, targetKeywords, attempt)) {
+        setTargetLiveSearchResult("room_verified", {
+          keyword: keyword,
+          targetKeywords: targetKeywords,
+          attempt: attempt,
+          source: "text_coordinate_fallback"
+        });
         return true;
       }
 
       var entry = findTargetLiveSearchEntry(targetKeywords);
       if (entry && clickTargetLiveSearchEntry(entry, keyword, targetKeywords, attempt)) {
+        setTargetLiveSearchResult("room_verified", {
+          keyword: keyword,
+          targetKeywords: targetKeywords,
+          attempt: attempt,
+          source: "target_live_search_entry"
+        });
         return true;
       }
 
@@ -1075,7 +1153,17 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       }
     }
 
+    var finalReason = lastTargetLiveSearchResult && lastTargetLiveSearchResult.reason &&
+      lastTargetLiveSearchResult.reason !== "target_search_started" ?
+      lastTargetLiveSearchResult.reason :
+      "target_live_card_not_found";
+    setTargetLiveSearchResult(finalReason, {
+      keyword: keyword,
+      targetKeywords: targetKeywords,
+      textSample: extractVisibleText().slice(0, 220)
+    });
     logger.warn("target live search failed to enter live room", {
+      reason: finalReason,
       keyword: keyword,
       targetKeywords: targetKeywords,
       textSample: extractVisibleText().slice(0, 220)
@@ -1104,6 +1192,14 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         keyword: keyword,
         attempt: attempt,
         bounds: autojsUtils.formatBounds(block.bounds)
+      });
+      setTargetLiveSearchResult("target_user_not_live", {
+        keyword: keyword,
+        targetKeywords: targetKeywords,
+        attempt: attempt,
+        candidateType: "target_user_block",
+        targetText: block.targetText.slice(0, 80),
+        contextText: block.contextText.slice(0, 180)
       });
       return false;
     }
@@ -1525,6 +1621,284 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       }
     }
     return bestScore >= 20 ? best : null;
+  }
+
+  function clickVisibleTargetLiveBadgeCardFromSearch(keyword, targetKeywords, targetRoom, attempt) {
+    var visibleText = extractVisibleText();
+    var searchState = screenRecognizer.detectSearchPageState(visibleText, recognitionOptions());
+    if (!searchState.isResult) {
+      return false;
+    }
+
+    var targetBlock = findTargetUserSearchBlock(targetKeywords, targetRoom);
+    if (!isReliableTargetUserBlock(targetBlock)) {
+      targetBlock = null;
+    }
+    var candidates = findVisibleLiveBadgeCardCandidates(targetKeywords, targetBlock);
+    if (!candidates.length) {
+      var reason = containsAnyTargetKeyword(visibleText, targetKeywords) ? "target_live_badge_not_found" : "target_not_found";
+      setTargetLiveSearchResult(reason, {
+        keyword: keyword,
+        targetKeywords: targetKeywords,
+        attempt: attempt,
+        textSample: visibleText.slice(0, 220)
+      });
+      return false;
+    }
+
+    for (var i = 0; i < candidates.length; i++) {
+      var candidate = candidates[i];
+      if (!candidate.targetHit) {
+        continue;
+      }
+      logger.info("target live badge card detected on search results", {
+        keyword: keyword,
+        attempt: attempt,
+        candidateType: candidate.type,
+        liveText: candidate.liveText,
+        candidateText: candidate.contextText.slice(0, 180),
+        bounds: formatPlainRect(candidate.bounds),
+        badgeBounds: formatPlainRect(candidate.badgeBounds),
+        targetHit: candidate.targetHit
+      });
+      setTargetLiveSearchResult("target_live_card_found", {
+        keyword: keyword,
+        targetKeywords: targetKeywords,
+        attempt: attempt,
+        candidateType: candidate.type,
+        candidateText: candidate.contextText.slice(0, 180),
+        bounds: formatPlainRect(candidate.bounds)
+      });
+      if (clickLiveBadgeCardCandidate(candidate, keyword, targetKeywords, attempt)) {
+        return true;
+      }
+    }
+
+    setTargetLiveSearchResult("target_live_card_click_failed", {
+      keyword: keyword,
+      targetKeywords: targetKeywords,
+      attempt: attempt,
+      candidateCount: candidates.length,
+      textSample: visibleText.slice(0, 220)
+    });
+    return false;
+  }
+
+  function findVisibleLiveBadgeCardCandidates(targetKeywords, targetBlock) {
+    var screen = autojsUtils.getScreenSize();
+    var nodes = [];
+    pushFoundNodes(nodes, textMatches(".*(直播中|正在直播|开播中|LIVE|live).*"));
+    pushFoundNodes(nodes, descMatches(".*(直播中|正在直播|开播中|LIVE|live).*"));
+
+    var candidates = [];
+    var seen = {};
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var bounds = node && node.bounds && node.bounds();
+      var textValue = getNodeOwnText(node);
+      if (!liveCardGeometry.isSearchLiveBadgeText(textValue, bounds, screen)) {
+        continue;
+      }
+      var candidate = liveCardGeometry.buildLiveCardCandidateFromBadge(screen, bounds, {
+        targetBounds: targetBlock && targetBlock.bounds
+      });
+      if (!candidate || !candidate.bounds) {
+        continue;
+      }
+      var key = [candidate.type, candidate.bounds.left, candidate.bounds.top, candidate.bounds.right, candidate.bounds.bottom].join(":");
+      if (seen[key]) {
+        continue;
+      }
+      seen[key] = true;
+      candidate.liveText = textValue;
+      candidate.contextText = collectLiveCardCandidateText(candidate, node, targetBlock);
+      candidate.targetHit = liveCardGeometry.matchesTargetKeywords(candidate.contextText, targetKeywords) ||
+        (!!targetBlock && candidate.type === "user_large_live_card" && containsAnyTargetKeyword(targetBlock.contextText || targetBlock.targetText || "", targetKeywords));
+      candidates.push(candidate);
+    }
+
+    candidates.sort(function (a, b) {
+      if (a.targetHit !== b.targetHit) {
+        return a.targetHit ? -1 : 1;
+      }
+      if (a.type !== b.type) {
+        return a.type === "user_large_live_card" ? -1 : 1;
+      }
+      return a.bounds.top - b.bounds.top;
+    });
+
+    logger.info("visible live badge card candidates scanned", {
+      total: nodes.length,
+      selected: candidates.length,
+      samples: summarizeLiveBadgeCandidates(candidates, 6)
+    });
+    return candidates;
+  }
+
+  function summarizeLiveBadgeCandidates(candidates, limit) {
+    var samples = [];
+    var max = Math.min(candidates.length, limit || 6);
+    for (var i = 0; i < max; i++) {
+      var candidate = candidates[i];
+      samples.push({
+        type: candidate.type,
+        liveText: candidate.liveText,
+        contextText: candidate.contextText.slice(0, 100),
+        targetHit: candidate.targetHit,
+        bounds: formatPlainRect(candidate.bounds),
+        badgeBounds: formatPlainRect(candidate.badgeBounds)
+      });
+    }
+    return samples;
+  }
+
+  function isReliableTargetUserBlock(block) {
+    if (!block || !block.bounds) {
+      return false;
+    }
+    var screen = autojsUtils.getScreenSize();
+    var centerY = block.bounds.centerY();
+    var contextText = String(block.contextText || block.targetText || "");
+    if (centerY < screen.height * 0.15 || centerY > screen.height * 0.58) {
+      return false;
+    }
+    if (/粉丝|抖音号|关注|用户/.test(contextText)) {
+      return true;
+    }
+    return !!block.liveHit && centerY > screen.height * 0.20;
+  }
+
+  function collectLiveCardCandidateText(candidate, badgeNode, targetBlock) {
+    var texts = [];
+    appendCandidateText(texts, candidate.liveText);
+    appendCandidateText(texts, collectNodeContextText(badgeNode, 4));
+    appendCandidateText(texts, collectVisibleTextNearRect(candidate.bounds));
+    if (targetBlock && candidate.type === "user_large_live_card") {
+      appendCandidateText(texts, targetBlock.targetText);
+      appendCandidateText(texts, targetBlock.contextText);
+    }
+    return uniqueTextLines(texts).join("\n");
+  }
+
+  function collectVisibleTextNearRect(rect) {
+    if (!rect) {
+      return "";
+    }
+    var screen = autojsUtils.getScreenSize();
+    var scanRect = {
+      left: Math.max(0, rect.left - Math.floor(screen.width * 0.03)),
+      top: Math.max(0, rect.top - Math.floor(screen.height * 0.02)),
+      right: Math.min(screen.width, rect.right + Math.floor(screen.width * 0.03)),
+      bottom: Math.min(screen.height, rect.bottom + Math.floor(screen.height * 0.18))
+    };
+    var texts = [];
+    var nodes = [];
+    pushFoundNodes(nodes, className("android.widget.TextView"));
+    pushFoundNodes(nodes, descMatches(".+"));
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var bounds = node && node.bounds && node.bounds();
+      if (!bounds) {
+        continue;
+      }
+      var centerX = bounds.centerX();
+      var centerY = bounds.centerY();
+      if (centerX < scanRect.left || centerX > scanRect.right || centerY < scanRect.top || centerY > scanRect.bottom) {
+        continue;
+      }
+      appendCandidateText(texts, getNodeOwnText(node));
+    }
+    return uniqueTextLines(texts).join("\n");
+  }
+
+  function appendCandidateText(texts, value) {
+    value = String(value || "").replace(/\s+/g, " ").trim();
+    if (value) {
+      texts.push(value);
+    }
+  }
+
+  function clickLiveBadgeCardCandidate(candidate, keyword, targetKeywords, attempt) {
+    var points = candidate.clickPoints || [];
+    for (var i = 0; i < points.length; i++) {
+      var point = points[i];
+      logger.info("click target live badge card", {
+        keyword: keyword,
+        attempt: attempt,
+        candidateType: candidate.type,
+        point: point.name,
+        x: point.x,
+        y: point.y,
+        bounds: formatPlainRect(candidate.bounds),
+        badgeBounds: formatPlainRect(candidate.badgeBounds)
+      });
+      rememberPendingTargetLiveEntry(keyword, targetKeywords, {
+        text: candidate.liveText,
+        contextText: candidate.contextText,
+        bounds: candidate.bounds
+      }, "live_badge_card_" + point.name);
+      autojsUtils.clickPoint(point.x, point.y, logger, "target_live_badge_card_" + point.name);
+      autojsUtils.sleepRandom(2600, 4200);
+      var afterText = extractVisibleText();
+      if (isEndedTargetLiveRoomText(afterText, targetKeywords)) {
+        logger.warn("target live badge card opened ended live room, back and continue search", {
+          keyword: keyword,
+          attempt: attempt,
+          candidateType: candidate.type,
+          point: point.name,
+          textSample: afterText.slice(0, 180)
+        });
+        setTargetLiveSearchResult("target_user_not_live", {
+          keyword: keyword,
+          targetKeywords: targetKeywords,
+          attempt: attempt,
+          candidateType: candidate.type,
+          point: point.name,
+          textSample: afterText.slice(0, 180)
+        });
+        if (!isSearchResultPage(afterText)) {
+          back();
+          autojsUtils.sleepRandom(900, 1400);
+        }
+        continue;
+      }
+      if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "live_badge_card_" + point.name)) {
+        logger.info("entered target live room from visible live badge card", {
+          keyword: keyword,
+          attempt: attempt,
+          candidateType: candidate.type,
+          point: point.name
+        });
+        return true;
+      }
+      if (!isSearchResultPage(afterText) && containsLiveEntryText(afterText) && containsAnyTargetKeyword(afterText, targetKeywords)) {
+        logger.info("target page opened from live badge card, try visible live entry", {
+          keyword: keyword,
+          attempt: attempt,
+          candidateType: candidate.type,
+          point: point.name,
+          textSample: afterText.slice(0, 180)
+        });
+        if (openLiveRoomFromCurrentScreen(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry")) {
+          return true;
+        }
+      }
+      if (!isSearchResultPage(afterText)) {
+        back();
+        autojsUtils.sleepRandom(900, 1400);
+      }
+    }
+    return false;
+  }
+
+  function formatPlainRect(rect) {
+    if (!rect) {
+      return "";
+    }
+    if (rect.left !== undefined && rect.top !== undefined && rect.right !== undefined && rect.bottom !== undefined) {
+      return "[" + rect.left + "," + rect.top + "][" + rect.right + "," + rect.bottom + "]";
+    }
+    return autojsUtils.formatBounds(rect);
   }
 
   function clickVisibleTargetLiveCardFromSearch(keyword, targetKeywords, attempt) {
@@ -1959,7 +2333,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         return true;
       }
     }
-    if ((source === "node_click" || source === "current_screen_live_entry" || /^search_live_card_/.test(String(source || "")) || /^target_/.test(String(source || ""))) &&
+    if ((source === "node_click" || source === "current_screen_live_entry" || /^search_live_card_/.test(String(source || "")) || /^target_/.test(String(source || "")) || /^live_badge_card_/.test(String(source || ""))) &&
       !searchState.isResult &&
       /说点什么|欢迎来到直播间|小黄车|粉丝团|礼物|连麦|本场点赞|直播广场/.test(visibleText) &&
       isPendingTargetLiveEntryValid(keyword, targetKeywords, source)) {
@@ -2010,7 +2384,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       return false;
     }
     var sourceValue = String(source || "");
-    if (sourceValue && pendingTargetLiveEntry.source && sourceValue !== pendingTargetLiveEntry.source && sourceValue.indexOf("search_live_card_") !== 0) {
+    if (sourceValue && pendingTargetLiveEntry.source && sourceValue !== pendingTargetLiveEntry.source && sourceValue.indexOf("search_live_card_") !== 0 && sourceValue.indexOf("live_badge_card_") !== 0) {
       return false;
     }
     var combined = [
@@ -2756,12 +3130,31 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     enterVideoFeed();
   }
 
+  function exitAppToHome(reason) {
+    logger.info("任务收尾：退出抖音回到手机桌面", {
+      reason: reason || "",
+      activity: safeCurrentActivity()
+    });
+    try {
+      home();
+      autojsUtils.sleepRandom(800, 1200);
+      return true;
+    } catch (error) {
+      logger.warn("任务收尾：退出抖音失败", {
+        reason: reason || "",
+        message: String(error)
+      });
+      return false;
+    }
+  }
+
   return {
     isForeground: isForeground,
     openApp: openApp,
     openSearch: openSearch,
     openLiveSearch: openLiveSearch,
     openTargetLiveRoomFromSearch: openTargetLiveRoomFromSearch,
+    getLastTargetLiveSearchResult: getLastTargetLiveSearchResult,
     openFirstVideoFromSearch: openFirstVideoFromSearch,
     enterVideoFeed: enterVideoFeed,
     ensurePlayableFeed: ensurePlayableFeed,
@@ -2781,7 +3174,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     nextVideo: nextVideo,
     recover: recover,
     restartSearchContext: restartSearchContext,
-    restartToFeed: restartToFeed
+    restartToFeed: restartToFeed,
+    exitAppToHome: exitAppToHome
   };
 }
 

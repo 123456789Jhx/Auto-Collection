@@ -68,6 +68,7 @@ function createCollectorApp(context) {
     var liveKeyword = pickLiveCommentSearchKeyword();
     var targetRoom = getLiveCommentTargetRoom();
     if (douyin.openTargetLiveRoomFromSearch({ keyword: liveKeyword, targetRoom: targetRoom })) {
+      var successSearchResult = douyin.getLastTargetLiveSearchResult ? douyin.getLastTargetLiveSearchResult() : {};
       counters.lastSearchKeyword = liveKeyword;
       context.liveCommentTargetRoomRefreshRequested = false;
       context.targetLiveRoomEntry = {
@@ -80,26 +81,35 @@ function createCollectorApp(context) {
       logger.info("live comment: entered target live room from search", {
         reason: reason || "",
         keyword: liveKeyword,
-        anchorName: targetRoom.anchorName || ""
+        anchorName: targetRoom.anchorName || "",
+        searchResult: successSearchResult
       });
       controlLoop.reportRuntimeLog("INFO", "live comment: entered target live room from search", {
         phase: "live_comment_target_search",
         reason: reason || "",
         keyword: liveKeyword,
-        anchorName: targetRoom.anchorName || ""
+        anchorName: targetRoom.anchorName || "",
+        searchResult: successSearchResult
       });
       return true;
     }
+    var searchResult = douyin.getLastTargetLiveSearchResult ? douyin.getLastTargetLiveSearchResult() : {};
+    var failureReason = searchResult.reason || "target_live_room_search_failed";
+    counters.lastStopReason = failureReason;
     logger.warn("live comment: target live room search failed", {
       reason: reason || "",
+      failureReason: failureReason,
       keyword: liveKeyword,
-      anchorName: targetRoom.anchorName || ""
+      anchorName: targetRoom.anchorName || "",
+      searchResult: searchResult
     });
     controlLoop.reportRuntimeLog("WARN", "live comment: target live room search failed", {
       phase: "live_comment_target_search",
       reason: reason || "",
+      failureReason: failureReason,
       keyword: liveKeyword,
-      anchorName: targetRoom.anchorName || ""
+      anchorName: targetRoom.anchorName || "",
+      searchResult: searchResult
     });
     return false;
   }
@@ -377,9 +387,13 @@ function createCollectorApp(context) {
 
   function enterFlow(requestedTaskType) {
     var flowStartedAt = Date.now();
+    var normalizedTaskType = taskScheduler ?
+      taskScheduler.resolveTaskType(requestedTaskType) :
+      requestedTaskType;
     var isLiveCommentTask = taskScheduler ?
       taskScheduler.resolveTaskType(requestedTaskType) === "live_comment" :
       requestedTaskType === "live_comment";
+    var isLiveTask = normalizedTaskType === "live";
     floatyControl.update({ lastMessage: "打开抖音" });
     logger.info("启动流程：打开抖音", { elapsedMs: Date.now() - flowStartedAt });
     if (!douyin.openApp()) {
@@ -415,6 +429,36 @@ function createCollectorApp(context) {
         });
         return true;
       }
+    }
+
+    if (isLiveTask) {
+      counters.lastStopReason = "";
+      floatyControl.update({ lastMessage: "进入直播入口" });
+      logger.info("启动流程：直播任务进入直播入口，不走搜索首个视频", {
+        elapsedMs: Date.now() - flowStartedAt,
+        taskType: normalizedTaskType,
+        mode: config.task.mode || ""
+      });
+      controlLoop.reportRuntimeLog("INFO", "直播任务进入直播入口，不走搜索首个视频", {
+        phase: "launch_route",
+        taskType: normalizedTaskType,
+        route: "live_feed",
+        mode: config.task.mode || "",
+        elapsedMs: Date.now() - flowStartedAt
+      });
+      if (!douyin.enterLiveFeed(pickRandomKeyword())) {
+        counters.lastStopReason = "live_feed_entry_failed";
+        controlLoop.reportRuntimeLog("WARN", "直播入口进入失败", {
+          phase: "launch_route",
+          taskType: normalizedTaskType,
+          stopReason: counters.lastStopReason
+        });
+        return false;
+      }
+      if (shouldAbortFlow()) {
+        return false;
+      }
+      return true;
     }
 
     if (config.task.mode === "search") {
@@ -464,6 +508,7 @@ function createCollectorApp(context) {
 
     var threshold = Math.max(1, Number(config.runtime.launchFailurePauseThreshold || 3));
     var tooManyFailures = context.launchFailureState.consecutiveCount >= threshold;
+    var failureReason = reason || "enter_flow_failed";
     var stopReason = tooManyFailures ? "launch_failed_too_many_times" : "launch_flow_aborted";
     var message = tooManyFailures ? "连续启动失败，已暂停待命" : "启动失败，已回到待命";
     var normalizedTaskType = taskScheduler ? taskScheduler.resolveTaskType(requestedTaskType) : requestedTaskType;
@@ -491,6 +536,7 @@ function createCollectorApp(context) {
     logger.warn(message, {
       taskType: requestedTaskType || "",
       stopReason: stopReason,
+      failureReason: failureReason,
       failureCount: context.launchFailureState.consecutiveCount,
       threshold: threshold
     });
@@ -498,6 +544,7 @@ function createCollectorApp(context) {
       phase: "launch",
       taskType: requestedTaskType || "",
       stopReason: stopReason,
+      failureReason: failureReason,
       failureCount: context.launchFailureState.consecutiveCount,
       threshold: threshold
     });
@@ -693,10 +740,12 @@ function createCollectorApp(context) {
         stopRequested: floatyControl.state.stopRequested,
         exitRequested: floatyControl.state.exitRequested
       });
-      handleLaunchFlowAborted(requestedTaskType, "enter_flow_failed");
+      var launchFailureReason = counters.lastStopReason || "enter_flow_failed";
+      handleLaunchFlowAborted(requestedTaskType, launchFailureReason);
       persistCheckpoint({
         taskType: requestedTaskType,
         stopReason: counters.lastStopReason,
+        launchFailureReason: launchFailureReason,
         checkpointType: "launch_flow_aborted"
       });
       markTaskFinished(taskScheduler ? taskScheduler.getActiveTaskType() : "", {
@@ -757,6 +806,14 @@ function createCollectorApp(context) {
     });
     logger.info("农业视频手机采集脚本结束", counters);
     controlLoop.reportRuntimeLog("INFO", "农业视频手机采集脚本结束", counters);
+    if (douyin.exitAppToHome) {
+      var exitResult = douyin.exitAppToHome("task_finished");
+      controlLoop.reportRuntimeLog(exitResult ? "INFO" : "WARN", "任务结束后退出抖音", {
+        phase: "task_finish",
+        taskType: finishedTaskType || "",
+        exitResult: !!exitResult
+      });
+    }
     persistCheckpoint({
       taskType: finishedTaskType || counters.currentPhase || "video",
       checkpointType: "task_finished"
