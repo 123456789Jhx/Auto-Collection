@@ -20,6 +20,13 @@ function assertPointInside(point, bounds) {
 const screen = { width: 450, height: 900 };
 
 {
+  assert.strictEqual(
+    geometry.isSearchLiveBadgeText("\u76f4\u64ad\u4e2d", rect(300, 300, 360, 330), screen),
+    true
+  );
+}
+
+{
   const candidate = geometry.buildLiveCardCandidateFromBadge(
     screen,
     rect(142, 236, 188, 268),
@@ -67,6 +74,33 @@ const screen = { width: 450, height: 900 };
     geometry.matchesTargetKeywords("古堡探秘\n直播中", ["爱番茄的蛋"]),
     false
   );
+}
+
+{
+  assert.strictEqual(typeof geometry.buildSearchResultLiveFallbackClickPoints, "function");
+  const points = geometry.buildSearchResultLiveFallbackClickPoints(screen);
+  const lowerRightBadge = points.find((point) => point.name === "visible_lower_right_live_badge");
+  const lowerRightCard = points.find((point) => point.name === "visible_lower_right_card_center");
+
+  assert(lowerRightBadge, "fallback should cover lower-right visible live badge");
+  assert(lowerRightCard, "fallback should cover lower-right visible live card body");
+  assert(lowerRightBadge.x >= screen.width * 0.78, "lower-right badge point should stay near the right column");
+  assert(lowerRightBadge.y >= screen.height * 0.80, "lower-right badge point should cover lower visible cards");
+  assert(lowerRightBadge.y <= screen.height * 0.92, "lower-right badge point should stay above the nav bar");
+  assert(lowerRightCard.x >= screen.width * 0.62, "lower-right card point should stay in the right card");
+  assert(lowerRightCard.y >= screen.height * 0.74, "lower-right card point should cover the exposed lower card");
+}
+
+{
+  assert.strictEqual(typeof geometry.buildSearchResultLiveOcrRegions, "function");
+  const regions = geometry.buildSearchResultLiveOcrRegions(screen);
+
+  assert(regions.lowerRightLiveBadge, "ocr regions should include lower-right live badge");
+  assert(regions.lowerRightLiveCard, "ocr regions should include lower-right live card");
+  assert(regions.lowerRightLiveBadge.x >= screen.width * 0.66, "lower-right badge OCR region should scan the right column");
+  assert(regions.lowerRightLiveBadge.y >= screen.height * 0.74, "lower-right badge OCR region should scan lower visible cards");
+  assert(regions.lowerRightLiveBadge.w > 40, "lower-right badge OCR region should be wide enough for live text");
+  assert(regions.lowerRightLiveBadge.h > 20, "lower-right badge OCR region should be tall enough for live text");
 }
 
 console.log("live-card-geometry tests passed");

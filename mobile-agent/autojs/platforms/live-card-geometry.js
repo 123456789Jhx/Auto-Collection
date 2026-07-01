@@ -43,6 +43,15 @@ function rectFromValues(left, top, right, bottom, screen) {
 function isSearchLiveBadgeText(textValue, bounds, screen) {
   textValue = String(textValue || "").replace(/\s+/g, "");
   var rect = normalizeRect(bounds);
+  if (/(\u76f4\u64ad\u4e2d|\u6b63\u5728\s*\u76f4\u64ad|\u5f00\u64ad\u4e2d|LIVE)/i.test(textValue) && rect && screen) {
+    if (rect.centerY < screen.height * 0.12 || rect.centerY > screen.height * 0.82) {
+      return false;
+    }
+    if (rect.width > screen.width * 0.42 || rect.height > screen.height * 0.12) {
+      return false;
+    }
+    return true;
+  }
   if (!rect || !screen) {
     return false;
   }
@@ -105,6 +114,62 @@ function buildClickPoints(bounds, badge) {
   return points;
 }
 
+function buildSearchResultLiveFallbackClickPoints(screen) {
+  screen = screen || {};
+  var width = numberValue(screen.width, 0);
+  var height = numberValue(screen.height, 0);
+  var minY = Math.floor(height * 0.16);
+  var maxY = height - Math.floor(height * 0.08);
+
+  function point(name, xRatio, yRatio) {
+    return {
+      name: name,
+      x: clamp(Math.floor(width * xRatio), 8, Math.max(8, width - 8)),
+      y: clamp(Math.floor(height * yRatio), minY, Math.max(minY, maxY))
+    };
+  }
+
+  return [
+    point("visible_user_avatar_live_badge", 0.13, 0.26),
+    point("visible_user_name_row", 0.36, 0.25),
+    point("visible_live_card_badge", 0.60, 0.36),
+    point("visible_live_card_center", 0.36, 0.50),
+    point("visible_live_card_upper", 0.36, 0.42),
+    point("visible_lower_right_live_badge", 0.88, 0.86),
+    point("visible_lower_right_card_center", 0.73, 0.82),
+    point("visible_lower_right_card_upper", 0.73, 0.76),
+    point("visible_lower_left_live_badge", 0.42, 0.86),
+    point("visible_lower_left_card_center", 0.28, 0.82)
+  ];
+}
+
+function buildSearchResultLiveOcrRegions(screen) {
+  screen = screen || {};
+  var width = numberValue(screen.width, 0);
+  var height = numberValue(screen.height, 0);
+
+  function region(xRatio, yRatio, wRatio, hRatio) {
+    var x = clamp(Math.floor(width * xRatio), 0, Math.max(0, width - 1));
+    var y = clamp(Math.floor(height * yRatio), 0, Math.max(0, height - 1));
+    var right = clamp(Math.floor(width * (xRatio + wRatio)), x + 1, width);
+    var bottom = clamp(Math.floor(height * (yRatio + hRatio)), y + 1, height);
+    return {
+      x: x,
+      y: y,
+      w: Math.max(1, right - x),
+      h: Math.max(1, bottom - y)
+    };
+  }
+
+  return {
+    upperLiveCard: region(0.02, 0.30, 0.96, 0.28),
+    lowerLeftLiveBadge: region(0.20, 0.74, 0.30, 0.18),
+    lowerLeftLiveCard: region(0.02, 0.68, 0.46, 0.26),
+    lowerRightLiveBadge: region(0.68, 0.74, 0.30, 0.18),
+    lowerRightLiveCard: region(0.52, 0.68, 0.46, 0.26)
+  };
+}
+
 function buildLiveCardCandidateFromBadge(screen, badgeBounds, options) {
   options = options || {};
   var badge = normalizeRect(badgeBounds);
@@ -143,5 +208,7 @@ module.exports = {
   normalizeRect: normalizeRect,
   isSearchLiveBadgeText: isSearchLiveBadgeText,
   buildLiveCardCandidateFromBadge: buildLiveCardCandidateFromBadge,
+  buildSearchResultLiveFallbackClickPoints: buildSearchResultLiveFallbackClickPoints,
+  buildSearchResultLiveOcrRegions: buildSearchResultLiveOcrRegions,
   matchesTargetKeywords: matchesTargetKeywords
 };

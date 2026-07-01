@@ -1131,6 +1131,16 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         return true;
       }
 
+      if (clickVisibleTargetLiveCardByOcrFallback(keyword, targetKeywords, attempt)) {
+        setTargetLiveSearchResult("room_verified", {
+          keyword: keyword,
+          targetKeywords: targetKeywords,
+          attempt: attempt,
+          source: "ocr_coordinate_fallback"
+        });
+        return true;
+      }
+
       var entry = findTargetLiveSearchEntry(targetKeywords);
       if (entry && clickTargetLiveSearchEntry(entry, keyword, targetKeywords, attempt)) {
         setTargetLiveSearchResult("room_verified", {
@@ -1958,17 +1968,11 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       contextText: visibleText,
       bounds: null
     };
-    var points = [
-      { name: "visible_user_avatar_live_badge", x: screen.width * 0.13, y: screen.height * 0.26 },
-      { name: "visible_user_name_row", x: screen.width * 0.36, y: screen.height * 0.25 },
-      { name: "visible_live_card_badge", x: screen.width * 0.60, y: screen.height * 0.36 },
-      { name: "visible_live_card_center", x: screen.width * 0.36, y: screen.height * 0.50 },
-      { name: "visible_live_card_upper", x: screen.width * 0.36, y: screen.height * 0.42 }
-    ];
+    var points = liveCardGeometry.buildSearchResultLiveFallbackClickPoints(screen);
 
     for (var i = 0; i < points.length; i++) {
-      var x = Math.floor(points[i].x);
-      var y = Math.floor(points[i].y);
+      var x = points[i].x;
+      var y = points[i].y;
       rememberPendingTargetLiveEntry(keyword, targetKeywords, entry, points[i].name);
       autojsUtils.clickPoint(x, y, logger, "target_live_text_fallback_" + points[i].name);
       autojsUtils.sleepRandom(2600, 4200);
@@ -2011,6 +2015,153 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       }
     }
     return false;
+  }
+
+  function clickVisibleTargetLiveCardByOcrFallback(keyword, targetKeywords, attempt) {
+    var visibleText = extractVisibleText();
+    var searchState = screenRecognizer.detectSearchPageState(visibleText, recognitionOptions());
+    var targetVisible = containsAnyTargetKeyword(visibleText, targetKeywords);
+    if (!searchState.isResult || !targetVisible) {
+      return false;
+    }
+
+    var screen = autojsUtils.getScreenSize();
+    var regions = liveCardGeometry.buildSearchResultLiveOcrRegions(screen);
+    var snapshot = null;
+    try {
+      snapshot = screenRecognizer.extractScreen(regions, recognitionOptions());
+    } catch (error) {
+      logger.warn("target live OCR fallback failed to capture regions", {
+        keyword: keyword,
+        attempt: attempt,
+        message: String(error)
+      });
+      return false;
+    }
+
+    var regionHits = buildLiveOcrRegionHits(snapshot && snapshot.ocrRegions || {});
+    if (!regionHits.length) {
+      setTargetLiveSearchResult("target_live_ocr_badge_not_found", {
+        keyword: keyword,
+        targetKeywords: targetKeywords,
+        attempt: attempt,
+        searchState: searchState,
+        textSample: visibleText.slice(0, 220),
+        ocrSample: String(snapshot && snapshot.ocrText || "").slice(0, 220)
+      });
+      return false;
+    }
+
+    logger.warn("target live card visible by OCR, use search result coordinate fallback", {
+      keyword: keyword,
+      attempt: attempt,
+      regionHits: regionHits,
+      textSample: visibleText.slice(0, 180)
+    });
+
+    var entry = {
+      text: keyword || "",
+      contextText: [visibleText, snapshot && snapshot.ocrText || ""].join("\n"),
+      bounds: null
+    };
+    var points = liveCardGeometry.buildSearchResultLiveFallbackClickPoints(screen);
+    var filteredPoints = filterOcrFallbackClickPoints(points, regionHits);
+    for (var i = 0; i < filteredPoints.length; i++) {
+      var point = filteredPoints[i];
+      rememberPendingTargetLiveEntry(keyword, targetKeywords, entry, "ocr_" + point.name);
+      autojsUtils.clickPoint(point.x, point.y, logger, "target_live_ocr_fallback_" + point.name);
+      autojsUtils.sleepRandom(2600, 4200);
+      var afterText = extractVisibleText();
+      if (isEndedTargetLiveRoomText(afterText, targetKeywords)) {
+        logger.warn("target live OCR fallback opened ended live room, back and continue search", {
+          keyword: keyword,
+          attempt: attempt,
+          point: point.name,
+          textSample: afterText.slice(0, 180)
+        });
+        if (!isSearchResultPage(afterText)) {
+          back();
+          autojsUtils.sleepRandom(900, 1400);
+        }
+        continue;
+      }
+      if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "ocr_" + point.name)) {
+        logger.info("entered target live room from OCR coordinate fallback", {
+          keyword: keyword,
+          attempt: attempt,
+          point: point.name
+        });
+        return true;
+      }
+      if (!isSearchResultPage(afterText) && containsLiveEntryText(afterText) && containsAnyTargetKeyword(afterText, targetKeywords)) {
+        logger.info("target page opened from OCR coordinate fallback, try visible live entry", {
+          keyword: keyword,
+          attempt: attempt,
+          point: point.name,
+          textSample: afterText.slice(0, 180)
+        });
+        if (openLiveRoomFromCurrentScreen(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry")) {
+          return true;
+        }
+      }
+      if (!isSearchResultPage(afterText)) {
+        back();
+        autojsUtils.sleepRandom(900, 1400);
+      }
+    }
+    return false;
+  }
+
+  function buildLiveOcrRegionHits(ocrRegions) {
+    var hits = [];
+    var keys = [
+      "lowerRightLiveBadge",
+      "lowerRightLiveCard",
+      "lowerLeftLiveBadge",
+      "lowerLeftLiveCard",
+      "upperLiveCard"
+    ];
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      var textValue = String(ocrRegions && ocrRegions[key] || "");
+      if (containsLiveEntryText(textValue)) {
+        hits.push({
+          region: key,
+          textSample: textValue.replace(/\s+/g, " ").slice(0, 80)
+        });
+      }
+    }
+    return hits;
+  }
+
+  function filterOcrFallbackClickPoints(points, regionHits) {
+    var right = false;
+    var left = false;
+    var upper = false;
+    for (var i = 0; i < regionHits.length; i++) {
+      var region = String(regionHits[i].region || "");
+      if (region.indexOf("lowerRight") === 0) {
+        right = true;
+      } else if (region.indexOf("lowerLeft") === 0) {
+        left = true;
+      } else if (region.indexOf("upper") === 0) {
+        upper = true;
+      }
+    }
+    var result = [];
+    for (var j = 0; j < points.length; j++) {
+      var point = points[j];
+      var name = String(point.name || "");
+      if ((right && name.indexOf("visible_lower_right") === 0) ||
+        (left && name.indexOf("visible_lower_left") === 0) ||
+        (upper && name.indexOf("visible_lower_") !== 0)) {
+        result.push(point);
+      }
+    }
+    if (!result.length) {
+      return points;
+    }
+    return result;
   }
 
   function buildTargetRoomKeywords(targetRoom, fallbackKeyword) {
@@ -2333,7 +2484,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         return true;
       }
     }
-    if ((source === "node_click" || source === "current_screen_live_entry" || /^search_live_card_/.test(String(source || "")) || /^target_/.test(String(source || "")) || /^live_badge_card_/.test(String(source || ""))) &&
+    if ((source === "node_click" || source === "current_screen_live_entry" || /^search_live_card_/.test(String(source || "")) || /^target_/.test(String(source || "")) || /^live_badge_card_/.test(String(source || "")) || /^ocr_/.test(String(source || ""))) &&
       !searchState.isResult &&
       /说点什么|欢迎来到直播间|小黄车|粉丝团|礼物|连麦|本场点赞|直播广场/.test(visibleText) &&
       isPendingTargetLiveEntryValid(keyword, targetKeywords, source)) {
@@ -2384,7 +2535,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       return false;
     }
     var sourceValue = String(source || "");
-    if (sourceValue && pendingTargetLiveEntry.source && sourceValue !== pendingTargetLiveEntry.source && sourceValue.indexOf("search_live_card_") !== 0 && sourceValue.indexOf("live_badge_card_") !== 0) {
+    if (sourceValue && pendingTargetLiveEntry.source && sourceValue !== pendingTargetLiveEntry.source && sourceValue.indexOf("search_live_card_") !== 0 && sourceValue.indexOf("live_badge_card_") !== 0 && sourceValue.indexOf("ocr_") !== 0) {
       return false;
     }
     var combined = [
