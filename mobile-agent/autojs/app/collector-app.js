@@ -10,6 +10,7 @@ function createCollectorApp(context) {
   var heartbeatService = context.heartbeatService;
   var taskScheduler = context.taskScheduler;
   var phaseRunner = context.phaseRunner;
+  var liveCommentRunner = context.liveCommentRunner;
 
   function randomMinutes(min, max) {
     var low = Math.max(1, Number(min || 1));
@@ -405,11 +406,16 @@ function createCollectorApp(context) {
     logger.info("启动流程：抖音已打开", { elapsedMs: Date.now() - flowStartedAt });
 
     if (isLiveCommentTask || isLiveCommentPriorityRequested()) {
-      logger.info("live comment control requested: force target room search flow");
-      if (tryEnterTargetLiveRoomFromSearch(config.task.liveCommentDirectTest === true ? "direct_test" : "control_start")) {
-        return true;
-      }
-      return false;
+      logger.info("live comment control requested: defer target room search to independent runner", {
+        elapsedMs: Date.now() - flowStartedAt
+      });
+      controlLoop.reportRuntimeLog("INFO", "直播评论启动流程只打开抖音，目标进房交给独立 runner", {
+        phase: "launch_route",
+        taskType: "live_comment",
+        route: "live_comment_runner",
+        elapsedMs: Date.now() - flowStartedAt
+      });
+      return true;
     }
 
     if (isLiveCommentTask && config.task.liveCommentDirectTest === true) {
@@ -651,20 +657,43 @@ function createCollectorApp(context) {
     counters.plannedLiveMinutes = counters.plannedLiveMinutes || todayLiveMinutes || randomMinutes(config.schedule.liveMinutesMin, config.schedule.liveMinutesMax);
     counters.liveElapsedMinutes = counters.liveElapsedMinutes || 0;
     counters.liveRemainingMinutes = Math.max(1, counters.liveRemainingMinutes || counters.plannedLiveMinutes - counters.liveElapsedMinutes || counters.plannedLiveMinutes);
-    logger.info("直播评论任务按调度器独立执行", {
+    logger.info("直播评论任务进入独立执行链路", {
       liveRemainingMinutes: counters.liveRemainingMinutes
     });
-    controlLoop.reportRuntimeLog("INFO", "直播评论任务按调度器独立执行", {
+    controlLoop.reportRuntimeLog("INFO", "直播评论任务进入独立执行链路", {
       phase: "live_comment_task_start",
       liveRemainingMinutes: counters.liveRemainingMinutes
     });
-    phaseRunner.runPhase("live", counters.liveRemainingMinutes, {
-      taskType: "live_comment"
+    if (!liveCommentRunner || !liveCommentRunner.runTargetLiveCommentTask) {
+      counters.lastStopReason = "live_comment_runner_missing";
+      logger.error("直播评论独立 runner 缺失，停止任务");
+      controlLoop.reportRuntimeLog("ERROR", "直播评论独立 runner 缺失，停止任务", {
+        phase: "live_comment_task_start",
+        stopReason: counters.lastStopReason
+      });
+      return {
+        success: false,
+        reason: counters.lastStopReason
+      };
+    }
+    var result = liveCommentRunner.runTargetLiveCommentTask({
+      targetRoom: getLiveCommentTargetRoom(),
+      keyword: pickLiveCommentSearchKeyword(),
+      durationMinutes: counters.liveRemainingMinutes
+    });
+    context.liveCommentPriorityRequested = false;
+    context.liveCommentTargetRoomRefreshRequested = false;
+    floatyControl.update({
+      liveCommentControlStatus: "stopped",
+      liveCommentExecutionEnabled: false
     });
     persistCheckpoint({
       taskType: "live_comment",
-      checkpointType: "live_comment_phase_end"
+      checkpointType: result && result.success ? "live_comment_task_end" : "live_comment_task_failed",
+      stopReason: counters.lastStopReason,
+      result: result || null
     });
+    return result;
   }
 
   function runLiveTask(todayLiveMinutes) {
@@ -768,8 +797,12 @@ function createCollectorApp(context) {
       var todayVideoMinutes = randomMinutes(config.schedule.videoMinutesMin, config.schedule.videoMinutesMax);
       var todayLiveMinutes = randomMinutes(config.schedule.liveMinutesMin, config.schedule.liveMinutesMax);
       if (requestedTaskType === "live_comment") {
-        runLiveCommentTask(todayLiveMinutes);
-        finishTask();
+        var liveCommentResult = runLiveCommentTask(todayLiveMinutes);
+        finishTask({
+          status: liveCommentResult && liveCommentResult.success ? "completed" : "failed",
+          reason: (liveCommentResult && liveCommentResult.reason) || counters.lastStopReason || "live_comment_finished",
+          commandType: liveCommentResult && liveCommentResult.success ? "FINISH" : "FAILED"
+        });
         return;
       }
       if (requestedTaskType === "live") {
@@ -798,8 +831,12 @@ function createCollectorApp(context) {
     });
   }
 
-  function finishTask() {
+  function finishTask(meta) {
+    meta = meta || {};
     var finishedTaskType = taskScheduler ? taskScheduler.getActiveTaskType() : "";
+    var finishReason = meta.reason || "task_finished";
+    var finishStatus = meta.status || "completed";
+    var finishCommandType = meta.commandType || "FINISH";
     counters.currentPhase = "";
     counters.phaseStartedAt = "";
     counters.phaseEndedAt = "";
@@ -808,8 +845,8 @@ function createCollectorApp(context) {
       paused: true,
       stopRequested: !!floatyControl.state.exitRequested,
       manualOverride: true,
-      lastManualAction: "task_finished",
-      lastMessage: "任务结束，待命中"
+      lastManualAction: finishReason,
+      lastMessage: finishStatus === "failed" ? "任务失败，待命中：" + finishReason : "任务结束，待命中"
     });
     logger.info("农业视频手机采集脚本结束", counters);
     controlLoop.reportRuntimeLog("INFO", "农业视频手机采集脚本结束", counters);
@@ -823,10 +860,13 @@ function createCollectorApp(context) {
     }
     persistCheckpoint({
       taskType: finishedTaskType || counters.currentPhase || "video",
-      checkpointType: "task_finished"
+      checkpointType: finishStatus === "failed" ? "task_failed" : "task_finished",
+      stopReason: finishReason
     });
     markTaskFinished(taskScheduler ? taskScheduler.getActiveTaskType() : "", {
-      reason: "task_finished"
+      reason: finishReason,
+      status: finishStatus,
+      commandType: finishCommandType
     });
     runBackground("脚本结束心跳上报", function () {
       heartbeatService.reportImmediateHeartbeat(counters.currentPhase, "idle", "任务结束，待命中");

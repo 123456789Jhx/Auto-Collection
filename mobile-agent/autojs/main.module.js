@@ -89,6 +89,7 @@ var createCommentActionPlanner = localRequire("domain/comment-action-planner.js"
 var createP3ExtensionActions = localRequire("domain/p3-extension-actions.js").createP3ExtensionActions;
 var riskDetector = localRequire("domain/risk-detector.js");
 var createPhaseRunner = localRequire("app/phase-runner.js").createPhaseRunner;
+var createLiveCommentRunner = localRequire("app/live-comment-runner.js").createLiveCommentRunner;
 var createCollectorApp = localRequire("app/collector-app.js").createCollectorApp;
 
 var logger = createLogger(config);
@@ -184,6 +185,7 @@ context.liveCommentActionPlanner = createCommentActionPlanner(config.task.liveCo
 context.p3ExtensionActions = createP3ExtensionActions(context);
 context.liveRoomSampler = createLiveRoomSampler(context);
 context.phaseRunner = createPhaseRunner(context);
+context.liveCommentRunner = createLiveCommentRunner(context);
 
 var app = createCollectorApp(context);
 app.main();

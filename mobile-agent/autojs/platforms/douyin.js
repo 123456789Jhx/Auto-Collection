@@ -4,6 +4,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
   var createScreenRecognizer = require(files.join(config.runtime.scriptDir, "core/screen-recognizer.js")).createScreenRecognizer;
   var packageName = "com.ss.android.ugc.aweme";
   var activeSearchKeyword = "";
+  var lastSearchFailureReason = "";
   var pendingTargetLiveEntry = null;
   var lastTargetLiveSearchResult = null;
   var screenRecognizer = injectedScreenRecognizer || createScreenRecognizer(config, logger, ocrEngine, { expectedPackage: packageName });
@@ -118,6 +119,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function openSearch(keyword) {
     logger.info("尝试进入抖音搜索", { keyword: keyword });
+    lastSearchFailureReason = "";
     if (!ensureDouyinForeground()) {
       openApp();
       if (!ensureDouyinForeground()) {
@@ -136,7 +138,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       screen: autojsUtils.describeScreenSize(),
       textSample: initialText.slice(0, 180)
     });
-    if (isSearchResultPage(initialText) && initialText.indexOf(keyword) >= 0) {
+    if (previousSearchKeyword === keyword && isSearchResultForKeyword(keyword, initialText)) {
       activeSearchKeyword = keyword || previousSearchKeyword;
       logger.info("搜索流程诊断：已在目标关键词搜索结果页，复用当前结果", {
         keyword: keyword,
@@ -176,6 +178,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
   function completeSearchKeyword(keyword, previousSearchKeyword, source) {
     if (!enterSearchKeyword(keyword, source)) {
       activeSearchKeyword = previousSearchKeyword;
+      lastSearchFailureReason = "search_keyword_set_failed";
       return false;
     }
     if (!isSearchKeywordVisible(keyword)) {
@@ -185,6 +188,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         textSample: extractVisibleText().slice(0, 220)
       });
       activeSearchKeyword = previousSearchKeyword;
+      lastSearchFailureReason = "search_keyword_set_failed";
       return false;
     }
     activeSearchKeyword = keyword || previousSearchKeyword;
@@ -230,6 +234,18 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         textSample: extractVisibleText().slice(0, 220)
       });
       activeSearchKeyword = previousSearchKeyword;
+      lastSearchFailureReason = "target_search_open_failed";
+      return false;
+    }
+    var finalText = extractVisibleText();
+    if (!isSearchResultForKeyword(keyword, finalText)) {
+      logger.warn("搜索提交后结果页关键词不匹配，停止复用旧结果", {
+        keyword: keyword,
+        source: source || "",
+        textSample: finalText.slice(0, 260)
+      });
+      activeSearchKeyword = previousSearchKeyword;
+      lastSearchFailureReason = "search_keyword_mismatch";
       return false;
     }
     return true;
@@ -538,6 +554,16 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     }
     var visibleText = extractVisibleText();
     return !!(visibleText && visibleText.indexOf(keyword) >= 0);
+  }
+
+  function isSearchResultForKeyword(keyword, visibleText) {
+    keyword = String(keyword || "").trim();
+    visibleText = String(visibleText || "");
+    if (!keyword || !visibleText) {
+      return false;
+    }
+    var searchState = detectSearchPageState(visibleText);
+    return !!(searchState.isResult && visibleText.indexOf(keyword) >= 0);
   }
 
   function submitSearchKeyword(keyword) {
@@ -1052,7 +1078,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     });
 
     if (!openLiveSearch(keyword)) {
-      setTargetLiveSearchResult("target_search_open_failed", {
+      setTargetLiveSearchResult(lastSearchFailureReason || "target_search_open_failed", {
         keyword: keyword,
         targetKeywords: targetKeywords
       });
