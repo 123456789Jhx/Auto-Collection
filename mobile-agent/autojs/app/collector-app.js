@@ -616,14 +616,17 @@ function createCollectorApp(context) {
   }
 
   function resolveRequestedTaskType() {
+    if (context.runRequestResolver && context.runRequestResolver.resolveRequestedTaskType) {
+      return context.runRequestResolver.resolveRequestedTaskType();
+    }
+    if (context.liveCommentPriorityRequested || floatyControl.state.liveCommentControlStatus === "running") {
+      return "live_comment";
+    }
     if (taskScheduler) {
       var activeTaskType = taskScheduler.getActiveTaskType();
       if (activeTaskType) {
         return activeTaskType;
       }
-    }
-    if (context.liveCommentPriorityRequested || floatyControl.state.liveCommentControlStatus === "running") {
-      return "live_comment";
     }
     return "video";
   }
@@ -707,7 +710,11 @@ function createCollectorApp(context) {
     logger.info("收到开始指令，进入任务流程");
     controlLoop.reportRuntimeLog("INFO", "收到开始指令，进入任务流程", {
       phase: "task_start",
-      status: "running"
+      status: "running",
+      requestedTaskType: requestedTaskType,
+      pendingTaskTypeSource: context.runRequestResolver && context.runRequestResolver.getLastResolvedSource
+        ? context.runRequestResolver.getLastResolvedSource()
+        : ""
     });
     startTask(requestedTaskType, "START", { reason: "run_one_task" });
     runBackground("脚本启动任务心跳上报", function () {

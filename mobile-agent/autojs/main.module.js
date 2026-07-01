@@ -73,6 +73,7 @@ var createDouyinAdapter = localRequire("platforms/douyin.js").createDouyinAdapte
 var createHeartbeatService = localRequire("app/heartbeat.js").createHeartbeatService;
 var createControlLoop = localRequire("app/control-loop.js").createControlLoop;
 var createTaskScheduler = localRequire("app/task-scheduler.js").createTaskScheduler;
+var createRunRequestResolver = localRequire("app/run-request-resolver.js").createRunRequestResolver;
 var createCandidateService = localRequire("domain/candidate-service.js").createCandidateService;
 var createLiveScorer = localRequire("domain/live-scorer.js").createLiveScorer;
 var createLiveRoomDetector = localRequire("domain/live-room-detector.js").createLiveRoomDetector;
@@ -154,6 +155,7 @@ var context = {
 
 context.heartbeatService = createHeartbeatService(context);
 context.taskScheduler = createTaskScheduler(context);
+context.runRequestResolver = createRunRequestResolver(context);
 context.controlLoop = createControlLoop(context);
 context.candidateService = createCandidateService(context);
 context.liveScorer = createLiveScorer(config);

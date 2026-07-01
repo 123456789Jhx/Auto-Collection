@@ -26,10 +26,38 @@ function createControlLoop(context) {
 
   function commandTaskKey(command) {
     var payload = command && (command.payload || command.payloadJson || {}) || {};
-    if (taskScheduler && taskScheduler.resolveTaskType) {
-      return taskScheduler.resolveTaskType(payload.taskType || "");
+    return normalizeCommandTaskType(payload.taskType, "video");
+  }
+
+  function directNormalizeTaskType(taskType) {
+    var value = String(taskType || "").trim();
+    if (value === "live_comment_control" || value === "liveComment" || value === "live-comment") {
+      value = "live_comment";
     }
-    return String(payload.taskType || "video");
+    if (value === "video_control" || value === "video_feed") {
+      value = "video";
+    }
+    if (value === "live_control" || value === "live_feed") {
+      value = "live";
+    }
+    if (value === "video" || value === "live" || value === "live_comment") {
+      return value;
+    }
+    return "";
+  }
+
+  function normalizeCommandTaskType(taskType, fallbackTaskType) {
+    if (context.runRequestResolver && context.runRequestResolver.normalizeTaskType) {
+      return context.runRequestResolver.normalizeTaskType(taskType, fallbackTaskType);
+    }
+    return directNormalizeTaskType(taskType) || directNormalizeTaskType(fallbackTaskType);
+  }
+
+  function latchRunRequest(taskType, source) {
+    if (context.runRequestResolver && context.runRequestResolver.setPendingTaskType) {
+      return context.runRequestResolver.setPendingTaskType(taskType, source);
+    }
+    return normalizeCommandTaskType(taskType);
   }
 
   function compactControlCommands(commands) {
@@ -164,24 +192,32 @@ function createControlLoop(context) {
   }
 
   function syncTaskSchedulerState(taskType, commandType, meta) {
-    if (!taskScheduler) {
-      return;
+    var fallbackTaskType = (commandType === "START" || commandType === "RESUME") ? "video" : "";
+    var normalizedTaskType = normalizeCommandTaskType(taskType, fallbackTaskType);
+    if (!normalizedTaskType && taskScheduler && taskScheduler.getActiveTaskType) {
+      normalizedTaskType = normalizeCommandTaskType(taskScheduler.getActiveTaskType());
     }
-    var normalizedTaskType = taskScheduler.resolveTaskType(taskType);
     if (!normalizedTaskType) {
-      return;
+      return "";
     }
     if (commandType === "START" || commandType === "RESUME") {
-      taskScheduler.requestTask(normalizedTaskType, commandType, meta);
-      return;
+      latchRunRequest(normalizedTaskType, meta && meta.reason ? meta.reason : "backend_" + String(commandType || "START").toLowerCase());
+      if (taskScheduler) {
+        taskScheduler.requestTask(normalizedTaskType, commandType, meta);
+      }
+      return normalizedTaskType;
+    }
+    if (!taskScheduler) {
+      return normalizedTaskType;
     }
     if (commandType === "PAUSE") {
       taskScheduler.pauseTask(normalizedTaskType, meta);
-      return;
+      return normalizedTaskType;
     }
     if (commandType === "STOP") {
       taskScheduler.stopTask(normalizedTaskType, meta);
     }
+    return normalizedTaskType;
   }
 
   function currentCheckpoint(extra) {
@@ -350,6 +386,10 @@ function createControlLoop(context) {
         return;
       }
       if (commandType === "START" || commandType === "RESUME") {
+        var normalizedStartTaskType = syncTaskSchedulerState(payload.taskType, commandType, {
+          reason: "backend_command",
+          checkpoint: currentCheckpoint({ checkpointType: "backend_start" })
+        });
         floatyControl.update({
           running: true,
           paused: false,
@@ -358,17 +398,14 @@ function createControlLoop(context) {
           lastManualAction: "backend_" + commandType,
           lastMessage: "后台指令恢复运行"
         });
-        syncTaskSchedulerState(payload.taskType, commandType, {
-          reason: "backend_command",
-          checkpoint: currentCheckpoint({ checkpointType: "backend_start" })
-        });
         logCommandApplied(command, "INFO", {
+          taskType: normalizedStartTaskType,
           running: true,
           paused: false,
           stopRequested: false
         });
         heartbeatService.reportImmediateHeartbeat(counters.currentPhase, "running", "后台指令恢复运行");
-        uploader.ackCommand(command.id, "DONE", { applied: true, commandType: commandType });
+        uploader.ackCommand(command.id, "DONE", { applied: true, commandType: commandType, taskType: normalizedStartTaskType });
         return;
       }
       if (commandType === "PAUSE") {
@@ -440,7 +477,7 @@ function createControlLoop(context) {
           context.liveCommentPriorityRequested = true;
           context.liveCommentTargetRoomRefreshRequested = true;
           context.targetLiveRoomEntry = null;
-          syncTaskSchedulerState(payload.taskType, "START", {
+          syncTaskSchedulerState(payload.taskType || "live_comment", "START", {
             reason: "target_room_config_saved",
             checkpoint: currentCheckpoint({ checkpointType: "target_room_refresh" })
           });
@@ -527,7 +564,7 @@ function createControlLoop(context) {
         context.liveCommentPriorityRequested = true;
         context.liveCommentTargetRoomRefreshRequested = true;
         context.targetLiveRoomEntry = null;
-        syncTaskSchedulerState(payload.taskType, "START", {
+        syncTaskSchedulerState(payload.taskType || "live_comment", "START", {
           reason: "target_room_config_saved",
           checkpoint: currentCheckpoint({ checkpointType: "target_room_refresh" })
         });
@@ -554,7 +591,7 @@ function createControlLoop(context) {
     }
     if (commandType === "START" || commandType === "RESUME") {
       context.liveCommentPriorityRequested = true;
-      syncTaskSchedulerState(payload.taskType, commandType, {
+      var normalizedLiveCommentTaskType = syncTaskSchedulerState(payload.taskType, commandType, {
         reason: "backend_live_comment",
         checkpoint: currentCheckpoint({ checkpointType: "backend_live_comment_start" })
       });
@@ -569,7 +606,7 @@ function createControlLoop(context) {
         lastMessage: "直播评论已启动"
       });
       logCommandApplied(command, "INFO", {
-        taskType: payload.taskType,
+        taskType: normalizedLiveCommentTaskType,
         running: true,
         paused: false,
         liveCommentControlStatus: "running",
@@ -581,7 +618,7 @@ function createControlLoop(context) {
         accepted: true,
         completed: false,
         commandType: commandType,
-        taskType: payload.taskType,
+        taskType: normalizedLiveCommentTaskType,
         message: "live comment command accepted; target room execution continues asynchronously"
       });
       return;
