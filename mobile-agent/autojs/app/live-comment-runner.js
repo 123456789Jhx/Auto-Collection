@@ -167,6 +167,19 @@ function createLiveCommentRunner(context) {
     });
   }
 
+  function rememberVerifiedTargetRoom(keyword, targetRoom, searchResult) {
+    context.liveCommentTargetRoomRefreshRequested = false;
+    context.targetLiveRoomEntry = {
+      enteredAt: Date.now(),
+      keyword: keyword,
+      anchorName: targetRoom && targetRoom.anchorName ? String(targetRoom.anchorName) : keyword,
+      titleKeywords: (targetRoom && targetRoom.titleKeywords) || [],
+      roomKeywords: (targetRoom && targetRoom.roomKeywords) || [],
+      source: searchResult && searchResult.source ? searchResult.source : "",
+      reason: searchResult && searchResult.reason ? searchResult.reason : ""
+    };
+  }
+
   function finishSuccess(keyword, searchResult, liveRoomSample) {
     counters.phaseEndedAt = nowIso();
     counters.liveRoomEnteredCount = Math.max(1, Number(counters.liveRoomEnteredCount || 0));
@@ -241,6 +254,7 @@ function createLiveCommentRunner(context) {
     }
 
     var verifiedSearchResult = douyin.getLastTargetLiveSearchResult ? douyin.getLastTargetLiveSearchResult() : {};
+    rememberVerifiedTargetRoom(keyword, targetRoom, verifiedSearchResult);
     report("INFO", "直播评论已进入目标直播间", {
       phase: "target_room_verified",
       taskType: "live_comment",

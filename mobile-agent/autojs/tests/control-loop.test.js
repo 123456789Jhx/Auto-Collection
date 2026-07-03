@@ -181,8 +181,62 @@ function testLiveCommentPauseRequestsInterrupt() {
   assert.strictEqual(heartbeatMessage.indexOf("暂停") >= 0 || heartbeatMessage.indexOf("鏆傚仠") >= 0, true);
 }
 
+function testStopIsNotSupersededByLaterStartInSamePoll() {
+  var acks = [];
+  var context = createContext({
+    uploader: {
+      isRegistered: function () { return true; },
+      pollCommands: function () {
+        return [
+          {
+            id: "cmd-stop",
+            commandType: "STOP",
+            payload: {
+              taskType: "live_comment_control"
+            }
+          },
+          {
+            id: "cmd-start",
+            commandType: "START",
+            payload: {
+              taskType: "live_comment_control"
+            }
+          }
+        ];
+      },
+      uploadRuntimeLog: function () {},
+      ackCommand: function (id, status, result) {
+        acks.push({ id: id, status: status, result: result });
+      }
+    },
+    taskScheduler: {
+      getActiveTaskType: function () { return "live_comment"; },
+      requestTask: function () {},
+      startTask: function () {},
+      pauseTask: function () {},
+      stopTask: function () {},
+      recordCheckpoint: function () {},
+      resolveTaskType: function () { return "live_comment"; }
+    }
+  });
+  var controlLoop = createControlLoop(context);
+
+  controlLoop.pollControlCommands(true);
+
+  assert.strictEqual(context.floatyControl.state.running, false);
+  assert.strictEqual(context.floatyControl.state.paused, true);
+  assert.strictEqual(context.floatyControl.state.stopRequested, true);
+  assert.strictEqual(context.floatyControl.state.liveCommentControlStatus, "stopped");
+  var stopAck = acks.filter(function (item) { return item.id === "cmd-stop"; })[0];
+  var startAck = acks.filter(function (item) { return item.id === "cmd-start"; })[0];
+  assert.strictEqual(stopAck && stopAck.status, "DONE");
+  assert.strictEqual(startAck && startAck.status, "IGNORED");
+  assert.strictEqual(startAck && startAck.result.reason, "superseded_by_stop_command");
+}
+
 testPollAsyncDoesNotStartThreadBeforeInterval();
 testUnregisteredPollAttemptsAreThrottled();
 testLiveCommentPauseRequestsInterrupt();
+testStopIsNotSupersededByLaterStartInSamePoll();
 
 console.log("control-loop tests passed");

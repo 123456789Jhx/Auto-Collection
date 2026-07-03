@@ -29,6 +29,34 @@ function createControlLoop(context) {
     return normalizeCommandTaskType(payload.taskType, "video");
   }
 
+  function hasExplicitTaskType(command) {
+    var payload = command && (command.payload || command.payloadJson || {}) || {};
+    return !!(payload && payload.taskType);
+  }
+
+  function isGlobalStopCommand(command) {
+    return command && command.commandType === "STOP" && !hasExplicitTaskType(command);
+  }
+
+  function ackSupersededCommand(command, reason, latestCommand) {
+    var taskKey = commandTaskKey(command);
+    logger.warn(reason === "superseded_by_stop_command" ? "忽略已被停止指令覆盖的后台控制指令" : "忽略已被更新指令覆盖的后台控制指令", {
+      commandId: command.id,
+      commandType: command.commandType,
+      taskType: taskKey,
+      latestCommandId: latestCommand && latestCommand.id,
+      latestCommandType: latestCommand && latestCommand.commandType
+    });
+    uploader.ackCommand(command.id, "IGNORED", {
+      applied: false,
+      commandType: command.commandType,
+      reason: reason,
+      taskType: taskKey,
+      latestCommandId: latestCommand && latestCommand.id,
+      latestCommandType: latestCommand && latestCommand.commandType
+    });
+  }
+
   function directNormalizeTaskType(taskType) {
     var value = String(taskType || "").trim();
     if (value === "live_comment_control" || value === "liveComment" || value === "live-comment") {
@@ -61,37 +89,57 @@ function createControlLoop(context) {
   }
 
   function compactControlCommands(commands) {
+    var latestGlobalStopIndex = -1;
+    var latestStopIndexByTask = {};
     var latestStateIndexByTask = {};
     for (var i = 0; i < commands.length; i++) {
       if (isStateCommand(commands[i].commandType)) {
-        latestStateIndexByTask[commandTaskKey(commands[i])] = i;
+        if (commands[i].commandType === "STOP") {
+          if (isGlobalStopCommand(commands[i])) {
+            latestGlobalStopIndex = i;
+          } else {
+            latestStopIndexByTask[commandTaskKey(commands[i])] = i;
+          }
+        } else {
+          latestStateIndexByTask[commandTaskKey(commands[i])] = i;
+        }
       }
     }
-    if (Object.keys(latestStateIndexByTask).length === 0) {
+    if (latestGlobalStopIndex < 0 && Object.keys(latestStopIndexByTask).length === 0 && Object.keys(latestStateIndexByTask).length === 0) {
       return commands;
     }
 
     var compacted = [];
     for (var j = 0; j < commands.length; j++) {
       var command = commands[j];
+      if (!isStateCommand(command.commandType)) {
+        compacted.push(command);
+        continue;
+      }
+
       var taskKey = commandTaskKey(command);
+      if (latestGlobalStopIndex >= 0) {
+        if (j !== latestGlobalStopIndex) {
+          ackSupersededCommand(command, "superseded_by_stop_command", commands[latestGlobalStopIndex]);
+          continue;
+        }
+        compacted.push(command);
+        continue;
+      }
+
+      var latestStopIndex = latestStopIndexByTask[taskKey];
+      if (latestStopIndex !== undefined) {
+        if (j !== latestStopIndex) {
+          ackSupersededCommand(command, "superseded_by_stop_command", commands[latestStopIndex]);
+          continue;
+        }
+        compacted.push(command);
+        continue;
+      }
+
       var latestStateIndex = latestStateIndexByTask[taskKey];
-      if (isStateCommand(command.commandType) && latestStateIndex !== undefined && j !== latestStateIndex) {
-        logger.warn("忽略已被更新指令覆盖的后台控制指令", {
-          commandId: command.id,
-          commandType: command.commandType,
-          taskType: taskKey,
-          latestCommandId: commands[latestStateIndex].id,
-          latestCommandType: commands[latestStateIndex].commandType
-        });
-        uploader.ackCommand(command.id, "IGNORED", {
-          applied: false,
-          commandType: command.commandType,
-          reason: "superseded_by_newer_state_command",
-          taskType: taskKey,
-          latestCommandId: commands[latestStateIndex].id,
-          latestCommandType: commands[latestStateIndex].commandType
-        });
+      if (latestStateIndex !== undefined && j !== latestStateIndex) {
+        ackSupersededCommand(command, "superseded_by_newer_state_command", commands[latestStateIndex]);
         continue;
       }
       compacted.push(command);

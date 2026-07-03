@@ -262,6 +262,40 @@ function testLiveCommentPauseDuringSearchStopsAsPause() {
   assert.strictEqual(context.counters.lastStopReason, "manual_pause");
 }
 
+function testLiveCommentClearsTargetRefreshBeforeSampling() {
+  var refreshFlagDuringSample = null;
+  var context = createBaseContext();
+  context.liveCommentPriorityRequested = true;
+  context.liveCommentTargetRoomRefreshRequested = true;
+  context.douyin.getLastTargetLiveSearchResult = function () {
+    return {
+      reason: "room_verified",
+      source: "target_user_live_entry",
+      keyword: "目标主播",
+      targetKeywords: ["目标主播"]
+    };
+  };
+  context.liveRoomSampler.sampleCurrentRoom = function () {
+    refreshFlagDuringSample = context.liveCommentTargetRoomRefreshRequested;
+    return {
+      stopReason: refreshFlagDuringSample ? "target_room_refresh_requested" : "",
+      sampleCount: refreshFlagDuringSample ? 0 : 1,
+      sentActionCount: 0,
+      failedActionCount: 0,
+      skippedActionCount: 1
+    };
+  };
+  var runner = createLiveCommentRunner(context);
+
+  var result = runner.runTargetLiveCommentTask();
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(refreshFlagDuringSample, false, "target room refresh flag must be cleared before sampling");
+  assert.strictEqual(result.liveRoomSample.sampleCount, 1);
+  assert.strictEqual(context.liveCommentTargetRoomRefreshRequested, false);
+  assert.strictEqual(context.targetLiveRoomEntry && context.targetLiveRoomEntry.anchorName, "目标主播");
+}
+
 function testRiskDetectorCoversObservedDouyinBlockPage() {
   assert.strictEqual(
     riskDetector.containsRisk(
@@ -278,6 +312,7 @@ testLiveCommentSearchFailureStopsWithReason();
 testLiveCommentRiskStopsBeforeCommenting();
 testLiveCommentPauseStopsBeforeSearch();
 testLiveCommentPauseDuringSearchStopsAsPause();
+testLiveCommentClearsTargetRefreshBeforeSampling();
 testRiskDetectorCoversObservedDouyinBlockPage();
 
 console.log("live-comment-runner tests passed");
