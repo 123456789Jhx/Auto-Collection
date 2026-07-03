@@ -40,6 +40,18 @@ type CollectionRecord = {
   screenText?: string | null;
 };
 
+type Pagination = {
+  page?: number;
+  pageSize?: number;
+  totalItems?: number;
+  totalPages?: number;
+};
+
+type DisplayRecord = CollectionRecord & {
+  duplicateCount: number;
+  duplicateIds: string[];
+};
+
 function formatDateTime(value?: string | null) {
   if (!value) return "-";
   const date = new Date(value);
@@ -75,6 +87,43 @@ function sceneTone(value?: string | null) {
   return "gray";
 }
 
+function normalizeRecordText(value?: string | null) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/[，。,.！!？?；;：:、]/g, "")
+    .trim()
+    .slice(0, 96);
+}
+
+function recordDedupKey(record: CollectionRecord) {
+  return [
+    record.sceneType || "",
+    normalizeRecordText(record.authorName),
+    normalizeRecordText(record.titleText),
+    normalizeRecordText(record.subtitleText),
+    normalizeRecordText(record.screenText)
+  ].join("|");
+}
+
+function compactDuplicateRecords(records: CollectionRecord[]) {
+  const byKey = new Map<string, DisplayRecord>();
+  records.forEach((record) => {
+    const key = recordDedupKey(record);
+    const existing = key ? byKey.get(key) : undefined;
+    if (existing) {
+      existing.duplicateCount += 1;
+      existing.duplicateIds.push(record.id);
+      return;
+    }
+    byKey.set(key || record.id, {
+      ...record,
+      duplicateCount: 1,
+      duplicateIds: [record.id]
+    });
+  });
+  return Array.from(byKey.values());
+}
+
 function statusTone(value?: string | null) {
   if (value === "error" || value === "risk_control") return "red";
   if (value === "offline" || value === "stopped") return "gray";
@@ -89,6 +138,8 @@ export function RecordsPage() {
   const [sceneType, setSceneType] = useState("");
   const [keyword, setKeyword] = useState("");
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(15);
+  const [recordsPage, setRecordsPage] = useState(1);
+  const [recordsPageSize, setRecordsPageSize] = useState(20);
 
   const summaryQuery = useQuery({
     queryKey: ["record-device-summary"],
@@ -114,22 +165,25 @@ export function RecordsPage() {
   );
 
   const recordsQuery = useQuery({
-    queryKey: ["records", selectedDeviceCode, selectedDate, sceneType, keyword],
+    queryKey: ["records", selectedDeviceCode, selectedDate, sceneType, keyword, recordsPage, recordsPageSize],
     queryFn: () => getRecords({
       deviceCode: selectedDeviceCode,
       sceneType,
       keyword,
       createdFrom: selectedDate,
       createdTo: nextDate(selectedDate),
-      pageSize: 100
+      page: recordsPage,
+      pageSize: recordsPageSize
     }),
     enabled: !!selectedDeviceCode && !!selectedDate,
     refetchInterval: selectedDeviceCode && selectedDate && autoRefreshSeconds > 0 ? autoRefreshSeconds * 1000 : false
   });
   const records = useMemo(() => (recordsQuery.data?.data ?? []) as CollectionRecord[], [recordsQuery.data]);
+  const displayRecords = useMemo(() => compactDuplicateRecords(records), [records]);
+  const recordsPagination = (recordsQuery.data?.pagination ?? {}) as Pagination;
   const selectedRecord = useMemo(
-    () => records.find((item) => item.id === previewRecordId) ?? records[0] ?? null,
-    [previewRecordId, records]
+    () => displayRecords.find((item) => item.id === previewRecordId) ?? displayRecords[0] ?? null,
+    [previewRecordId, displayRecords]
   );
 
   if (summaryQuery.isLoading) return <Skeleton active />;
@@ -153,11 +207,13 @@ export function RecordsPage() {
     setPreviewRecordId("");
     setSceneType("");
     setKeyword("");
+    setRecordsPage(1);
   };
 
   const openDate = (date: string) => {
     setSelectedDate(date);
     setPreviewRecordId("");
+    setRecordsPage(1);
   };
 
   const backToDevices = () => {
@@ -166,12 +222,40 @@ export function RecordsPage() {
     setPreviewRecordId("");
     setSceneType("");
     setKeyword("");
+    setRecordsPage(1);
   };
 
   const backToDates = () => {
     setSelectedDate("");
     setPreviewRecordId("");
+    setRecordsPage(1);
   };
+
+  const applyRecordFilters = () => {
+    setPreviewRecordId("");
+    setRecordsPage(1);
+    void recordsQuery.refetch();
+  };
+
+  const totalPages = Math.max(1, Number(recordsPagination.totalPages || 1));
+  const totalItems = Number(recordsPagination.totalItems || 0);
+  const renderRecordPagination = () => (
+    <div className="ops-pagination">
+      <div className="ops-small">
+        原始 {totalItems} 条，本页 {records.length} 条，合并后 {displayRecords.length} 条
+      </div>
+      <div className="ops-pagination-controls">
+        <button className="ops-btn" type="button" disabled={recordsPage <= 1} onClick={() => setRecordsPage((page) => Math.max(1, page - 1))}>上一页</button>
+        <span className="ops-page-indicator">{recordsPage} / {totalPages}</span>
+        <button className="ops-btn" type="button" disabled={recordsPage >= totalPages} onClick={() => setRecordsPage((page) => Math.min(totalPages, page + 1))}>下一页</button>
+        <select className="ops-input compact" value={recordsPageSize} onChange={(event) => { setRecordsPageSize(Number(event.currentTarget.value)); setRecordsPage(1); }}>
+          <option value={10}>10条/页</option>
+          <option value={20}>20条/页</option>
+          <option value={50}>50条/页</option>
+        </select>
+      </div>
+    </div>
+  );
 
   const renderToolbar = (extra?: ReactNode) => (
     <div className="ops-toolbar">
@@ -368,7 +452,7 @@ export function RecordsPage() {
         </div>
         <div className="ops-field">
           <label htmlFor="records-scene">来源</label>
-          <select id="records-scene" className="ops-input" value={sceneType} onChange={(event) => setSceneType(event.currentTarget.value)}>
+          <select id="records-scene" className="ops-input" value={sceneType} onChange={(event) => { setSceneType(event.currentTarget.value); setRecordsPage(1); }}>
             <option value="">全部来源</option>
             <option value="video">视频</option>
             <option value="live">直播</option>
@@ -376,54 +460,61 @@ export function RecordsPage() {
         </div>
         <div className="ops-field">
           <label htmlFor="records-keyword">关键词</label>
-          <input id="records-keyword" className="ops-input" value={keyword} onChange={(event) => setKeyword(event.currentTarget.value)} placeholder="标题 / 作者 / 命中词" />
+          <input id="records-keyword" className="ops-input" value={keyword} onChange={(event) => { setKeyword(event.currentTarget.value); setRecordsPage(1); }} placeholder="标题 / 作者 / 命中词" />
         </div>
-        <button className="ops-btn" type="button" onClick={() => void recordsQuery.refetch()}>应用筛选</button>
+        <button className="ops-btn" type="button" onClick={applyRecordFilters}>应用筛选</button>
       </section>
 
       <section className="ops-workbench wide-side">
         <div className="ops-panel">
           <div className="ops-panel-head">
             <span>内容列表</span>
-            <span className="ops-small">{deviceDisplayName(selectedDevice)} · {selectedDate}</span>
+            <span className="ops-small">{deviceDisplayName(selectedDevice)} · {selectedDate} · 同页重复已合并</span>
           </div>
           {recordsQuery.isLoading ? <div className="ops-panel-body"><Skeleton active /></div> : null}
           {recordsQuery.isError ? <div className="ops-panel-body"><Alert type="error" message="采集记录加载失败" description={recordsQuery.error.message} showIcon /></div> : null}
           {!recordsQuery.isLoading && !recordsQuery.isError ? (
-            <div className="ops-table-wrap">
-              <table className="ops-table">
-                <thead>
-                  <tr>
-                    <th>采集时间</th>
-                    <th>内容</th>
-                    <th>来源</th>
-                    <th>作者 / 搜索词</th>
-                    <th>命中原因</th>
-                    <th>指标</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {records.length === 0 ? (
-                    <tr><td className="ops-empty" colSpan={6}>当前条件下没有采集记录</td></tr>
-                  ) : records.map((record) => (
-                    <tr key={record.id} className={record.id === selectedRecord?.id ? "selected" : ""} onClick={() => setPreviewRecordId(record.id)}>
-                      <td>{formatDateTime(record.createdAt)}</td>
-                      <td>
-                        <div className="ops-title">{compactText(record.titleText, "未识别标题", 72)}</div>
-                        <div className="ops-small">{compactText(record.subtitleText, "", 88)}</div>
-                      </td>
-                      <td><span className={`ops-tag ${sceneTone(record.sceneType)}`}>{sceneText(record.sceneType)}</span></td>
-                      <td>
-                        <div>{record.authorName || "-"}</div>
-                        <div className="ops-small">{record.keyword || "无搜索词"}</div>
-                      </td>
-                      <td>{matchedKeywordText(record.matchedKeywords)}</td>
-                      <td>{compactText(record.metricsText, "-", 42)}</td>
+            <>
+              {renderRecordPagination()}
+              <div className="ops-table-wrap">
+                <table className="ops-table">
+                  <thead>
+                    <tr>
+                      <th>采集时间</th>
+                      <th>内容</th>
+                      <th>来源</th>
+                      <th>作者 / 搜索词</th>
+                      <th>命中原因</th>
+                      <th>指标</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {displayRecords.length === 0 ? (
+                      <tr><td className="ops-empty" colSpan={6}>当前条件下没有采集记录</td></tr>
+                    ) : displayRecords.map((record) => (
+                      <tr key={record.id} className={record.id === selectedRecord?.id ? "selected" : ""} onClick={() => setPreviewRecordId(record.id)}>
+                        <td>
+                          <div>{formatDateTime(record.createdAt)}</div>
+                          {record.duplicateCount > 1 ? <span className="ops-tag amber">重复 {record.duplicateCount} 条</span> : null}
+                        </td>
+                        <td>
+                          <div className="ops-title">{compactText(record.titleText, "未识别标题", 72)}</div>
+                          <div className="ops-small">{compactText(record.subtitleText, "", 88)}</div>
+                        </td>
+                        <td><span className={`ops-tag ${sceneTone(record.sceneType)}`}>{sceneText(record.sceneType)}</span></td>
+                        <td>
+                          <div>{record.authorName || "-"}</div>
+                          <div className="ops-small">{record.keyword || "无搜索词"}</div>
+                        </td>
+                        <td>{matchedKeywordText(record.matchedKeywords)}</td>
+                        <td>{compactText(record.metricsText, "-", 42)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {renderRecordPagination()}
+            </>
           ) : null}
         </div>
 
@@ -440,6 +531,7 @@ export function RecordsPage() {
               <div className="ops-k">日期记录</div><div>{selectedDateSummary?.totalCount ?? records.length} 条</div>
               <div className="ops-k">视频 / 直播</div><div>{selectedDateSummary?.videoCount ?? 0} / {selectedDateSummary?.liveCount ?? 0}</div>
               <div className="ops-k">最近采集</div><div>{formatDateTime(selectedDateSummary?.latestRecordAt || selectedDevice.latestRecordAt)}</div>
+              <div className="ops-k">重复合并</div><div>{selectedRecord?.duplicateCount && selectedRecord.duplicateCount > 1 ? `同页合并 ${selectedRecord.duplicateCount} 条` : "无重复"}</div>
             </div>
 
             {selectedRecord ? (

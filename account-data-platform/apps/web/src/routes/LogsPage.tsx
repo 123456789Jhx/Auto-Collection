@@ -56,6 +56,19 @@ type RuntimeLog = {
   contextJson?: Record<string, unknown>;
 };
 
+type Pagination = {
+  page?: number;
+  pageSize?: number;
+  totalItems?: number;
+  totalPages?: number;
+};
+
+type DisplayLog = RuntimeLog & {
+  duplicateCount: number;
+  duplicateIds: string[];
+  latestCreatedAt?: string;
+};
+
 type LogTab = "events" | "issues" | "full";
 
 function formatDateTime(value?: string | null) {
@@ -195,6 +208,51 @@ function suggestionText(log: RuntimeLog) {
   return "无需处理";
 }
 
+function normalizeLogText(value: unknown) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/[，。,.！!？?；;：:、]/g, "")
+    .trim()
+    .slice(0, 120);
+}
+
+function logDedupKey(log: RuntimeLog) {
+  const context = log.contextJson || {};
+  return [
+    log.level || "",
+    normalizeLogText(log.message),
+    normalizeLogText(log.stopReason),
+    normalizeLogText(context.phase),
+    normalizeLogText(context.taskType),
+    normalizeLogText(context.failureReason || context.reason),
+    normalizeLogText(context.actionName),
+    normalizeLogText(context.state || context.stateBefore)
+  ].join("|");
+}
+
+function compactDuplicateLogs(logs: RuntimeLog[]) {
+  const byKey = new Map<string, DisplayLog>();
+  logs.forEach((log) => {
+    const key = logDedupKey(log);
+    const existing = key ? byKey.get(key) : undefined;
+    if (existing) {
+      existing.duplicateCount += 1;
+      existing.duplicateIds.push(log.id);
+      if (!existing.latestCreatedAt || (log.createdAt && new Date(log.createdAt).getTime() > new Date(existing.latestCreatedAt).getTime())) {
+        existing.latestCreatedAt = log.createdAt;
+      }
+      return;
+    }
+    byKey.set(key || log.id, {
+      ...log,
+      duplicateCount: 1,
+      duplicateIds: [log.id],
+      latestCreatedAt: log.createdAt
+    });
+  });
+  return Array.from(byKey.values());
+}
+
 function latestLogContent(content?: string | null, lines = 80) {
   const text = String(content || "").trim();
   if (!text) return "";
@@ -235,6 +293,8 @@ export function LogsPage() {
   const [keyword, setKeyword] = useState("");
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(15);
   const [activeTab, setActiveTab] = useState<LogTab>("events");
+  const [logsPage, setLogsPage] = useState(1);
+  const [logsPageSize, setLogsPageSize] = useState(20);
   const refreshInterval = autoRefreshSeconds > 0 ? autoRefreshSeconds * 1000 : false;
 
   const summaryQuery = useQuery({
@@ -271,14 +331,15 @@ export function LogsPage() {
     refetchInterval: latestFile?.id ? refreshInterval : false
   });
   const logsQuery = useQuery({
-    queryKey: ["logs", effectiveDeviceCode, effectiveDate, level, keyword],
+    queryKey: ["logs", effectiveDeviceCode, effectiveDate, level, keyword, logsPage, logsPageSize],
     queryFn: () => getLogs({
       deviceCode: effectiveDeviceCode,
       level,
       keyword,
       createdFrom: dayBoundary(effectiveDate),
       createdTo: dayBoundary(nextDate(effectiveDate)),
-      pageSize: 100
+      page: logsPage,
+      pageSize: logsPageSize
     }),
     enabled: !!effectiveDeviceCode && !!effectiveDate,
     refetchInterval: effectiveDeviceCode && effectiveDate ? refreshInterval : false
@@ -313,8 +374,11 @@ export function LogsPage() {
 
   const logs = useMemo(() => (logsQuery.data?.data ?? []) as RuntimeLog[], [logsQuery.data]);
   const issueLogs = useMemo(() => logs.filter((log) => log.level === "WARN" || log.level === "ERROR"), [logs]);
+  const displayLogs = useMemo(() => compactDuplicateLogs(logs), [logs]);
+  const displayIssueLogs = useMemo(() => compactDuplicateLogs(issueLogs), [issueLogs]);
+  const logsPagination = (logsQuery.data?.pagination ?? {}) as Pagination;
   const selectedFile = (fileDetailQuery.data ?? latestFile ?? null) as LogFile | null;
-  const visibleLogs = activeTab === "issues" ? issueLogs : logs;
+  const visibleLogs = activeTab === "issues" ? displayIssueLogs : displayLogs;
   const fullLogText = fileDetailQuery.isFetching && !selectedFile?.content
     ? "正在读取完整日志..."
     : latestLogContent(selectedFile?.content) || "完整日志内容为空";
@@ -350,11 +414,13 @@ export function LogsPage() {
     setLevel(undefined);
     setKeyword("");
     setActiveTab("events");
+    setLogsPage(1);
   };
   const openDate = (date: string) => {
     setSelectedDateValue(date);
     setPreviewLog(null);
     setActiveTab("events");
+    setLogsPage(1);
   };
   const backToDevices = () => {
     setSelectedDeviceCode(undefined);
@@ -363,12 +429,38 @@ export function LogsPage() {
     setLevel(undefined);
     setKeyword("");
     setActiveTab("events");
+    setLogsPage(1);
   };
   const backToDates = () => {
     setSelectedDateValue(undefined);
     setPreviewLog(null);
     setActiveTab("events");
+    setLogsPage(1);
   };
+  const totalLogPages = Math.max(1, Number(logsPagination.totalPages || 1));
+  const totalLogItems = Number(logsPagination.totalItems || 0);
+  const renderLogPagination = () => (
+    <div className="log-center-pagination">
+      <div className="log-center-panel-note">
+        原始 {totalLogItems} 条，本页 {logs.length} 条，{activeTab === "issues" ? `异常合并后 ${displayIssueLogs.length} 条` : `合并后 ${displayLogs.length} 条`}
+      </div>
+      <div className="log-center-pagination-controls">
+        <Button disabled={logsPage <= 1} onClick={() => setLogsPage((page) => Math.max(1, page - 1))}>上一页</Button>
+        <span className="log-center-page-indicator">{logsPage} / {totalLogPages}</span>
+        <Button disabled={logsPage >= totalLogPages} onClick={() => setLogsPage((page) => Math.min(totalLogPages, page + 1))}>下一页</Button>
+        <Select
+          className="log-center-page-size"
+          value={logsPageSize}
+          onChange={(value) => { setLogsPageSize(value); setLogsPage(1); }}
+          options={[
+            { label: "10条/页", value: 10 },
+            { label: "20条/页", value: 20 },
+            { label: "50条/页", value: 50 }
+          ]}
+        />
+      </div>
+    </div>
+  );
 
   if (!selectedDeviceCode) {
     return (
@@ -590,7 +682,7 @@ export function LogsPage() {
             className="log-center-date"
             value={effectiveDate}
             loading={dateQuery.isLoading}
-            onChange={setSelectedDateValue}
+            onChange={(value) => { setSelectedDateValue(value); setLogsPage(1); }}
             options={dates.map((item) => ({ value: item.logDate, label: item.logDate }))}
           />
           <Select
@@ -598,7 +690,7 @@ export function LogsPage() {
             allowClear
             placeholder="全部状态"
             value={level}
-            onChange={setLevel}
+            onChange={(value) => { setLevel(value); setLogsPage(1); }}
             options={[
               { value: "ERROR", label: "异常" },
               { value: "WARN", label: "需要关注" },
@@ -609,8 +701,8 @@ export function LogsPage() {
             className="log-center-search"
             placeholder="搜索事件、关键词、直播间"
             allowClear
-            onSearch={setKeyword}
-            onChange={(event) => { if (!event.target.value) setKeyword(""); }}
+            onSearch={(value) => { setKeyword(value); setLogsPage(1); }}
+            onChange={(event) => { if (!event.target.value) { setKeyword(""); setLogsPage(1); } }}
           />
           <Select
             className="log-center-refresh"
@@ -662,7 +754,7 @@ export function LogsPage() {
             <div className="log-center-panel-header">
               <div>
                 <div className="log-center-panel-title">{activeTab === "full" ? "完整日志" : activeTab === "issues" ? "异常汇总" : "运行动态"}</div>
-                <div className="log-center-panel-note">只展示对运营和排查有用的关键信息，技术字段在详情里查看</div>
+                <div className="log-center-panel-note">只展示对运营和排查有用的关键信息，重复事件已按当前页合并</div>
               </div>
               <Button
                 icon={<DownloadOutlined />}
@@ -688,39 +780,46 @@ export function LogsPage() {
                 {logsQuery.isError ? <Alert type="error" message="日志加载失败" description={logsQuery.error.message} showIcon /> : null}
                 {!logsQuery.isLoading && visibleLogs.length === 0 ? <Empty className="log-center-empty" description={activeTab === "issues" ? "当前没有需要关注的日志" : "暂无运行动态"} /> : null}
                 {visibleLogs.length > 0 ? (
-                  <div className="log-center-table-wrap">
-                    <table className="log-center-table">
-                      <thead>
-                        <tr>
-                          <th>时间</th>
-                          <th>状态</th>
-                          <th>发生了什么</th>
-                          <th>所在环节</th>
-                          <th>涉及内容</th>
-                          <th>是否影响任务</th>
-                          <th>建议处理</th>
-                          <th>详情</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {visibleLogs.map((log) => (
-                          <tr key={log.id}>
-                            <td className="log-center-time">{formatClock(log.createdAt)}</td>
-                            <td>{statusBadge(log)}</td>
-                            <td>
-                              <div className="log-center-event-title">{eventTitle(log)}</div>
-                              <div className="log-center-event-sub">{eventSub(log)}</div>
-                            </td>
-                            <td>{phaseBadge(log)}</td>
-                            <td>{involvedText(log)}</td>
-                            <td className="log-center-impact">{impactText(log)}</td>
-                            <td>{suggestionText(log)}</td>
-                            <td><button className="log-center-action-link" type="button" onClick={() => setPreviewLog(log)}>查看</button></td>
+                  <>
+                    {renderLogPagination()}
+                    <div className="log-center-table-wrap">
+                      <table className="log-center-table">
+                        <thead>
+                          <tr>
+                            <th>时间</th>
+                            <th>状态</th>
+                            <th>发生了什么</th>
+                            <th>所在环节</th>
+                            <th>涉及内容</th>
+                            <th>是否影响任务</th>
+                            <th>建议处理</th>
+                            <th>详情</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {visibleLogs.map((log) => (
+                            <tr key={log.id}>
+                              <td className="log-center-time">
+                                <div>{formatClock(log.latestCreatedAt || log.createdAt)}</div>
+                                {log.duplicateCount > 1 ? <span className="log-center-badge warn">重复 {log.duplicateCount} 次</span> : null}
+                              </td>
+                              <td>{statusBadge(log)}</td>
+                              <td>
+                                <div className="log-center-event-title">{eventTitle(log)}</div>
+                                <div className="log-center-event-sub">{eventSub(log)}</div>
+                              </td>
+                              <td>{phaseBadge(log)}</td>
+                              <td>{involvedText(log)}</td>
+                              <td className="log-center-impact">{impactText(log)}</td>
+                              <td>{suggestionText(log)}</td>
+                              <td><button className="log-center-action-link" type="button" onClick={() => setPreviewLog(log)}>查看</button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {renderLogPagination()}
+                  </>
                 ) : null}
               </>
             )}
@@ -748,13 +847,13 @@ export function LogsPage() {
             <div className="log-center-side-block">
               <div className="log-center-panel-title">最近需要关注</div>
               <div className="log-center-mini-list">
-                {issueLogs.slice(0, 3).map((log) => (
+                {displayIssueLogs.slice(0, 3).map((log) => (
                   <div className="log-center-mini-item" key={log.id}>
-                    <div>{formatClock(log.createdAt)}</div>
-                    <span>{eventTitle(log)}</span>
+                    <div>{formatClock(log.latestCreatedAt || log.createdAt)}</div>
+                    <span>{eventTitle(log)}{log.duplicateCount > 1 ? `（重复 ${log.duplicateCount} 次）` : ""}</span>
                   </div>
                 ))}
-                {issueLogs.length === 0 ? <div className="log-center-panel-note">当前没有需要关注的事件</div> : null}
+                {displayIssueLogs.length === 0 ? <div className="log-center-panel-note">当前没有需要关注的事件</div> : null}
               </div>
             </div>
 
