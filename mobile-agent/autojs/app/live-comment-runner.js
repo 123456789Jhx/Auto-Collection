@@ -167,6 +167,78 @@ function createLiveCommentRunner(context) {
     });
   }
 
+  function addArray(target, source) {
+    if (!source || !source.length) {
+      return target;
+    }
+    return target.concat(source);
+  }
+
+  function mergeLiveRoomSample(total, current) {
+    current = current || {};
+    if (!total) {
+      total = {
+        enabled: current.enabled !== false,
+        sampleCount: 0,
+        lastState: "",
+        stopReason: "",
+        commentCount: 0,
+        cachedCommentCount: 0,
+        triggerEventCount: 0,
+        plannedActionCount: 0,
+        sentActionCount: 0,
+        failedActionCount: 0,
+        skippedActionCount: 0,
+        comments: [],
+        classifiedComments: [],
+        triggerEvents: [],
+        plannedActions: [],
+        p3Actions: [],
+        samples: []
+      };
+    }
+    total.enabled = total.enabled && current.enabled !== false;
+    total.sampleCount += Number(current.sampleCount || 0);
+    total.lastState = current.lastState || total.lastState;
+    total.stopReason = current.stopReason || total.stopReason;
+    total.commentCount += Number(current.commentCount || 0);
+    total.cachedCommentCount = Math.max(Number(total.cachedCommentCount || 0), Number(current.cachedCommentCount || 0));
+    total.triggerEventCount += Number(current.triggerEventCount || 0);
+    total.plannedActionCount += Number(current.plannedActionCount || 0);
+    total.sentActionCount += Number(current.sentActionCount || 0);
+    total.failedActionCount += Number(current.failedActionCount || 0);
+    total.skippedActionCount += Number(current.skippedActionCount || 0);
+    total.comments = addArray(total.comments, current.comments || []);
+    total.classifiedComments = addArray(total.classifiedComments, current.classifiedComments || []);
+    total.triggerEvents = addArray(total.triggerEvents, current.triggerEvents || []);
+    total.plannedActions = addArray(total.plannedActions, current.plannedActions || []);
+    total.p3Actions = addArray(total.p3Actions, current.p3Actions || []);
+    total.samples = addArray(total.samples, current.samples || []);
+    total.actionPlannerState = current.actionPlannerState || total.actionPlannerState;
+    return total;
+  }
+
+  function shouldKeepSamplingUntil(endAt) {
+    return endAt > 0 && Date.now() < endAt && !shouldStop();
+  }
+
+  function sampleTargetRoomForDuration(durationMinutes) {
+    var minutes = Number(durationMinutes || 0);
+    var endAt = minutes > 0 ? Date.now() + minutes * 60 * 1000 : 0;
+    var total = null;
+    do {
+      var current = sampleTargetRoom();
+      total = mergeLiveRoomSample(total, current);
+      if (current && current.stopReason) {
+        break;
+      }
+      if (!current || current.enabled === false || Number(current.sampleCount || 0) <= 0) {
+        break;
+      }
+    } while (shouldKeepSamplingUntil(endAt));
+    return total;
+  }
+
   function rememberVerifiedTargetRoom(keyword, targetRoom, searchResult) {
     context.liveCommentTargetRoomRefreshRequested = false;
     context.targetLiveRoomEntry = {
@@ -270,7 +342,7 @@ function createLiveCommentRunner(context) {
       return stopForFailure(counters.lastStopReason || "manual_stop", "live_comment_before_sample", readVisibleText());
     }
 
-    var liveRoomSample = sampleTargetRoom();
+    var liveRoomSample = sampleTargetRoomForDuration(options.durationMinutes);
     if (liveRoomSample && liveRoomSample.stopReason === "blocked") {
       return stopForFailure("risk_control", "live_comment_sample", readVisibleText());
     }

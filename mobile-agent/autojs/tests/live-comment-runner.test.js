@@ -296,6 +296,69 @@ function testLiveCommentClearsTargetRefreshBeforeSampling() {
   assert.strictEqual(context.targetLiveRoomEntry && context.targetLiveRoomEntry.anchorName, "目标主播");
 }
 
+function testLiveCommentSamplesUntilDurationExpires() {
+  var originalNow = Date.now;
+  var fakeNow = 1000;
+  var sampleCalls = 0;
+  var context = createBaseContext();
+  context.liveRoomSampler.sampleCurrentRoom = function () {
+    sampleCalls += 1;
+    fakeNow += 35 * 1000;
+    return {
+      stopReason: "",
+      sampleCount: 8,
+      sentActionCount: 1,
+      failedActionCount: 0,
+      skippedActionCount: 0,
+      plannedActionCount: 1,
+      commentCount: 2
+    };
+  };
+  Date.now = function () {
+    return fakeNow;
+  };
+  try {
+    var runner = createLiveCommentRunner(context);
+    var result = runner.runTargetLiveCommentTask({ durationMinutes: 1 });
+
+    assert.strictEqual(result.success, true);
+    assert(sampleCalls >= 2, "live comment runner should keep sampling until task duration expires");
+    assert.strictEqual(result.liveRoomSample.sentActionCount, sampleCalls);
+    assert.strictEqual(result.liveRoomSample.sampleCount, sampleCalls * 8);
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
+function testLiveCommentDoesNotLoopWhenSamplerDisabled() {
+  var originalNow = Date.now;
+  var fakeNow = 1000;
+  var sampleCalls = 0;
+  var context = createBaseContext();
+  context.liveRoomSampler.sampleCurrentRoom = function () {
+    sampleCalls += 1;
+    fakeNow += 35 * 1000;
+    return {
+      enabled: false,
+      sampleCount: 0,
+      sentActionCount: 0
+    };
+  };
+  Date.now = function () {
+    return fakeNow;
+  };
+  try {
+    var runner = createLiveCommentRunner(context);
+    var result = runner.runTargetLiveCommentTask({ durationMinutes: 1 });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(sampleCalls, 1, "disabled sampler should not be called repeatedly");
+    assert.strictEqual(result.liveRoomSample.enabled, false);
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
 function testRiskDetectorCoversObservedDouyinBlockPage() {
   assert.strictEqual(
     riskDetector.containsRisk(
@@ -313,6 +376,8 @@ testLiveCommentRiskStopsBeforeCommenting();
 testLiveCommentPauseStopsBeforeSearch();
 testLiveCommentPauseDuringSearchStopsAsPause();
 testLiveCommentClearsTargetRefreshBeforeSampling();
+testLiveCommentSamplesUntilDurationExpires();
+testLiveCommentDoesNotLoopWhenSamplerDisabled();
 testRiskDetectorCoversObservedDouyinBlockPage();
 
 console.log("live-comment-runner tests passed");

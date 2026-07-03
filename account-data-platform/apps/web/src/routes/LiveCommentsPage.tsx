@@ -345,9 +345,9 @@ export function LiveCommentsPage() {
   });
 
   const targetRoomMutation = useMutation({
-    mutationFn: ({ deviceCode, liveCommentBotConfig }: { deviceCode: string; liveCommentBotConfig: Record<string, unknown> }) =>
+    mutationFn: ({ deviceCode, liveCommentMode, liveCommentBotConfig }: { deviceCode: string; liveCommentMode: LiveCommentMode; liveCommentBotConfig: Record<string, unknown> }) =>
       updateDeviceTaskConfig(deviceCode, {
-        liveCommentMode: "agri_chatbot",
+        liveCommentMode,
         liveCommentBotConfig
       }, "douyin"),
     onSuccess: (_data, variables) => {
@@ -471,8 +471,10 @@ export function LiveCommentsPage() {
     const deviceCode = targetRoomDevice?.deviceCode || selectedDevice?.deviceCode;
     if (!deviceCode) return;
     const current = ((targetRoomConfig || selectedConfig)?.liveCommentBotConfig || {}) as Record<string, unknown>;
+    const liveCommentMode = "target_follow";
     targetRoomMutation.mutate({
       deviceCode,
+      liveCommentMode,
       liveCommentBotConfig: {
         ...current,
         targetRoom: buildTargetRoomConfig(targetRoomForm.getFieldsValue())
