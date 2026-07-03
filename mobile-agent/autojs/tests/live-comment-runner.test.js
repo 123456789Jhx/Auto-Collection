@@ -167,6 +167,23 @@ function testCollectorDoesNotRouteLiveCommentThroughLivePhase() {
   );
 }
 
+function testTargetUserLiveEntryPrecedesGenericLiveBadgeCard() {
+  var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin.js"), "utf8");
+  var start = source.indexOf("function openTargetLiveRoomFromSearch(options)");
+  var end = source.indexOf("function clickTargetUserLiveEntryFromSearch", start);
+  var body = source.slice(start, end);
+  var userEntryIndex = body.indexOf("clickTargetUserLiveEntryFromSearch(");
+  var badgeCardIndex = body.indexOf("clickVisibleTargetLiveBadgeCardFromSearch(");
+
+  assert(start >= 0 && end > start, "target live search function must be present");
+  assert(userEntryIndex >= 0, "target user live entry must be attempted");
+  assert(badgeCardIndex >= 0, "generic live badge card fallback must be attempted");
+  assert(
+    userEntryIndex < badgeCardIndex,
+    "target user live entry should be attempted before generic live badge cards"
+  );
+}
+
 function testLiveCommentSearchFailureStopsWithReason() {
   var context = createBaseContext();
   context.liveCommentPriorityRequested = true;
@@ -204,6 +221,47 @@ function testLiveCommentRiskStopsBeforeCommenting() {
   assert.strictEqual(sampled, false, "risk page must stop before sampling/commenting");
 }
 
+function testLiveCommentPauseStopsBeforeSearch() {
+  var searched = false;
+  var context = createBaseContext();
+  context.floatyControl.state.paused = true;
+  context.floatyControl.state.liveCommentExecutionEnabled = false;
+  context.douyin.openTargetLiveRoomFromSearch = function () {
+    searched = true;
+    return true;
+  };
+  var runner = createLiveCommentRunner(context);
+
+  var result = runner.runTargetLiveCommentTask();
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.reason, "manual_pause");
+  assert.strictEqual(searched, false, "paused live comment task must not start target room search");
+  assert.strictEqual(context.counters.lastStopReason, "manual_pause");
+}
+
+function testLiveCommentPauseDuringSearchStopsAsPause() {
+  var guardType = "";
+  var context = createBaseContext();
+  context.douyin.openTargetLiveRoomFromSearch = function (options) {
+    guardType = typeof (options && options.shouldStop);
+    context.floatyControl.state.paused = true;
+    context.floatyControl.state.liveCommentExecutionEnabled = false;
+    return false;
+  };
+  context.douyin.getLastTargetLiveSearchResult = function () {
+    return { reason: "target_live_room_search_failed" };
+  };
+  var runner = createLiveCommentRunner(context);
+
+  var result = runner.runTargetLiveCommentTask();
+
+  assert.strictEqual(guardType, "function", "target live search must receive an interrupt guard");
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.reason, "manual_pause");
+  assert.strictEqual(context.counters.lastStopReason, "manual_pause");
+}
+
 function testRiskDetectorCoversObservedDouyinBlockPage() {
   assert.strictEqual(
     riskDetector.containsRisk(
@@ -215,8 +273,11 @@ function testRiskDetectorCoversObservedDouyinBlockPage() {
 }
 
 testCollectorDoesNotRouteLiveCommentThroughLivePhase();
+testTargetUserLiveEntryPrecedesGenericLiveBadgeCard();
 testLiveCommentSearchFailureStopsWithReason();
 testLiveCommentRiskStopsBeforeCommenting();
+testLiveCommentPauseStopsBeforeSearch();
+testLiveCommentPauseDuringSearchStopsAsPause();
 testRiskDetectorCoversObservedDouyinBlockPage();
 
 console.log("live-comment-runner tests passed");

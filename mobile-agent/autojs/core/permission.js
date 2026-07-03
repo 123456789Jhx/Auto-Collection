@@ -1,32 +1,85 @@
-function createPermissionManager(config, logger) {
+function createPermissionManager(config, logger, deps) {
+  deps = deps || {};
   var captureGranted = false;
-  var accessibility = require(files.join(config.runtime.scriptDir, "core/accessibility.js"));
+  var filesApi = deps.files || files;
+  var appApi = deps.app || app;
+  var sleepFn = deps.sleep || sleep;
+  var toastFn = deps.toast || toast;
+  var requestScreenCaptureFn = deps.requestScreenCapture || function (landscape) {
+    return requestScreenCapture(landscape);
+  };
+  var accessibility = deps.accessibility || require(filesApi.join(config.runtime.scriptDir, "core/accessibility.js"));
+
   if (accessibility.setContext) {
-    accessibility.setContext(context);
+    try {
+      accessibility.setContext(typeof context !== "undefined" ? context : null);
+    } catch (error) {
+      accessibility.setContext(null);
+    }
+  }
+
+  function logAccessibility(level, message, accessibilityState) {
+    var payload = {
+      enabled: !!(accessibilityState && accessibilityState.enabled),
+      source: accessibilityState && accessibilityState.source || "",
+      packageName: accessibilityState && accessibilityState.packageName || "",
+      enabledServices: accessibilityState && accessibilityState.enabledServices || ""
+    };
+    if (logger && logger[level]) {
+      logger[level](message, payload);
+    }
+  }
+
+  function isConfiguredButBindingUnavailable(accessibilityState) {
+    return !!(
+      accessibilityState &&
+      accessibilityState.source === "settings" &&
+      accessibilityState.enabledServices &&
+      !accessibilityState.enabled
+    );
+  }
+
+  function waitForConfiguredAccessibilityBinding(accessibilityState) {
+    logAccessibility("warn", "无障碍服务已在系统配置中开启但暂不可用", accessibilityState);
+    for (var warmup = 0; warmup < 8; warmup++) {
+      sleepFn(500);
+      accessibilityState = accessibility.detectAccessibility();
+      if (accessibilityState.enabled) {
+        logAccessibility("info", "无障碍服务预热后可用", accessibilityState);
+        return true;
+      }
+    }
+    logAccessibility("error", "无障碍服务系统配置已开启但 AutoJS 绑定暂不可用", accessibilityState);
+    return false;
   }
 
   function waitForAccessibility() {
     var accessibilityState = accessibility.detectAccessibility();
+    logAccessibility("info", "无障碍服务检测结果", accessibilityState);
     if (accessibilityState.enabled) {
       return true;
     }
 
-    logger.warn("无障碍服务未开启，跳转设置页");
-    toast("请开启无障碍服务后返回脚本");
-    app.startActivity({
+    if (isConfiguredButBindingUnavailable(accessibilityState)) {
+      return waitForConfiguredAccessibilityBinding(accessibilityState);
+    }
+
+    logAccessibility("warn", "无障碍服务未开启，打开设置页", accessibilityState);
+    toastFn("请开启无障碍服务后返回脚本");
+    appApi.startActivity({
       action: "android.settings.ACCESSIBILITY_SETTINGS"
     });
 
     for (var i = 0; i < 60; i++) {
-      sleep(1000);
+      sleepFn(1000);
       accessibilityState = accessibility.detectAccessibility();
       if (accessibilityState.enabled) {
-        logger.info("无障碍服务已开启");
+        logAccessibility("info", "无障碍服务已开启", accessibilityState);
         return true;
       }
     }
 
-    logger.error("等待无障碍服务超时");
+    logAccessibility("error", "等待无障碍服务超时", accessibilityState);
     return false;
   }
 
@@ -35,10 +88,10 @@ function createPermissionManager(config, logger) {
       return true;
     }
     logger.info("请求截图权限");
-    var granted = requestScreenCapture(false);
+    var granted = requestScreenCaptureFn(false);
     if (!granted) {
       logger.error("截图权限请求失败");
-      toast("截图权限失败，任务停止");
+      toastFn("截图权限失败，任务停止");
       return false;
     }
     captureGranted = true;
@@ -58,9 +111,9 @@ function createPermissionManager(config, logger) {
       dirs.push(config.output.logDir);
     }
     dirs.forEach(function (dirPath) {
-      if (!files.exists(dirPath)) {
-        files.createWithDirs(dirPath + "/.keep");
-        files.remove(dirPath + "/.keep");
+      if (!filesApi.exists(dirPath)) {
+        filesApi.createWithDirs(dirPath + "/.keep");
+        filesApi.remove(dirPath + "/.keep");
       }
     });
     return true;

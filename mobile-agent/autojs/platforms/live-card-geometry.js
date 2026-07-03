@@ -91,7 +91,49 @@ function buildLargeUserCardFromBadge(screen, badge, targetBounds) {
   return rectFromValues(contentLeft, top, contentRight, bottom, screen);
 }
 
-function buildClickPoints(bounds, badge) {
+function isUserLiveRowBadge(screen, badge, targetBounds) {
+  if (!screen || !badge || !targetBounds) {
+    return false;
+  }
+  var rowTop = targetBounds.top - Math.floor(screen.height * 0.08);
+  var rowBottom = targetBounds.bottom + Math.floor(screen.height * 0.04);
+  return (
+    badge.centerX < targetBounds.left &&
+    badge.centerX < screen.width * 0.30 &&
+    badge.centerY >= rowTop &&
+    badge.centerY <= rowBottom
+  );
+}
+
+function buildUserLiveRowFromBadge(screen, badge, targetBounds) {
+  var contentLeft = Math.max(0, Math.floor(screen.width * 0.045));
+  var contentRight = Math.min(screen.width, Math.floor(screen.width * 0.965));
+  var top = Math.min(badge.top, targetBounds.top) - Math.floor(screen.height * 0.025);
+  var bottom = Math.max(badge.bottom, targetBounds.bottom) + Math.floor(screen.height * 0.035);
+  return rectFromValues(contentLeft, top, contentRight, bottom, screen);
+}
+
+function buildClickPoints(bounds, badge, type, targetBounds, screen) {
+  if (type === "user_live_row") {
+    var rowCenterY = targetBounds ? targetBounds.centerY : bounds.centerY;
+    return [
+      {
+        name: "avatar_live_badge",
+        x: clamp(badge.centerX, bounds.left + 8, bounds.right - 8),
+        y: clamp(badge.centerY, bounds.top + 8, bounds.bottom - 8)
+      },
+      {
+        name: "avatar_center",
+        x: clamp(Math.floor((screen && screen.width || bounds.right) * 0.13), bounds.left + 8, bounds.right - 8),
+        y: clamp(rowCenterY, bounds.top + 8, bounds.bottom - 8)
+      },
+      {
+        name: "user_name_row",
+        x: clamp(targetBounds ? targetBounds.centerX : bounds.centerX, bounds.left + 8, bounds.right - 8),
+        y: clamp(rowCenterY, bounds.top + 8, bounds.bottom - 8)
+      }
+    ];
+  }
   var points = [
     {
       name: "card_center",
@@ -177,16 +219,19 @@ function buildLiveCardCandidateFromBadge(screen, badgeBounds, options) {
   if (!screen || !badge) {
     return null;
   }
-  var type = targetBounds && badge.centerY > targetBounds.bottom ? "user_large_live_card" : "grid_live_card";
-  var bounds = type === "user_large_live_card" ?
-    buildLargeUserCardFromBadge(screen, badge, targetBounds) :
-    buildGridCardFromBadge(screen, badge);
+  var type = isUserLiveRowBadge(screen, badge, targetBounds) ? "user_live_row" :
+    (targetBounds && badge.centerY > targetBounds.bottom ? "user_large_live_card" : "grid_live_card");
+  var bounds = type === "user_live_row" ?
+    buildUserLiveRowFromBadge(screen, badge, targetBounds) :
+    (type === "user_large_live_card" ?
+      buildLargeUserCardFromBadge(screen, badge, targetBounds) :
+      buildGridCardFromBadge(screen, badge));
   return {
     type: type,
     badgeBounds: badge,
     targetBounds: targetBounds,
     bounds: bounds,
-    clickPoints: buildClickPoints(bounds, badge)
+    clickPoints: buildClickPoints(bounds, badge, type, targetBounds, screen)
   };
 }
 

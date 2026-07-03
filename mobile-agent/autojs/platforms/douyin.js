@@ -1057,6 +1057,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function openTargetLiveRoomFromSearch(options) {
     options = options || {};
+    var startedAt = Date.now();
     var targetRoom = options.targetRoom || {};
     var keyword = String(options.keyword || targetRoom.anchorName || "").replace(/\s+/g, " ").trim();
     var targetKeywords = buildTargetRoomKeywords(targetRoom, keyword);
@@ -1071,12 +1072,31 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       });
       return false;
     }
+    function isInterrupted(source) {
+      if (!options.shouldStop || !options.shouldStop()) {
+        return false;
+      }
+      logger.warn("target live search interrupted by control command", {
+        keyword: keyword,
+        source: source || ""
+      });
+      setTargetLiveSearchResult("manual_pause", {
+        keyword: keyword,
+        targetKeywords: targetKeywords,
+        elapsedMs: Date.now() - startedAt,
+        source: source || "target_live_search"
+      });
+      return true;
+    }
 
     setTargetLiveSearchResult("target_search_started", {
       keyword: keyword,
       targetKeywords: targetKeywords
     });
 
+    if (isInterrupted("before_open_live_search")) {
+      return false;
+    }
     if (!openLiveSearch(keyword)) {
       setTargetLiveSearchResult(lastSearchFailureReason || "target_search_open_failed", {
         keyword: keyword,
@@ -1084,10 +1104,16 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       });
       return false;
     }
+    if (isInterrupted("after_open_live_search")) {
+      return false;
+    }
 
     ensureTargetLiveSearchComprehensiveTab(keyword, 0);
 
     for (var attempt = 1; attempt <= 4; attempt++) {
+      if (isInterrupted("attempt_" + attempt + "_start")) {
+        return false;
+      }
       if (isLiveRoomVisible()) {
         if (confirmTargetLiveRoom(keyword, targetKeywords, attempt, "already_in_live_room")) {
           logger.info("target live search already in target live room", { attempt: attempt, keyword: keyword });
@@ -1095,6 +1121,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
             keyword: keyword,
             targetKeywords: targetKeywords,
             attempt: attempt,
+            elapsedMs: Date.now() - startedAt,
             source: "already_in_live_room"
           });
           return true;
@@ -1116,15 +1143,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         ensureTargetLiveSearchComprehensiveTab(keyword, attempt);
         continue;
       }
-
-      if (clickVisibleTargetLiveBadgeCardFromSearch(keyword, targetKeywords, targetRoom, attempt)) {
-        setTargetLiveSearchResult("room_verified", {
-          keyword: keyword,
-          targetKeywords: targetKeywords,
-          attempt: attempt,
-          source: "visible_live_badge_card"
-        });
-        return true;
+      if (isInterrupted("attempt_" + attempt + "_after_recover")) {
+        return false;
       }
 
       if (clickTargetUserLiveEntryFromSearch(keyword, targetKeywords, targetRoom, attempt)) {
@@ -1132,9 +1152,27 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
           keyword: keyword,
           targetKeywords: targetKeywords,
           attempt: attempt,
+          elapsedMs: Date.now() - startedAt,
           source: "target_user_live_entry"
         });
         return true;
+      }
+      if (isInterrupted("attempt_" + attempt + "_after_user_entry")) {
+        return false;
+      }
+
+      if (clickVisibleTargetLiveBadgeCardFromSearch(keyword, targetKeywords, targetRoom, attempt)) {
+        setTargetLiveSearchResult("room_verified", {
+          keyword: keyword,
+          targetKeywords: targetKeywords,
+          attempt: attempt,
+          elapsedMs: Date.now() - startedAt,
+          source: "visible_live_badge_card"
+        });
+        return true;
+      }
+      if (isInterrupted("attempt_" + attempt + "_after_badge_card")) {
+        return false;
       }
 
       if (clickVisibleTargetLiveCardFromSearch(keyword, targetKeywords, attempt)) {
@@ -1142,9 +1180,13 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
           keyword: keyword,
           targetKeywords: targetKeywords,
           attempt: attempt,
+          elapsedMs: Date.now() - startedAt,
           source: "visible_target_live_card"
         });
         return true;
+      }
+      if (isInterrupted("attempt_" + attempt + "_after_live_card")) {
+        return false;
       }
 
       if (clickVisibleTargetLiveCardByTextFallback(keyword, targetKeywords, attempt)) {
@@ -1152,9 +1194,13 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
           keyword: keyword,
           targetKeywords: targetKeywords,
           attempt: attempt,
+          elapsedMs: Date.now() - startedAt,
           source: "text_coordinate_fallback"
         });
         return true;
+      }
+      if (isInterrupted("attempt_" + attempt + "_after_text_fallback")) {
+        return false;
       }
 
       if (clickVisibleTargetLiveCardByOcrFallback(keyword, targetKeywords, attempt)) {
@@ -1162,9 +1208,13 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
           keyword: keyword,
           targetKeywords: targetKeywords,
           attempt: attempt,
+          elapsedMs: Date.now() - startedAt,
           source: "ocr_coordinate_fallback"
         });
         return true;
+      }
+      if (isInterrupted("attempt_" + attempt + "_after_ocr_fallback")) {
+        return false;
       }
 
       var entry = findTargetLiveSearchEntry(targetKeywords);
@@ -1173,6 +1223,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
           keyword: keyword,
           targetKeywords: targetKeywords,
           attempt: attempt,
+          elapsedMs: Date.now() - startedAt,
           source: "target_live_search_entry"
         });
         return true;
@@ -1186,6 +1237,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
           textSample: extractVisibleText().slice(0, 180)
         });
         advanceTargetLiveSearchResults(keyword, attempt);
+        if (isInterrupted("attempt_" + attempt + "_after_scroll")) {
+          return false;
+        }
       }
     }
 
@@ -1196,6 +1250,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     setTargetLiveSearchResult(finalReason, {
       keyword: keyword,
       targetKeywords: targetKeywords,
+      elapsedMs: Date.now() - startedAt,
       textSample: extractVisibleText().slice(0, 220)
     });
     logger.warn("target live search failed to enter live room", {
@@ -1739,6 +1794,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         targetBounds: targetBlock && targetBlock.bounds
       });
       if (!candidate || !candidate.bounds) {
+        continue;
+      }
+      if (candidate.type === "user_live_row") {
         continue;
       }
       var key = [candidate.type, candidate.bounds.left, candidate.bounds.top, candidate.bounds.right, candidate.bounds.bottom].join(":");

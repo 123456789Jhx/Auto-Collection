@@ -103,6 +103,12 @@ function createControlLoop(context) {
     if (!config.upload.controlEnabled) {
       return;
     }
+    var now = Date.now();
+    if (!shouldPollControlCommands(force, now)) {
+      return;
+    }
+    commandControl.lastPollAt = now;
+
     if (uploader.isRegistered && !uploader.isRegistered()) {
       if (force) {
         logger.warn("backend command polling skipped: device not registered", {
@@ -111,12 +117,6 @@ function createControlLoop(context) {
       }
       return;
     }
-    var intervalMs = (config.upload.commandPollIntervalSeconds || 30) * 1000;
-    var now = Date.now();
-    if (!force && now - commandControl.lastPollAt < intervalMs) {
-      return;
-    }
-    commandControl.lastPollAt = now;
 
     var commands = compactControlCommands(uploader.pollCommands(config.device.deviceId));
     if (commands.length > 0 || force) {
@@ -138,8 +138,22 @@ function createControlLoop(context) {
     }
   }
 
+  function shouldPollControlCommands(force, now) {
+    if (!config.upload.controlEnabled) {
+      return false;
+    }
+    if (force) {
+      return true;
+    }
+    var intervalMs = (config.upload.commandPollIntervalSeconds || 30) * 1000;
+    return now - commandControl.lastPollAt >= intervalMs;
+  }
+
   function pollControlCommandsAsync(force) {
     if (!config.upload.controlEnabled) {
+      return;
+    }
+    if (!shouldPollControlCommands(force, Date.now())) {
       return;
     }
     if (commandControl.polling) {
@@ -631,14 +645,17 @@ function createControlLoop(context) {
       floatyControl.update({
         running: true,
         paused: true,
+        stopRequested: true,
         manualOverride: true,
         liveCommentControlStatus: "paused",
         liveCommentExecutionEnabled: false,
         lastManualAction: "backend_live_comment_pause",
         lastMessage: "直播评论已暂停"
       });
+      counters.lastStopReason = "manual_pause";
       logCommandApplied(command, "INFO", {
         taskType: payload.taskType,
+        stopRequested: true,
         liveCommentControlStatus: "paused",
         liveCommentExecutionEnabled: false
       });

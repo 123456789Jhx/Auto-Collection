@@ -34,7 +34,11 @@ function createLiveCommentRunner(context) {
       return true;
     }
     if (state && state.stopRequested) {
-      setStopReason("manual_stop");
+      setStopReason(counters.lastStopReason === "manual_pause" || state.paused ? "manual_pause" : "manual_stop");
+      return true;
+    }
+    if (state && (state.paused || state.liveCommentExecutionEnabled === false)) {
+      setStopReason("manual_pause");
       return true;
     }
     return false;
@@ -222,10 +226,13 @@ function createLiveCommentRunner(context) {
       return riskAtStart;
     }
 
-    if (!douyin.openTargetLiveRoomFromSearch || !douyin.openTargetLiveRoomFromSearch({ keyword: keyword, targetRoom: targetRoom })) {
+    if (!douyin.openTargetLiveRoomFromSearch || !douyin.openTargetLiveRoomFromSearch({ keyword: keyword, targetRoom: targetRoom, shouldStop: shouldStop })) {
       var searchResult = douyin.getLastTargetLiveSearchResult ? douyin.getLastTargetLiveSearchResult() : {};
       var reason = searchResult.reason || "target_live_room_search_failed";
       var text = readVisibleText();
+      if (shouldStop()) {
+        return stopForFailure(counters.lastStopReason || "manual_stop", "live_comment_target_search", text);
+      }
       var riskAfterSearch = detectRisk("live_comment_search_failed");
       if (riskAfterSearch) {
         return riskAfterSearch;

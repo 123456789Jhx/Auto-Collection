@@ -10,8 +10,7 @@ import {
 import { findDeviceByCode, markDeviceCommandIssued, resolveDeviceByToken } from "../repositories/device.repository";
 import { findTaskByCode } from "../repositories/task.repository";
 import { updateTaskAssignmentByCommandId } from "../repositories/task-assignment.repository";
-
-const STATE_COMMAND_TYPES = ["START", "RESUME", "PAUSE", "STOP"];
+import { supersededCommandTypesFor } from "./command-policy";
 
 function addSeconds(seconds: number) {
   return new Date(Date.now() + seconds * 1000);
@@ -26,8 +25,9 @@ export async function createCommand(payload: CreateMobileCommandPayload) {
     throw new Error("DEVICE_UNREGISTERED");
   }
 
-  if (STATE_COMMAND_TYPES.includes(payload.commandType)) {
-    await ignorePendingCommandsByDeviceId(device.id, STATE_COMMAND_TYPES, "superseded_by_new_state_command");
+  const supersededCommandTypes = supersededCommandTypesFor(payload.commandType);
+  if (supersededCommandTypes.length > 0) {
+    await ignorePendingCommandsByDeviceId(device.id, supersededCommandTypes, "superseded_by_new_state_command");
   }
 
   const command = await createMobileCommand({

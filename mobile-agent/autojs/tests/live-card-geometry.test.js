@@ -43,6 +43,21 @@ const screen = { width: 450, height: 900 };
 {
   const candidate = geometry.buildLiveCardCandidateFromBadge(
     screen,
+    rect(54, 218, 106, 248),
+    { targetBounds: rect(132, 206, 255, 258) }
+  );
+
+  assert.strictEqual(candidate.type, "user_live_row");
+  assert(candidate.bounds.top <= 206, "user live row should include the account row");
+  assert(candidate.bounds.bottom >= 258, "user live row should include the account text");
+  assert.strictEqual(candidate.clickPoints[0].name, "avatar_live_badge");
+  assert(candidate.clickPoints[0].x < screen.width * 0.25, "first click should target the avatar/live badge");
+  assertPointInside(candidate.clickPoints[0], candidate.bounds);
+}
+
+{
+  const candidate = geometry.buildLiveCardCandidateFromBadge(
+    screen,
     rect(248, 302, 294, 334),
     { targetBounds: rect(22, 170, 424, 286) }
   );
