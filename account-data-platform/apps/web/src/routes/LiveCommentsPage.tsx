@@ -66,10 +66,8 @@ type DeviceProfileFormValues = {
 
 type TargetRoomFormValues = {
   enabled?: boolean;
-  anchorName?: string;
-  titleKeywords?: string;
-  roomKeywords?: string;
-  allowRealSend?: boolean;
+  searchKeywords?: string;
+  matchKeywords?: string;
   maxSendCount?: number;
   minSendIntervalSeconds?: number;
 };
@@ -230,6 +228,19 @@ function splitLines(value?: string) {
     .filter(Boolean);
 }
 
+function readConfigStringList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+  }
+  return typeof value === "string" ? splitLines(value) : [];
+}
+
+function uniqueLines(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean))).join("\n");
+}
+
 function numberFromConfig(config: Record<string, unknown> | null | undefined, key: string, fallback: number) {
   const value = config?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -246,12 +257,14 @@ function getProfileField(profile: Record<string, unknown>, path: string[]) {
 
 function targetRoomFormValues(config?: Record<string, unknown> | null): TargetRoomFormValues {
   const targetRoom = (config?.targetRoom && typeof config.targetRoom === "object" ? config.targetRoom : {}) as Record<string, unknown>;
+  const legacyAnchor = typeof targetRoom.anchorName === "string" ? targetRoom.anchorName.trim() : "";
+  const legacyTitleKeywords = readConfigStringList(targetRoom.titleKeywords);
+  const legacyRoomKeywords = readConfigStringList(targetRoom.roomKeywords);
+  const legacyKeywords = uniqueLines([legacyAnchor, ...legacyTitleKeywords, ...legacyRoomKeywords]);
   return {
     enabled: targetRoom.enabled === true,
-    anchorName: String(targetRoom.anchorName || ""),
-    titleKeywords: Array.isArray(targetRoom.titleKeywords) ? targetRoom.titleKeywords.join("\n") : "",
-    roomKeywords: Array.isArray(targetRoom.roomKeywords) ? targetRoom.roomKeywords.join("\n") : "",
-    allowRealSend: targetRoom.allowRealSend === true,
+    searchKeywords: uniqueLines(readConfigStringList(targetRoom.searchKeywords)) || legacyKeywords,
+    matchKeywords: uniqueLines(readConfigStringList(targetRoom.matchKeywords)) || legacyKeywords,
     maxSendCount: Number(targetRoom.maxSendCount || 3),
     minSendIntervalSeconds: Number(targetRoom.minSendIntervalSeconds || 30)
   };
@@ -260,10 +273,8 @@ function targetRoomFormValues(config?: Record<string, unknown> | null): TargetRo
 function buildTargetRoomConfig(values: TargetRoomFormValues) {
   return {
     enabled: values.enabled === true,
-    anchorName: values.anchorName?.trim() || "",
-    titleKeywords: splitLines(values.titleKeywords),
-    roomKeywords: splitLines(values.roomKeywords),
-    allowRealSend: values.allowRealSend === true,
+    searchKeywords: splitLines(values.searchKeywords),
+    matchKeywords: splitLines(values.matchKeywords),
     maxSendCount: Math.max(1, Number(values.maxSendCount || 3)),
     minSendIntervalSeconds: Math.max(10, Number(values.minSendIntervalSeconds || 30))
   };
@@ -519,7 +530,7 @@ export function LiveCommentsPage() {
 
       <section className="ops-stats">
         <div className="ops-stat"><div className="ops-stat-label">总记录</div><div className="ops-stat-value">{totalCount}</div><div className="ops-stat-note">计划、发送、跳过、失败总量</div></div>
-        <div className="ops-stat"><div className="ops-stat-label">已计划</div><div className="ops-stat-value">{plannedCount}</div><div className="ops-stat-note">等待执行或真实发送</div></div>
+        <div className="ops-stat"><div className="ops-stat-label">已计划</div><div className="ops-stat-value">{plannedCount}</div><div className="ops-stat-note">等待执行或记录</div></div>
         <div className="ops-stat"><div className="ops-stat-label">已发送</div><div className="ops-stat-value ok">{sentCount}</div><div className="ops-stat-note">手机已执行发送</div></div>
         <div className="ops-stat"><div className="ops-stat-label">跳过</div><div className="ops-stat-value warn">{skippedCount}</div><div className="ops-stat-note">规则判断不适合发送</div></div>
         <div className="ops-stat"><div className="ops-stat-label">失败</div><div className="ops-stat-value danger">{failedCount}</div><div className="ops-stat-note">需要排查账号或直播间</div></div>
@@ -778,22 +789,16 @@ function TargetRoomModal(props: {
   onSave: () => void;
 }) {
   return (
-    <Modal title="指定直播间测试配置" open={props.open} onCancel={props.onCancel} onOk={props.onSave} confirmLoading={props.loading} okText="保存" cancelText="取消" width={760}>
+    <Modal title="关键词直播间配置" open={props.open} onCancel={props.onCancel} onOk={props.onSave} confirmLoading={props.loading} okText="保存" cancelText="取消" width={760}>
       <Form form={props.form} layout="vertical">
         <Form.Item label="启用指定直播间模式" name="enabled" valuePropName="checked">
           <Switch />
         </Form.Item>
-        <Form.Item label="主播账号名" name="anchorName">
-          <Input placeholder="填写目标直播间主播昵称或账号名" />
+        <Form.Item label="直播搜索关键词" name="searchKeywords">
+          <Input.TextArea rows={3} placeholder="用于抖音搜索，一行一个；例如：爱番茄的蛋" />
         </Form.Item>
-        <Form.Item label="直播间标题关键词" name="titleKeywords">
-          <Input.TextArea rows={3} placeholder="一行一个，也可用逗号分隔" />
-        </Form.Item>
-        <Form.Item label="直播间画面关键词" name="roomKeywords">
-          <Input.TextArea rows={3} placeholder="一行一个，也可用逗号分隔" />
-        </Form.Item>
-        <Form.Item label="允许真实发送" name="allowRealSend" valuePropName="checked">
-          <Switch />
+        <Form.Item label="直播间匹配关键词" name="matchKeywords">
+          <Input.TextArea rows={3} placeholder="用于校验直播间标题、画面或评论，一行一个；留空时使用搜索关键词" />
         </Form.Item>
         <Space.Compact style={{ width: "100%" }}>
           <Form.Item label="最多发送条数" name="maxSendCount" style={{ width: "50%" }}>

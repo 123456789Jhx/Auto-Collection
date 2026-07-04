@@ -26,19 +26,68 @@ function createCollectorApp(context) {
     return keywords[Math.floor(Math.random() * keywords.length)];
   }
 
+  function addTargetKeyword(result, value) {
+    value = String(value || "").replace(/\s+/g, " ").trim();
+    if (!value) {
+      return;
+    }
+    for (var i = 0; i < result.length; i++) {
+      if (result[i] === value) {
+        return;
+      }
+    }
+    result.push(value);
+  }
+
+  function addTargetKeywordList(result, value) {
+    if (typeof value === "string") {
+      value = value.split(/[\n,，]/);
+    } else {
+      value = value || [];
+    }
+    if (!value.length) {
+      return;
+    }
+    for (var i = 0; i < value.length; i++) {
+      addTargetKeyword(result, value[i]);
+    }
+  }
+
+  function getTargetSearchKeywords(targetRoom) {
+    targetRoom = targetRoom || {};
+    var result = [];
+    addTargetKeywordList(result, targetRoom.searchKeywords);
+    if (result.length) {
+      return result;
+    }
+    addTargetKeyword(result, targetRoom.anchorName);
+    addTargetKeywordList(result, targetRoom.titleKeywords);
+    addTargetKeywordList(result, targetRoom.roomKeywords);
+    return result;
+  }
+
+  function getTargetMatchKeywords(targetRoom) {
+    targetRoom = targetRoom || {};
+    var result = [];
+    addTargetKeywordList(result, targetRoom.matchKeywords);
+    if (result.length) {
+      return result;
+    }
+    addTargetKeywordList(result, targetRoom.searchKeywords);
+    if (result.length) {
+      return result;
+    }
+    addTargetKeyword(result, targetRoom.anchorName);
+    addTargetKeywordList(result, targetRoom.titleKeywords);
+    addTargetKeywordList(result, targetRoom.roomKeywords);
+    return result;
+  }
+
   function pickLiveCommentSearchKeyword() {
-    var botConfig = config.task.liveCommentBotConfig || {};
-    var targetRoom = botConfig.targetRoom || {};
-    var titleKeywords = targetRoom.titleKeywords || [];
-    var roomKeywords = targetRoom.roomKeywords || [];
-    if (targetRoom.anchorName) {
-      return String(targetRoom.anchorName);
-    }
-    if (titleKeywords.length > 0) {
-      return String(titleKeywords[0]);
-    }
-    if (roomKeywords.length > 0) {
-      return String(roomKeywords[0]);
+    var targetRoom = getLiveCommentTargetRoom();
+    var keywords = getTargetSearchKeywords(targetRoom);
+    if (keywords.length) {
+      return keywords[0];
     }
     return pickRandomKeyword();
   }
@@ -50,11 +99,7 @@ function createCollectorApp(context) {
 
   function shouldEnterTargetLiveRoom() {
     var targetRoom = getLiveCommentTargetRoom();
-    return targetRoom.enabled === true && !!(
-      targetRoom.anchorName ||
-      (targetRoom.titleKeywords && targetRoom.titleKeywords.length) ||
-      (targetRoom.roomKeywords && targetRoom.roomKeywords.length)
-    );
+    return targetRoom.enabled === true && getTargetSearchKeywords(targetRoom).length > 0;
   }
 
   function isLiveCommentPriorityRequested() {
@@ -75,21 +120,23 @@ function createCollectorApp(context) {
       context.targetLiveRoomEntry = {
         enteredAt: Date.now(),
         keyword: liveKeyword,
-        anchorName: targetRoom.anchorName || "",
-        titleKeywords: targetRoom.titleKeywords || [],
-        roomKeywords: targetRoom.roomKeywords || []
+        searchKeywords: getTargetSearchKeywords(targetRoom),
+        matchKeywords: getTargetMatchKeywords(targetRoom),
+        anchorName: targetRoom.anchorName || ""
       };
       logger.info("live comment: entered target live room from search", {
         reason: reason || "",
         keyword: liveKeyword,
-        anchorName: targetRoom.anchorName || "",
+        searchKeywords: getTargetSearchKeywords(targetRoom),
+        matchKeywords: getTargetMatchKeywords(targetRoom),
         searchResult: successSearchResult
       });
       controlLoop.reportRuntimeLog("INFO", "live comment: entered target live room from search", {
         phase: "live_comment_target_search",
         reason: reason || "",
         keyword: liveKeyword,
-        anchorName: targetRoom.anchorName || "",
+        searchKeywords: getTargetSearchKeywords(targetRoom),
+        matchKeywords: getTargetMatchKeywords(targetRoom),
         searchResult: successSearchResult
       });
       return true;
@@ -101,7 +148,8 @@ function createCollectorApp(context) {
       reason: reason || "",
       failureReason: failureReason,
       keyword: liveKeyword,
-      anchorName: targetRoom.anchorName || "",
+      searchKeywords: getTargetSearchKeywords(targetRoom),
+      matchKeywords: getTargetMatchKeywords(targetRoom),
       searchResult: searchResult
     });
     controlLoop.reportRuntimeLog("WARN", "live comment: target live room search failed", {
@@ -109,7 +157,8 @@ function createCollectorApp(context) {
       reason: reason || "",
       failureReason: failureReason,
       keyword: liveKeyword,
-      anchorName: targetRoom.anchorName || "",
+      searchKeywords: getTargetSearchKeywords(targetRoom),
+      matchKeywords: getTargetMatchKeywords(targetRoom),
       searchResult: searchResult
     });
     return false;

@@ -134,20 +134,66 @@ function createLiveCommentRunner(context) {
     return botConfig.targetRoom || {};
   }
 
-  function pickKeyword(targetRoom) {
+  function addTargetKeyword(result, value) {
+    value = String(value || "").replace(/\s+/g, " ").trim();
+    if (!value) {
+      return;
+    }
+    for (var i = 0; i < result.length; i++) {
+      if (result[i] === value) {
+        return;
+      }
+    }
+    result.push(value);
+  }
+
+  function addTargetKeywordList(result, value) {
+    if (typeof value === "string") {
+      value = value.split(/[\n,，]/);
+    } else {
+      value = value || [];
+    }
+    if (!value.length) {
+      return;
+    }
+    for (var i = 0; i < value.length; i++) {
+      addTargetKeyword(result, value[i]);
+    }
+  }
+
+  function getSearchKeywords(targetRoom) {
     targetRoom = targetRoom || {};
-    var titleKeywords = targetRoom.titleKeywords || [];
-    var roomKeywords = targetRoom.roomKeywords || [];
-    if (targetRoom.anchorName) {
-      return String(targetRoom.anchorName).replace(/\s+/g, " ").trim();
+    var result = [];
+    addTargetKeywordList(result, targetRoom.searchKeywords);
+    if (result.length) {
+      return result;
     }
-    if (titleKeywords.length > 0) {
-      return String(titleKeywords[0]).replace(/\s+/g, " ").trim();
+    addTargetKeyword(result, targetRoom.anchorName);
+    addTargetKeywordList(result, targetRoom.titleKeywords);
+    addTargetKeywordList(result, targetRoom.roomKeywords);
+    return result;
+  }
+
+  function getMatchKeywords(targetRoom) {
+    targetRoom = targetRoom || {};
+    var result = [];
+    addTargetKeywordList(result, targetRoom.matchKeywords);
+    if (result.length) {
+      return result;
     }
-    if (roomKeywords.length > 0) {
-      return String(roomKeywords[0]).replace(/\s+/g, " ").trim();
+    addTargetKeywordList(result, targetRoom.searchKeywords);
+    if (result.length) {
+      return result;
     }
-    return "";
+    addTargetKeyword(result, targetRoom.anchorName);
+    addTargetKeywordList(result, targetRoom.titleKeywords);
+    addTargetKeywordList(result, targetRoom.roomKeywords);
+    return result;
+  }
+
+  function pickKeyword(targetRoom) {
+    var keywords = getSearchKeywords(targetRoom);
+    return keywords.length ? keywords[0] : "";
   }
 
   function hasTargetRoom(targetRoom) {
@@ -244,9 +290,9 @@ function createLiveCommentRunner(context) {
     context.targetLiveRoomEntry = {
       enteredAt: Date.now(),
       keyword: keyword,
-      anchorName: targetRoom && targetRoom.anchorName ? String(targetRoom.anchorName) : keyword,
-      titleKeywords: (targetRoom && targetRoom.titleKeywords) || [],
-      roomKeywords: (targetRoom && targetRoom.roomKeywords) || [],
+      searchKeywords: getSearchKeywords(targetRoom),
+      matchKeywords: getMatchKeywords(targetRoom),
+      anchorName: targetRoom && targetRoom.anchorName ? String(targetRoom.anchorName) : "",
       source: searchResult && searchResult.source ? searchResult.source : "",
       reason: searchResult && searchResult.reason ? searchResult.reason : ""
     };
@@ -292,12 +338,14 @@ function createLiveCommentRunner(context) {
     counters.videoRemainingMinutes = 0;
 
     var targetRoom = options.targetRoom || buildTargetRoom();
-    var keyword = String(options.keyword || pickKeyword(targetRoom) || "").replace(/\s+/g, " ").trim();
+    var searchKeywords = options.keyword ? [String(options.keyword).replace(/\s+/g, " ").trim()] : getSearchKeywords(targetRoom);
+    var keyword = String(searchKeywords[0] || pickKeyword(targetRoom) || "").replace(/\s+/g, " ").trim();
     report("INFO", "直播评论独立任务启动", {
       phase: "live_comment_start",
       taskType: "live_comment",
       keyword: keyword,
-      anchorName: targetRoom.anchorName || ""
+      searchKeywords: searchKeywords,
+      matchKeywords: getMatchKeywords(targetRoom)
     });
 
     if (!hasTargetRoom(targetRoom)) {
@@ -311,9 +359,18 @@ function createLiveCommentRunner(context) {
       return riskAtStart;
     }
 
-    if (!douyin.openTargetLiveRoomFromSearch || !douyin.openTargetLiveRoomFromSearch({ keyword: keyword, targetRoom: targetRoom, shouldStop: shouldStop })) {
-      var searchResult = douyin.getLastTargetLiveSearchResult ? douyin.getLastTargetLiveSearchResult() : {};
-      var reason = searchResult.reason || "target_live_room_search_failed";
+    var verifiedSearchResult = null;
+    var lastSearchResult = {};
+    for (var i = 0; i < searchKeywords.length; i++) {
+      keyword = String(searchKeywords[i] || "").replace(/\s+/g, " ").trim();
+      if (!keyword) {
+        continue;
+      }
+      if (douyin.openTargetLiveRoomFromSearch && douyin.openTargetLiveRoomFromSearch({ keyword: keyword, targetRoom: targetRoom, shouldStop: shouldStop })) {
+        verifiedSearchResult = douyin.getLastTargetLiveSearchResult ? douyin.getLastTargetLiveSearchResult() : {};
+        break;
+      }
+      lastSearchResult = douyin.getLastTargetLiveSearchResult ? douyin.getLastTargetLiveSearchResult() : {};
       var text = readVisibleText();
       if (shouldStop()) {
         return stopForFailure(counters.lastStopReason || "manual_stop", "live_comment_target_search", text);
@@ -322,10 +379,21 @@ function createLiveCommentRunner(context) {
       if (riskAfterSearch) {
         return riskAfterSearch;
       }
-      return stopForFailure(reason, "live_comment_target_search", text);
+      if (i < searchKeywords.length - 1) {
+        report("WARN", "直播评论目标关键词未命中，尝试下一个关键词", {
+          phase: "live_comment_target_search_retry",
+          taskType: "live_comment",
+          keyword: keyword,
+          nextKeyword: searchKeywords[i + 1],
+          searchResult: lastSearchResult
+        });
+      }
     }
 
-    var verifiedSearchResult = douyin.getLastTargetLiveSearchResult ? douyin.getLastTargetLiveSearchResult() : {};
+    if (!verifiedSearchResult) {
+      var reason = lastSearchResult.reason || "target_live_room_search_failed";
+      return stopForFailure(reason, "live_comment_target_search", readVisibleText());
+    }
     rememberVerifiedTargetRoom(keyword, targetRoom, verifiedSearchResult);
     report("INFO", "直播评论已进入目标直播间", {
       phase: "target_room_verified",

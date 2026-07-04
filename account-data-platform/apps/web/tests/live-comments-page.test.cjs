@@ -31,6 +31,24 @@ function testSavingTargetRoomUsesReplyPoolMode() {
   );
 }
 
+function testTargetRoomConfigUsesKeywordFieldsOnly() {
+  var formSourceStart = source.indexOf("type TargetRoomFormValues");
+  var formSourceEnd = source.indexOf("type CommandType", formSourceStart);
+  var formSource = source.slice(formSourceStart, formSourceEnd);
+  var builderStart = source.indexOf("function buildTargetRoomConfig");
+  var builderEnd = source.indexOf("export function LiveCommentsPage", builderStart);
+  var builderSource = source.slice(builderStart, builderEnd);
+
+  assert(formSourceStart >= 0 && formSourceEnd > formSourceStart, "target room form values type must exist");
+  assert(builderStart >= 0 && builderEnd > builderStart, "target room config builder must exist");
+  assert(/searchKeywords/.test(formSource), "target room form should expose searchKeywords");
+  assert(/matchKeywords/.test(formSource), "target room form should expose matchKeywords");
+  assert(/searchKeywords\s*:\s*splitLines/.test(builderSource), "target room config should save searchKeywords");
+  assert(/matchKeywords\s*:\s*splitLines/.test(builderSource), "target room config should save matchKeywords");
+  assert.strictEqual(/allowRealSend/.test(formSource + builderSource), false, "target room config must not keep real-send switch");
+}
+
 testSavingTargetRoomUsesReplyPoolMode();
+testTargetRoomConfigUsesKeywordFieldsOnly();
 
 console.log("live-comments-page tests passed");

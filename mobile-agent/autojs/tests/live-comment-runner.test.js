@@ -2,6 +2,7 @@ var assert = require("assert");
 var fs = require("fs");
 var path = require("path");
 var createLiveCommentRunner = require("../app/live-comment-runner.js").createLiveCommentRunner;
+var createLiveRoomSampler = require("../domain/live-room-sampler.js").createLiveRoomSampler;
 var riskDetector = require("../domain/risk-detector.js");
 
 function createLogger() {
@@ -28,8 +29,8 @@ function createBaseContext(overrides) {
         liveCommentBotConfig: {
           targetRoom: {
             enabled: true,
-            anchorName: "目标主播",
-            allowRealSend: false
+            searchKeywords: ["target-live-keyword"],
+            matchKeywords: ["target-live-keyword"]
           }
         },
         liveReadonlyEnabled: true
@@ -172,16 +173,81 @@ function testTargetUserLiveEntryPrecedesGenericLiveBadgeCard() {
   var start = source.indexOf("function openTargetLiveRoomFromSearch(options)");
   var end = source.indexOf("function clickTargetUserLiveEntryFromSearch", start);
   var body = source.slice(start, end);
-  var userEntryIndex = body.indexOf("clickTargetUserLiveEntryFromSearch(");
+  var userEntryIndex = body.indexOf("hasAccountTargetRoom(targetRoom) && clickTargetUserLiveEntryFromSearch(");
   var badgeCardIndex = body.indexOf("clickVisibleTargetLiveBadgeCardFromSearch(");
 
   assert(start >= 0 && end > start, "target live search function must be present");
-  assert(userEntryIndex >= 0, "target user live entry must be attempted");
+  assert(userEntryIndex >= 0, "account user live entry must only be attempted for account-based legacy rules");
   assert(badgeCardIndex >= 0, "generic live badge card fallback must be attempted");
   assert(
     userEntryIndex < badgeCardIndex,
-    "target user live entry should be attempted before generic live badge cards"
+    "account user live entry should be attempted before generic live badge cards when account rules exist"
   );
+}
+
+function testKeywordUserLiveEntryPrecedesGenericLiveBadgeCard() {
+  var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin.js"), "utf8");
+  var start = source.indexOf("function openTargetLiveRoomFromSearch(options)");
+  var end = source.indexOf("function clickTargetUserLiveEntryFromSearch", start);
+  var body = source.slice(start, end);
+  var keywordUserEntryIndex = body.indexOf("clickKeywordUserLiveEntryFromSearch(");
+  var badgeCardIndex = body.indexOf("clickVisibleTargetLiveBadgeCardFromSearch(");
+
+  assert(start >= 0 && end > start, "target live search function must be present");
+  assert(keywordUserEntryIndex >= 0, "keyword user live entry must be attempted");
+  assert(badgeCardIndex >= 0, "generic live badge card fallback must be attempted");
+  assert(
+    keywordUserEntryIndex < badgeCardIndex,
+    "keyword user live entry should be attempted before generic live badge cards"
+  );
+}
+
+function testLiveCommentUsesConfiguredSearchKeyword() {
+  var searchedKeyword = "";
+  var context = createBaseContext();
+  context.config.task.liveCommentBotConfig.targetRoom = {
+    enabled: true,
+    searchKeywords: ["keyword-from-backend"],
+    matchKeywords: ["room-match-keyword"]
+  };
+  context.douyin.openTargetLiveRoomFromSearch = function (options) {
+    searchedKeyword = options && options.keyword;
+    return true;
+  };
+  var runner = createLiveCommentRunner(context);
+
+  var result = runner.runTargetLiveCommentTask({ durationMinutes: 0 });
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(searchedKeyword, "keyword-from-backend");
+  assert.deepStrictEqual(context.targetLiveRoomEntry.searchKeywords, ["keyword-from-backend"]);
+  assert.deepStrictEqual(context.targetLiveRoomEntry.matchKeywords, ["room-match-keyword"]);
+}
+
+function testLiveCommentTriesNextSearchKeywordWhenFirstMisses() {
+  var searchedKeywords = [];
+  var context = createBaseContext();
+  context.config.task.liveCommentBotConfig.targetRoom = {
+    enabled: true,
+    searchKeywords: ["missing-keyword", "working-keyword"],
+    matchKeywords: ["room-match-keyword"]
+  };
+  context.douyin.openTargetLiveRoomFromSearch = function (options) {
+    searchedKeywords.push(options && options.keyword);
+    return searchedKeywords.length === 2;
+  };
+  context.douyin.getLastTargetLiveSearchResult = function () {
+    return searchedKeywords.length === 1
+      ? { reason: "target_live_card_not_found", keyword: "missing-keyword" }
+      : { reason: "room_verified", keyword: "working-keyword" };
+  };
+  var runner = createLiveCommentRunner(context);
+
+  var result = runner.runTargetLiveCommentTask({ durationMinutes: 0 });
+
+  assert.strictEqual(result.success, true);
+  assert.deepStrictEqual(searchedKeywords, ["missing-keyword", "working-keyword"]);
+  assert.strictEqual(context.targetLiveRoomEntry.keyword, "working-keyword");
 }
 
 function testLiveCommentSearchFailureStopsWithReason() {
@@ -293,7 +359,134 @@ function testLiveCommentClearsTargetRefreshBeforeSampling() {
   assert.strictEqual(refreshFlagDuringSample, false, "target room refresh flag must be cleared before sampling");
   assert.strictEqual(result.liveRoomSample.sampleCount, 1);
   assert.strictEqual(context.liveCommentTargetRoomRefreshRequested, false);
-  assert.strictEqual(context.targetLiveRoomEntry && context.targetLiveRoomEntry.anchorName, "目标主播");
+  assert.deepStrictEqual(context.targetLiveRoomEntry && context.targetLiveRoomEntry.searchKeywords, ["target-live-keyword"]);
+}
+
+function testTargetRoomAllowRealSendDoesNotBypassExecutionGate() {
+  var originalSleep = global.sleep;
+  var sendCount = 0;
+  global.sleep = function () {};
+  try {
+    var context = {
+      config: {
+        device: { deviceId: "device-1" },
+        task: {
+          taskId: "task-1",
+          platform: "douyin",
+          liveReadonlyEnabled: true,
+          liveCommentMode: "agri_chatbot",
+          liveCommentRole: "follower",
+          liveComment: {
+            executeEnabled: false,
+            manualExecutionApproved: false
+          },
+          liveCommentBotConfig: {
+            enabled: true,
+            templatePools: { question: ["不能发送"] },
+            targetRoom: {
+              enabled: true,
+              allowRealSend: true,
+              searchKeywords: ["target-live-keyword"],
+              matchKeywords: ["target-live-keyword"],
+              maxSendCount: 3,
+              minSendIntervalSeconds: 10
+            }
+          }
+        }
+      },
+      logger: createLogger(),
+      floatyControl: {
+        state: {
+          liveCommentControlStatus: "running",
+          liveCommentExecutionEnabled: false
+        }
+      },
+      douyin: {
+        extractFastText: function () {
+          return {
+            combinedText: "target-live-keyword 说点什么 欢迎来到直播间 直播间: target-room",
+            currentPackageName: "com.ss.android.ugc.aweme"
+          };
+        },
+        sendLiveComment: function () {
+          sendCount += 1;
+          return { success: true };
+        }
+      },
+      liveRoomDetector: {
+        detect: function () {
+          return { state: "live_room", readyForCommentRead: true, reasons: ["test"] };
+        }
+      },
+      liveCommentReader: {
+        readFromText: function () {
+          return [{ text: "target-live-keyword 用户: 这是什么", raw: "target-live-keyword 用户: 这是什么" }];
+        }
+      },
+      liveCommentClassifier: {
+        classifyMany: function () { return []; }
+      },
+      liveCommentCache: {
+        addMany: function (comments) { return comments; },
+        size: function () { return 1; }
+      },
+      liveTriggerDetector: null,
+      liveCommentActionPlanner: {
+        recordResult: function () {},
+        shouldStopForFailures: function () { return false; },
+        getState: function () { return {}; }
+      },
+      liveRoomRelevanceDetector: {
+        detect: function () {
+          return {
+            related: false,
+            score: 0,
+            threshold: 100,
+            matchedKeywords: [],
+            negativeKeywords: [],
+            reason: "test"
+          };
+        }
+      },
+      agriCommentBotPlanner: {
+        plan: function () {
+          return {
+            type: "comment",
+            status: "planned",
+            triggerEventId: "event-1",
+            leaderAccountName: "",
+            triggerText: "target-live-keyword",
+            matchedKeywords: ["target-live-keyword"],
+            confidence: 1,
+            replyText: "不能发送",
+            plannedDelayMs: 0,
+            plannedAt: new Date().toISOString(),
+            rawPayload: {}
+          };
+        }
+      },
+      storage: {
+        appendLiveCommentLog: function () {}
+      },
+      uploader: {
+        uploadLiveCommentAction: function () {}
+      },
+      controlLoop: {
+        waitWhilePaused: function () {},
+        pollControlCommandsAsync: function () {}
+      }
+    };
+    var sampler = createLiveRoomSampler(context);
+
+    var result = sampler.sampleCurrentRoom({ maxSamples: 1, sampleIntervalMs: 1 });
+
+    assert.strictEqual(sendCount, 0, "legacy allowRealSend must not bypass unified execution switches");
+    assert.strictEqual(result.sentActionCount, 0);
+    assert.strictEqual(result.plannedActionCount, 1);
+    assert.strictEqual(result.plannedActions[0].status, "planned");
+  } finally {
+    global.sleep = originalSleep;
+  }
 }
 
 function testLiveCommentSamplesUntilDurationExpires() {
@@ -371,11 +564,15 @@ function testRiskDetectorCoversObservedDouyinBlockPage() {
 
 testCollectorDoesNotRouteLiveCommentThroughLivePhase();
 testTargetUserLiveEntryPrecedesGenericLiveBadgeCard();
+testKeywordUserLiveEntryPrecedesGenericLiveBadgeCard();
+testLiveCommentUsesConfiguredSearchKeyword();
+testLiveCommentTriesNextSearchKeywordWhenFirstMisses();
 testLiveCommentSearchFailureStopsWithReason();
 testLiveCommentRiskStopsBeforeCommenting();
 testLiveCommentPauseStopsBeforeSearch();
 testLiveCommentPauseDuringSearchStopsAsPause();
 testLiveCommentClearsTargetRefreshBeforeSampling();
+testTargetRoomAllowRealSendDoesNotBypassExecutionGate();
 testLiveCommentSamplesUntilDurationExpires();
 testLiveCommentDoesNotLoopWhenSamplerDisabled();
 testRiskDetectorCoversObservedDouyinBlockPage();

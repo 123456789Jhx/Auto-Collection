@@ -1059,7 +1059,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     options = options || {};
     var startedAt = Date.now();
     var targetRoom = options.targetRoom || {};
-    var keyword = String(options.keyword || targetRoom.anchorName || "").replace(/\s+/g, " ").trim();
+    var keyword = String(options.keyword || pickTargetRoomSearchKeyword(targetRoom) || "").replace(/\s+/g, " ").trim();
     var targetKeywords = buildTargetRoomKeywords(targetRoom, keyword);
     if (!keyword && targetKeywords.length > 0) {
       keyword = targetKeywords[0];
@@ -1147,7 +1147,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         return false;
       }
 
-      if (clickTargetUserLiveEntryFromSearch(keyword, targetKeywords, targetRoom, attempt)) {
+      if (hasAccountTargetRoom(targetRoom) && clickTargetUserLiveEntryFromSearch(keyword, targetKeywords, targetRoom, attempt)) {
         setTargetLiveSearchResult("room_verified", {
           keyword: keyword,
           targetKeywords: targetKeywords,
@@ -1158,6 +1158,20 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         return true;
       }
       if (isInterrupted("attempt_" + attempt + "_after_user_entry")) {
+        return false;
+      }
+
+      if (!hasAccountTargetRoom(targetRoom) && clickKeywordUserLiveEntryFromSearch(keyword, targetKeywords, targetRoom, attempt)) {
+        setTargetLiveSearchResult("room_verified", {
+          keyword: keyword,
+          targetKeywords: targetKeywords,
+          attempt: attempt,
+          elapsedMs: Date.now() - startedAt,
+          source: "keyword_user_live_entry"
+        });
+        return true;
+      }
+      if (isInterrupted("attempt_" + attempt + "_after_keyword_user_entry")) {
         return false;
       }
 
@@ -1264,6 +1278,37 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function clickTargetUserLiveEntryFromSearch(keyword, targetKeywords, targetRoom, attempt) {
     var block = findTargetUserSearchBlock(targetKeywords, targetRoom);
+    return clickUserLiveEntryBlock(block, keyword, targetKeywords, attempt, "target_user_live_entry");
+  }
+
+  function clickKeywordUserLiveEntryFromSearch(keyword, targetKeywords, targetRoom, attempt) {
+    var block = findKeywordUserSearchBlock(keyword, targetRoom);
+    if (!block) {
+      return false;
+    }
+    var blockText = [block.targetText || "", block.contextText || ""].join("\n");
+    if (targetKeywords && targetKeywords.length && !containsAnyTargetKeyword(blockText, targetKeywords)) {
+      logger.info("keyword user block does not match target keywords, skip", {
+        keyword: keyword,
+        attempt: attempt,
+        targetKeywords: targetKeywords,
+        targetText: block.targetText.slice(0, 80),
+        contextText: block.contextText.slice(0, 180)
+      });
+      setTargetLiveSearchResult("keyword_user_block_not_matched", {
+        keyword: keyword,
+        targetKeywords: targetKeywords,
+        attempt: attempt,
+        candidateType: "keyword_user_block",
+        targetText: block.targetText.slice(0, 80),
+        contextText: block.contextText.slice(0, 180)
+      });
+      return false;
+    }
+    return clickUserLiveEntryBlock(block, keyword, targetKeywords, attempt, "keyword_user_live_entry");
+  }
+
+  function clickUserLiveEntryBlock(block, keyword, targetKeywords, attempt, sourceName) {
     if (!block) {
       return false;
     }
@@ -1271,6 +1316,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     logger.info("target user block detected on search results", {
       keyword: keyword,
       attempt: attempt,
+      source: sourceName,
       targetText: block.targetText.slice(0, 80),
       contextText: block.contextText.slice(0, 180),
       bounds: autojsUtils.formatBounds(block.bounds),
@@ -1288,7 +1334,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         keyword: keyword,
         targetKeywords: targetKeywords,
         attempt: attempt,
-        candidateType: "target_user_block",
+        candidateType: sourceName || "target_user_block",
         targetText: block.targetText.slice(0, 80),
         contextText: block.contextText.slice(0, 180)
       });
@@ -1297,9 +1343,11 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
     var points = buildTargetUserLiveClickPoints(block);
     for (var i = 0; i < points.length; i++) {
+      var clickSource = (sourceName || "target_user_live_entry") + "_" + points[i].name;
       logger.info("click target user live entry", {
         keyword: keyword,
         attempt: attempt,
+        source: sourceName,
         point: points[i].name,
         x: points[i].x,
         y: points[i].y,
@@ -1310,8 +1358,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         text: block.targetText,
         contextText: block.contextText,
         bounds: block.bounds
-      }, points[i].name);
-      autojsUtils.clickPoint(points[i].x, points[i].y, logger, "target_user_live_entry_" + points[i].name);
+      }, clickSource);
+      autojsUtils.clickPoint(points[i].x, points[i].y, logger, clickSource);
       autojsUtils.sleepRandom(3000, 5000);
       var afterText = extractVisibleText();
       if (isEndedTargetLiveRoomText(afterText, targetKeywords)) {
@@ -1328,7 +1376,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         refreshSearchResultsPage(keyword, attempt);
         return false;
       }
-      if (!isSearchResultPage(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, points[i].name)) {
+      if (!isSearchResultPage(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, clickSource)) {
         return true;
       }
       if (!isSearchResultPage(afterText)) {
@@ -1347,6 +1395,19 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function findTargetUserSearchBlock(targetKeywords, targetRoom) {
     var keywords = buildTargetUserSearchKeywords(targetKeywords, targetRoom);
+    return findUserSearchBlockByKeywords(keywords, "target_user");
+  }
+
+  function findKeywordUserSearchBlock(keyword, targetRoom) {
+    var keywords = buildKeywordUserSearchKeywords(keyword, targetRoom);
+    return findUserSearchBlockByKeywords(keywords, "keyword_user");
+  }
+
+  function findUserSearchBlockByKeywords(keywords, sourceName) {
+    keywords = keywords || [];
+    if (!keywords.length) {
+      return null;
+    }
     var nodes = [];
     for (var i = 0; i < keywords.length; i++) {
       pushFoundNodes(nodes, textContains(keywords[i]));
@@ -1405,6 +1466,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       }
     }
     logger.info("target user search block scanned", {
+      source: sourceName || "",
+      keywords: keywords,
       total: nodes.length,
       selected: !!best,
       bestScore: bestScore,
@@ -1415,11 +1478,17 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function buildTargetUserSearchKeywords(targetKeywords, targetRoom) {
     var result = [];
-    addTargetKeywordList(result, targetKeywords || []);
     addTargetKeyword(result, targetRoom && targetRoom.anchorName);
     addTargetKeyword(result, targetRoom && targetRoom.anchorId);
     addTargetKeyword(result, targetRoom && targetRoom.douyinId);
     addTargetKeyword(result, targetRoom && targetRoom.accountId);
+    return result;
+  }
+
+  function buildKeywordUserSearchKeywords(keyword, targetRoom) {
+    var result = [];
+    addTargetKeywordList(result, targetRoom && targetRoom.searchKeywords);
+    addTargetKeyword(result, keyword);
     return result;
   }
 
@@ -1721,7 +1790,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       return false;
     }
 
-    var targetBlock = findTargetUserSearchBlock(targetKeywords, targetRoom);
+    var targetBlock = hasAccountTargetRoom(targetRoom) ? findTargetUserSearchBlock(targetKeywords, targetRoom) : null;
     if (!isReliableTargetUserBlock(targetBlock)) {
       targetBlock = null;
     }
@@ -2250,6 +2319,14 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function buildTargetRoomKeywords(targetRoom, fallbackKeyword) {
     var result = [];
+    addTargetKeywordList(result, targetRoom && targetRoom.matchKeywords);
+    if (result.length) {
+      return result;
+    }
+    addTargetKeywordList(result, targetRoom && targetRoom.searchKeywords);
+    if (result.length) {
+      return result;
+    }
     addTargetKeyword(result, targetRoom && targetRoom.anchorName);
     addTargetKeywordList(result, targetRoom && targetRoom.titleKeywords);
     addTargetKeywordList(result, targetRoom && targetRoom.roomKeywords);
@@ -2257,7 +2334,31 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return result;
   }
 
+  function pickTargetRoomSearchKeyword(targetRoom) {
+    var result = [];
+    addTargetKeywordList(result, targetRoom && targetRoom.searchKeywords);
+    if (result.length) {
+      return result[0];
+    }
+    addTargetKeyword(result, targetRoom && targetRoom.anchorName);
+    addTargetKeywordList(result, targetRoom && targetRoom.titleKeywords);
+    addTargetKeywordList(result, targetRoom && targetRoom.roomKeywords);
+    return result.length ? result[0] : "";
+  }
+
+  function hasAccountTargetRoom(targetRoom) {
+    var result = [];
+    addTargetKeyword(result, targetRoom && targetRoom.anchorName);
+    addTargetKeyword(result, targetRoom && targetRoom.anchorId);
+    addTargetKeyword(result, targetRoom && targetRoom.douyinId);
+    addTargetKeyword(result, targetRoom && targetRoom.accountId);
+    return result.length > 0;
+  }
+
   function addTargetKeywordList(result, values) {
+    if (typeof values === "string") {
+      values = values.split(/[\n,，]/);
+    }
     if (!values || !values.length) {
       return;
     }
@@ -2568,7 +2669,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         return true;
       }
     }
-    if ((source === "node_click" || source === "current_screen_live_entry" || /^search_live_card_/.test(String(source || "")) || /^target_/.test(String(source || "")) || /^live_badge_card_/.test(String(source || "")) || /^ocr_/.test(String(source || ""))) &&
+    if ((source === "node_click" || source === "current_screen_live_entry" || /^search_live_card_/.test(String(source || "")) || /^target_/.test(String(source || "")) || /^keyword_user_live_entry_/.test(String(source || "")) || /^live_badge_card_/.test(String(source || "")) || /^ocr_/.test(String(source || ""))) &&
       !searchState.isResult &&
       /说点什么|欢迎来到直播间|小黄车|粉丝团|礼物|连麦|本场点赞|直播广场/.test(visibleText) &&
       isPendingTargetLiveEntryValid(keyword, targetKeywords, source)) {

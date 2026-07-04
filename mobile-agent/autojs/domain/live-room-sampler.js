@@ -169,9 +169,8 @@ function createLiveRoomSampler(context) {
       logger.info("指定直播间未命中，跳过评论计划", {
         roomName: roomName,
         reason: targetMatch.reason,
-        anchorName: targetRoom.anchorName || "",
-        titleKeywords: targetRoom.titleKeywords || [],
-        roomKeywords: targetRoom.roomKeywords || []
+        searchKeywords: normalizeTargetList(targetRoom.searchKeywords),
+        matchKeywords: normalizeTargetList(targetRoom.matchKeywords)
       });
       return {
         triggerEvents: triggerEvents,
@@ -196,7 +195,7 @@ function createLiveRoomSampler(context) {
     if (targetRoom.enabled === true && targetMatch.matched) {
       relevance.related = true;
       relevance.score = Math.max(Number(relevance.score || 0), Number(relevance.threshold || 1));
-      relevance.reason = targetRoom.allowRealSend === true ? "target_room_real_send_test" : "target_room_matched_plan_only";
+      relevance.reason = "target_room_matched";
     }
     var action = agriCommentBotPlanner.plan({
       taskId: config.task.taskId,
@@ -284,22 +283,32 @@ function createLiveRoomSampler(context) {
     var floatyApproved = !!(context.floatyControl && context.floatyControl.state && context.floatyControl.state.liveCommentExecutionEnabled);
     var botConfig = config.task.liveCommentBotConfig || {};
     var targetRoom = botConfig.targetRoom || {};
-    var targetSendAllowed = targetRoom.enabled === true && targetRoom.allowRealSend === true && withinTargetRoomSendLimit(targetRoom);
-    if (!targetSendAllowed && (!liveCommentConfig.executeEnabled || liveCommentConfig.manualExecutionApproved !== true || !floatyApproved || !action || action.status !== "planned")) {
+    if (!action || action.status !== "planned") {
+      return;
+    }
+    if (!liveCommentConfig.executeEnabled || liveCommentConfig.manualExecutionApproved !== true || !floatyApproved) {
       if (action && action.status === "planned") {
-        logger.info("直播评论计划仅记录，不执行真实发送", {
+        logger.info("直播评论计划仅记录，不执行发送", {
           triggerEventId: action.triggerEventId,
           executeEnabled: !!liveCommentConfig.executeEnabled,
           manualExecutionApproved: liveCommentConfig.manualExecutionApproved === true,
           floatyApproved: floatyApproved,
           targetRoomEnabled: targetRoom.enabled === true,
-          targetRoomAllowRealSend: targetRoom.allowRealSend === true,
-          targetSendAllowed: targetSendAllowed
+          searchKeywords: normalizeTargetList(targetRoom.searchKeywords),
+          matchKeywords: normalizeTargetList(targetRoom.matchKeywords)
         });
       }
       return;
     }
-    if (!action || action.status !== "planned") {
+    if (targetRoom.enabled === true && !withinTargetRoomSendLimit(targetRoom)) {
+      action.status = "skipped";
+      action.skipReason = "target_room_send_limit";
+      logger.info("指定直播间发送频率达到限制，跳过本次发送", {
+        triggerEventId: action.triggerEventId,
+        maxSendCount: Math.max(1, Number(targetRoom.maxSendCount || 3)),
+        minSendIntervalSeconds: Math.max(10, Number(targetRoom.minSendIntervalSeconds || 30))
+      });
+      logLiveCommentAction("live_comment_result", sampleIndex, triggerEvent, action);
       return;
     }
     if (!douyin || !douyin.sendLiveComment) {
@@ -337,7 +346,11 @@ function createLiveRoomSampler(context) {
 
   function normalizeTargetList(value) {
     var result = [];
-    value = value || [];
+    if (typeof value === "string") {
+      value = value.split(/[\n,，]/);
+    } else {
+      value = value || [];
+    }
     for (var i = 0; i < value.length; i++) {
       var item = String(value[i] || "").replace(/\s+/g, " ").trim();
       if (item) {
@@ -347,19 +360,39 @@ function createLiveRoomSampler(context) {
     return result;
   }
 
+  function addTargetKeywords(result, values) {
+    values = normalizeTargetList(values);
+    for (var i = 0; i < values.length; i++) {
+      if (result.indexOf(values[i]) < 0) {
+        result.push(values[i]);
+      }
+    }
+  }
+
+  function buildTargetRoomMatchKeywords(targetRoom) {
+    targetRoom = targetRoom || {};
+    var keywords = [];
+    addTargetKeywords(keywords, targetRoom.matchKeywords);
+    if (keywords.length) {
+      return keywords;
+    }
+    addTargetKeywords(keywords, targetRoom.searchKeywords);
+    if (keywords.length) {
+      return keywords;
+    }
+    addTargetKeywords(keywords, targetRoom.anchorName);
+    addTargetKeywords(keywords, targetRoom.titleKeywords);
+    addTargetKeywords(keywords, targetRoom.roomKeywords);
+    return keywords;
+  }
+
   function matchTargetRoom(text, commentsText, roomName, targetRoom) {
     targetRoom = targetRoom || {};
     if (targetRoom.enabled !== true) {
       return { matched: true, reason: "target_room_disabled" };
     }
     var source = String([text || "", commentsText || "", roomName || ""].join(" "));
-    var keywords = [];
-    var anchorName = String(targetRoom.anchorName || "").replace(/\s+/g, " ").trim();
-    if (anchorName) {
-      keywords.push(anchorName);
-    }
-    keywords = keywords.concat(normalizeTargetList(targetRoom.titleKeywords));
-    keywords = keywords.concat(normalizeTargetList(targetRoom.roomKeywords));
+    var keywords = buildTargetRoomMatchKeywords(targetRoom);
     if (!keywords.length) {
       return { matched: false, reason: "target_room_empty_rule" };
     }
@@ -379,25 +412,21 @@ function createLiveRoomSampler(context) {
     if (!entry || !entry.enteredAt || Date.now() - entry.enteredAt > 30 * 60 * 1000) {
       return false;
     }
-    var anchorName = String(targetRoom.anchorName || "").replace(/\s+/g, " ").trim();
-    if (anchorName && entry.anchorName && String(entry.anchorName) === anchorName) {
-      return true;
-    }
-    var keywords = [];
-    keywords = keywords.concat(normalizeTargetList(targetRoom.titleKeywords));
-    keywords = keywords.concat(normalizeTargetList(targetRoom.roomKeywords));
+    var keywords = buildTargetRoomMatchKeywords(targetRoom);
     var entryText = String([
       entry.keyword || "",
       entry.anchorName || "",
-      (entry.titleKeywords || []).join(" "),
-      (entry.roomKeywords || []).join(" ")
+      normalizeTargetList(entry.searchKeywords).join(" "),
+      normalizeTargetList(entry.matchKeywords).join(" "),
+      normalizeTargetList(entry.titleKeywords).join(" "),
+      normalizeTargetList(entry.roomKeywords).join(" ")
     ].join(" "));
     for (var i = 0; i < keywords.length; i++) {
       if (keywords[i] && entryText.indexOf(keywords[i]) >= 0) {
         return true;
       }
     }
-    return !anchorName && keywords.length === 0 && !!entry.keyword;
+    return false;
   }
 
   function withinTargetRoomSendLimit(targetRoom) {
