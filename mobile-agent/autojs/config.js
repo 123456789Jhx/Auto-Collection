@@ -59,6 +59,17 @@ module.exports = {
     liveCommentRole: "none",
     liveCommentGroup: "",
     liveCommentMode: "agri_chatbot",
+    commerceCardLiveComment: {
+      enabled: true,
+      searchKeywords: ["夏橙"],
+      matchKeywords: ["秭归", "夏橙"],
+      liveSignals: ["直播中", "讲解中", "主播讲解", "进入直播间", "正在直播"],
+      scanMinutesPerRound: 15,
+      watchMinutesPerLive: 15,
+      maxRounds: 3,
+      maxCommentsPerRoom: 1,
+      commentPool: ["111", "666", "👍", "🌹", "😊"]
+    },
     accountProfile: {
       profileName: "三农交流账号",
       region: { province: "", city: "", county: "" },

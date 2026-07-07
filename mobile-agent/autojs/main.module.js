@@ -91,6 +91,7 @@ var createP3ExtensionActions = localRequire("domain/p3-extension-actions.js").cr
 var riskDetector = localRequire("domain/risk-detector.js");
 var createPhaseRunner = localRequire("app/phase-runner.js").createPhaseRunner;
 var createLiveCommentRunner = localRequire("app/live-comment-runner.js").createLiveCommentRunner;
+var createCommerceCardLiveRunner = localRequire("app/commerce-card-live-runner.js").createCommerceCardLiveRunner;
 var createCollectorApp = localRequire("app/collector-app.js").createCollectorApp;
 
 var logger = createLogger(config);
@@ -188,6 +189,7 @@ context.p3ExtensionActions = createP3ExtensionActions(context);
 context.liveRoomSampler = createLiveRoomSampler(context);
 context.phaseRunner = createPhaseRunner(context);
 context.liveCommentRunner = createLiveCommentRunner(context);
+context.commerceCardLiveRunner = createCommerceCardLiveRunner(context);
 
 var app = createCollectorApp(context);
 app.main();

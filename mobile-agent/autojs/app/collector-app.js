@@ -26,6 +26,7 @@ function createCollectorApp(context) {
   var taskScheduler = context.taskScheduler;
   var phaseRunner = context.phaseRunner;
   var liveCommentRunner = context.liveCommentRunner;
+  var commerceCardLiveRunner = context.commerceCardLiveRunner;
 
   function randomMinutes(min, max) {
     var low = Math.max(1, Number(min || 1));
@@ -120,6 +121,11 @@ function createCollectorApp(context) {
   function isLiveCommentPriorityRequested() {
     return !!context.liveCommentPriorityRequested ||
       !!(floatyControl && floatyControl.state && floatyControl.state.liveCommentControlStatus === "running");
+  }
+
+  function isCommerceCardLiveEnabled() {
+    var commerceConfig = config.task.commerceCardLiveComment || {};
+    return commerceConfig.enabled === true;
   }
 
   function tryEnterTargetLiveRoomFromSearch(reason) {
@@ -501,6 +507,22 @@ function createCollectorApp(context) {
       }
     }
 
+    if (isLiveTask && isCommerceCardLiveEnabled()) {
+      counters.lastStopReason = "";
+      floatyControl.update({ lastMessage: "商品卡直播任务准备中" });
+      logger.info("启动流程：商品卡直播评论任务只打开抖音，后续交给独立 runner", {
+        elapsedMs: Date.now() - flowStartedAt,
+        taskType: normalizedTaskType
+      });
+      controlLoop.reportRuntimeLog("INFO", "商品卡直播评论启动流程只打开抖音，后续交给独立 runner", {
+        phase: "launch_route",
+        taskType: normalizedTaskType,
+        route: "commerce_card_live_runner",
+        elapsedMs: Date.now() - flowStartedAt
+      });
+      return true;
+    }
+
     if (isLiveTask) {
       counters.lastStopReason = "";
       floatyControl.update({ lastMessage: "进入直播入口" });
@@ -765,6 +787,28 @@ function createCollectorApp(context) {
     counters.plannedLiveMinutes = counters.plannedLiveMinutes || todayLiveMinutes || randomMinutes(config.schedule.liveMinutesMin, config.schedule.liveMinutesMax);
     counters.liveElapsedMinutes = counters.liveElapsedMinutes || 0;
     counters.liveRemainingMinutes = Math.max(1, counters.liveRemainingMinutes || counters.plannedLiveMinutes - counters.liveElapsedMinutes || counters.plannedLiveMinutes);
+    if (isCommerceCardLiveEnabled()) {
+      if (!commerceCardLiveRunner || !commerceCardLiveRunner.runCommerceCardLiveCommentTask) {
+        counters.lastStopReason = "commerce_card_live_runner_missing";
+        logger.error("商品卡直播评论 runner 缺失，停止 live 任务");
+        controlLoop.reportRuntimeLog("ERROR", "商品卡直播评论 runner 缺失，停止 live 任务", {
+          phase: "commerce_card_live_task_start",
+          stopReason: counters.lastStopReason
+        });
+        return {
+          success: false,
+          reason: counters.lastStopReason
+        };
+      }
+      var commerceResult = commerceCardLiveRunner.runCommerceCardLiveCommentTask();
+      persistCheckpoint({
+        taskType: "live",
+        checkpointType: commerceResult && commerceResult.success ? "commerce_card_live_task_end" : "commerce_card_live_task_failed",
+        stopReason: counters.lastStopReason,
+        result: commerceResult || null
+      });
+      return commerceResult;
+    }
     phaseRunner.runPhase("live", counters.liveRemainingMinutes, {
       taskType: "live"
     });
@@ -870,8 +914,12 @@ function createCollectorApp(context) {
         return;
       }
       if (requestedTaskType === "live") {
-        runLiveTask(todayLiveMinutes);
-        finishTask();
+        var liveResult = runLiveTask(todayLiveMinutes);
+        finishTask({
+          status: liveResult && liveResult.success === false ? "failed" : "completed",
+          reason: (liveResult && liveResult.reason) || counters.lastStopReason || "live_finished",
+          commandType: liveResult && liveResult.success === false ? "FAILED" : "FINISH"
+        });
         return;
       }
       if (requestedTaskType === "video") {

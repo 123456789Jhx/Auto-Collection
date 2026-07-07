@@ -1037,6 +1037,359 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return true;
   }
 
+  function escapeRegexText(value) {
+    return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function buildContainsRegex(values) {
+    values = values || [];
+    var parts = [];
+    for (var i = 0; i < values.length; i++) {
+      var value = String(values[i] || "").replace(/\s+/g, " ").trim();
+      if (value) {
+        parts.push(escapeRegexText(value));
+      }
+    }
+    return parts.length ? new RegExp(".*(" + parts.join("|") + ").*") : null;
+  }
+
+  function hasAnyTextKeyword(textValue, keywords) {
+    textValue = String(textValue || "");
+    keywords = keywords || [];
+    for (var i = 0; i < keywords.length; i++) {
+      var keyword = String(keywords[i] || "").replace(/\s+/g, " ").trim();
+      if (keyword && textValue.indexOf(keyword) >= 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function enterMall() {
+    if (!ensureDouyinForeground()) {
+      openApp();
+    }
+    closeKnownOverlays(2);
+    var nodes = [];
+    pushFoundNodes(nodes, text("商城"));
+    pushFoundNodes(nodes, desc("商城"));
+    var screen = autojsUtils.getScreenSize();
+    var best = null;
+    var bestScore = -1;
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var bounds = node && node.bounds && node.bounds();
+      if (!bounds) {
+        continue;
+      }
+      var score = 0;
+      if (bounds.centerY() > screen.height * 0.55) {
+        score += 20;
+      }
+      if (bounds.centerY() < screen.height * 0.25) {
+        score += 8;
+      }
+      if (node.clickable && node.clickable()) {
+        score += 3;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = node;
+      }
+    }
+    if (!best) {
+      logger.warn("未找到商城入口", {
+        textSample: extractVisibleText().slice(0, 160)
+      });
+      return false;
+    }
+    logger.info("进入抖音商城", {
+      bounds: autojsUtils.formatBounds(best.bounds && best.bounds())
+    });
+    autojsUtils.safeClick(best, 3, logger);
+    autojsUtils.sleepRandom(1800, 2600);
+    return true;
+  }
+
+  function clickCommerceResultTabIfVisible() {
+    var tabNode =
+      autojsUtils.waitForElement(textMatches("^(商品|店铺)$"), 600, null, null) ||
+      autojsUtils.waitForElement(descMatches("^(商品|店铺)$"), 600, null, null);
+    if (!tabNode) {
+      return false;
+    }
+    logger.info("商城搜索结果切换商品相关标签", {
+      text: tabNode.text && tabNode.text(),
+      desc: tabNode.desc && tabNode.desc(),
+      bounds: autojsUtils.formatBounds(tabNode.bounds && tabNode.bounds())
+    });
+    autojsUtils.safeClick(tabNode, 3, logger);
+    autojsUtils.sleepRandom(1000, 1600);
+    return true;
+  }
+
+  function openCommerceCardSearch(keyword) {
+    keyword = String(keyword || "").replace(/\s+/g, " ").trim();
+    if (!keyword) {
+      return false;
+    }
+    if (!enterMall()) {
+      return false;
+    }
+    if (!openSearch(keyword)) {
+      logger.warn("商城商品卡搜索失败", {
+        keyword: keyword,
+        reason: lastSearchFailureReason || "",
+        textSample: extractVisibleText().slice(0, 180)
+      });
+      return false;
+    }
+    clickCommerceResultTabIfVisible();
+    logger.info("商城商品卡搜索完成", {
+      keyword: keyword,
+      textSample: extractVisibleText().slice(0, 180)
+    });
+    return true;
+  }
+
+  function findCommerceLiveEntryNode(liveSignals) {
+    var signalRegex = buildContainsRegex(liveSignals);
+    if (!signalRegex) {
+      return null;
+    }
+    var nodes = [];
+    pushFoundNodes(nodes, textMatches(signalRegex));
+    pushFoundNodes(nodes, descMatches(signalRegex));
+    var screen = autojsUtils.getScreenSize();
+    var best = null;
+    var bestScore = -1;
+    var samples = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var bounds = node && node.bounds && node.bounds();
+      if (!bounds || !isLiveEntryBoundsAllowed(bounds, screen)) {
+        continue;
+      }
+      var value = String((node.text && node.text()) || (node.desc && node.desc()) || "");
+      if (samples.length < 8) {
+        samples.push({
+          text: value.slice(0, 30),
+          bounds: autojsUtils.formatBounds(bounds)
+        });
+      }
+      var score = 0;
+      if (/进入直播间|点击进入直播间/.test(value)) {
+        score += 30;
+      }
+      if (/直播中|正在直播|讲解中|主播讲解/.test(value)) {
+        score += 20;
+      }
+      if (node.clickable && node.clickable()) {
+        score += 3;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = node;
+      }
+    }
+    logger.info("商品卡直播入口候选筛选完成", {
+      total: nodes.length,
+      selected: !!best,
+      bestScore: bestScore,
+      samples: samples
+    });
+    return best;
+  }
+
+  function clickCommerceKeywordCard(matchKeywords) {
+    var keywordRegex = buildContainsRegex(matchKeywords);
+    if (!keywordRegex) {
+      return false;
+    }
+    var nodes = [];
+    pushFoundNodes(nodes, textMatches(keywordRegex));
+    pushFoundNodes(nodes, descMatches(keywordRegex));
+    var screen = autojsUtils.getScreenSize();
+    var best = null;
+    var bestScore = -1;
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var bounds = node && node.bounds && node.bounds();
+      if (!bounds || !isTargetSearchBoundsAllowed(bounds, screen)) {
+        continue;
+      }
+      var score = 10;
+      if (bounds.centerY() > screen.height * 0.18 && bounds.centerY() < screen.height * 0.82) {
+        score += 8;
+      }
+      if (bounds.width && bounds.width() > screen.width * 0.18) {
+        score += 3;
+      }
+      if (node.clickable && node.clickable()) {
+        score += 3;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = node;
+      }
+    }
+    if (!best) {
+      return false;
+    }
+    logger.info("点击命中关键词的商品卡片区域", {
+      bounds: autojsUtils.formatBounds(best.bounds && best.bounds()),
+      text: best.text && best.text(),
+      desc: best.desc && best.desc()
+    });
+    autojsUtils.axisClick(best, logger);
+    autojsUtils.sleepRandom(1800, 2600);
+    return true;
+  }
+
+  function openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals) {
+    var entryNode = findCommerceLiveEntryNode(liveSignals);
+    if (entryNode) {
+      autojsUtils.axisClick(entryNode, logger);
+      autojsUtils.sleepRandom(2500, 4000);
+      if (isLiveRoomVisible()) {
+        return true;
+      }
+      logger.warn("点击商品卡直播入口后未进入直播间", {
+        textSample: extractVisibleText().slice(0, 180)
+      });
+      back();
+      autojsUtils.sleepRandom(700, 1100);
+      return false;
+    }
+    if (openLiveRoomFromCurrentScreen(extractVisibleText())) {
+      return true;
+    }
+    if (!clickCommerceKeywordCard(matchKeywords)) {
+      return false;
+    }
+    var detailText = extractVisibleText();
+    if (!hasAnyTextKeyword(detailText, matchKeywords) || !hasAnyTextKeyword(detailText, liveSignals)) {
+      logger.info("商品详情页未同时命中商品关键词和直播信号", {
+        textSample: detailText.slice(0, 180)
+      });
+      back();
+      autojsUtils.sleepRandom(700, 1100);
+      return false;
+    }
+    entryNode = findCommerceLiveEntryNode(liveSignals);
+    if (!entryNode) {
+      back();
+      autojsUtils.sleepRandom(700, 1100);
+      return false;
+    }
+    autojsUtils.axisClick(entryNode, logger);
+    autojsUtils.sleepRandom(2500, 4000);
+    if (isLiveRoomVisible()) {
+      return true;
+    }
+    back();
+    autojsUtils.sleepRandom(700, 1100);
+    return false;
+  }
+
+  function confirmCommerceLiveRoom(matchKeywords) {
+    if (!isLiveRoomVisible()) {
+      return false;
+    }
+    var visibleText = extractVisibleText();
+    if (hasAnyTextKeyword(visibleText, matchKeywords)) {
+      return true;
+    }
+    logger.warn("商品卡直播进房后二次关键词校验失败", {
+      matchKeywords: matchKeywords,
+      textSample: visibleText.slice(0, 220)
+    });
+    return false;
+  }
+
+  function openMatchingCommerceLiveFromCards(options) {
+    options = options || {};
+    var startedAt = Date.now();
+    var searchKeyword = String(options.searchKeyword || "").replace(/\s+/g, " ").trim();
+    var matchKeywords = options.matchKeywords || [];
+    var liveSignals = options.liveSignals || [];
+    var scanMinutes = Math.max(1, Number(options.scanMinutes || 15));
+    if (!searchKeyword) {
+      return {
+        success: false,
+        reason: "commerce_search_keyword_empty"
+      };
+    }
+    function isInterrupted(source) {
+      if (!options.shouldStop || !options.shouldStop()) {
+        return false;
+      }
+      logger.warn("商品卡直播扫描被控制命令中断", {
+        source: source || "",
+        searchKeyword: searchKeyword
+      });
+      return true;
+    }
+    if (!openCommerceCardSearch(searchKeyword)) {
+      return {
+        success: false,
+        reason: lastSearchFailureReason || "commerce_search_failed",
+        elapsedMs: Date.now() - startedAt
+      };
+    }
+    var endAt = Date.now() + scanMinutes * 60 * 1000;
+    var attempt = 0;
+    while (Date.now() < endAt) {
+      attempt += 1;
+      if (isInterrupted("commerce_scan_attempt_" + attempt)) {
+        return {
+          success: false,
+          reason: "manual_pause",
+          elapsedMs: Date.now() - startedAt,
+          attempt: attempt
+        };
+      }
+      var visibleText = extractVisibleText();
+      var keywordMatched = hasAnyTextKeyword(visibleText, matchKeywords);
+      var liveMatched = hasAnyTextKeyword(visibleText, liveSignals);
+      logger.info("商品卡直播扫描页面", {
+        attempt: attempt,
+        keywordMatched: keywordMatched,
+        liveMatched: liveMatched,
+        textSample: visibleText.slice(0, 180)
+      });
+      if (keywordMatched && liveMatched && openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals)) {
+        if (confirmCommerceLiveRoom(matchKeywords)) {
+          return {
+            success: true,
+            reason: "commerce_live_entry_found",
+            attempt: attempt,
+            elapsedMs: Date.now() - startedAt,
+            matchedKeywords: matchKeywords,
+            textSample: visibleText.slice(0, 220)
+          };
+        }
+        back();
+        autojsUtils.sleepRandom(900, 1400);
+      }
+      if (isInterrupted("commerce_scan_before_swipe_" + attempt)) {
+        return {
+          success: false,
+          reason: "manual_pause",
+          elapsedMs: Date.now() - startedAt,
+          attempt: attempt
+        };
+      }
+      swipeSearchResultsUp();
+    }
+    return {
+      success: false,
+      reason: "commerce_live_not_found",
+      elapsedMs: Date.now() - startedAt,
+      attempts: attempt
+    };
+  }
+
   function setTargetLiveSearchResult(reason, extra) {
     lastTargetLiveSearchResult = {
       reason: reason || "",
@@ -3489,6 +3842,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     openApp: openApp,
     openSearch: openSearch,
     openLiveSearch: openLiveSearch,
+    enterMall: enterMall,
+    openCommerceCardSearch: openCommerceCardSearch,
+    openMatchingCommerceLiveFromCards: openMatchingCommerceLiveFromCards,
     openTargetLiveRoomFromSearch: openTargetLiveRoomFromSearch,
     getLastTargetLiveSearchResult: getLastTargetLiveSearchResult,
     openFirstVideoFromSearch: openFirstVideoFromSearch,
