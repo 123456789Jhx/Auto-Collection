@@ -1,3 +1,17 @@
+function createFinishedTaskStatePatch(options) {
+  options = options || {};
+  var finishReason = options.finishReason || "task_finished";
+  var finishStatus = options.finishStatus || "completed";
+  return {
+    running: false,
+    paused: false,
+    stopRequested: !!options.exitRequested,
+    manualOverride: true,
+    lastManualAction: finishReason,
+    lastMessage: finishStatus === "failed" ? "任务失败，待命中：" + finishReason : "任务结束，待命中"
+  };
+}
+
 function createCollectorApp(context) {
   var config = context.config;
   var logger = context.logger;
@@ -8,6 +22,7 @@ function createCollectorApp(context) {
   var counters = context.counters;
   var controlLoop = context.controlLoop;
   var heartbeatService = context.heartbeatService;
+  var agentHeartbeatDaemon = context.agentHeartbeatDaemon;
   var taskScheduler = context.taskScheduler;
   var phaseRunner = context.phaseRunner;
   var liveCommentRunner = context.liveCommentRunner;
@@ -889,14 +904,11 @@ function createCollectorApp(context) {
     counters.currentPhase = "";
     counters.phaseStartedAt = "";
     counters.phaseEndedAt = "";
-    floatyControl.update({
-      running: false,
-      paused: true,
-      stopRequested: !!floatyControl.state.exitRequested,
-      manualOverride: true,
-      lastManualAction: finishReason,
-      lastMessage: finishStatus === "failed" ? "任务失败，待命中：" + finishReason : "任务结束，待命中"
-    });
+    floatyControl.update(createFinishedTaskStatePatch({
+      finishReason: finishReason,
+      finishStatus: finishStatus,
+      exitRequested: !!floatyControl.state.exitRequested
+    }));
     logger.info("农业视频手机采集脚本结束", counters);
     controlLoop.reportRuntimeLog("INFO", "农业视频手机采集脚本结束", counters);
     if (douyin.exitAppToHome) {
@@ -967,6 +979,9 @@ function createCollectorApp(context) {
       lastMessage: "控制台已就绪"
     });
     logger.info("悬浮看板已创建", { elapsedMs: Date.now() - startupAt });
+    if (agentHeartbeatDaemon && agentHeartbeatDaemon.start) {
+      agentHeartbeatDaemon.start();
+    }
 
     runBackground("脚本启动日志上报", function () {
       controlLoop.reportRuntimeLog("INFO", "农业视频手机采集 Agent 启动", {
@@ -1123,5 +1138,6 @@ function createCollectorApp(context) {
 }
 
 module.exports = {
-  createCollectorApp: createCollectorApp
+  createCollectorApp: createCollectorApp,
+  createFinishedTaskStatePatch: createFinishedTaskStatePatch
 };

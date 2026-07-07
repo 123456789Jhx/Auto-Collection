@@ -1,8 +1,8 @@
 {
   "name": "燎原星火",
   "main": "launcher.js",
-  "versionName": "1.0.27",
-  "versionCode": 63,
+  "versionName": "1.0.28",
+  "versionCode": 64,
   "packageName": "com.agri.video.collector",
   "description": "Agri video collector mobile agent",
   "build": {

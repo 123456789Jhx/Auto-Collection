@@ -71,6 +71,7 @@ var createMatcher = localRequire("core/matcher.js").createMatcher;
 var createFloatyControl = localRequire("core/floaty-control.js").createFloatyControl;
 var createDouyinAdapter = localRequire("platforms/douyin.js").createDouyinAdapter;
 var createHeartbeatService = localRequire("app/heartbeat.js").createHeartbeatService;
+var createAgentHeartbeatDaemon = localRequire("app/agent-heartbeat-daemon.js").createAgentHeartbeatDaemon;
 var createControlLoop = localRequire("app/control-loop.js").createControlLoop;
 var createTaskScheduler = localRequire("app/task-scheduler.js").createTaskScheduler;
 var createRunRequestResolver = localRequire("app/run-request-resolver.js").createRunRequestResolver;
@@ -155,6 +156,7 @@ var context = {
 };
 
 context.heartbeatService = createHeartbeatService(context);
+context.agentHeartbeatDaemon = createAgentHeartbeatDaemon(context);
 context.taskScheduler = createTaskScheduler(context);
 context.runRequestResolver = createRunRequestResolver(context);
 context.controlLoop = createControlLoop(context);
