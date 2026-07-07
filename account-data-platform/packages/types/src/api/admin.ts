@@ -102,6 +102,22 @@ export const p3ExtensionsConfigSchema = z
         allowM3OutputToMaterialPool: z.literal(false).optional()
       })
       .strict()
+      .optional(),
+    commerceCardLiveComment: z
+      .object({
+        enabled: z.boolean().optional(),
+        executeEnabled: z.boolean().optional(),
+        manualExecutionApproved: z.boolean().optional(),
+        searchKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+        matchKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+        liveSignals: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+        scanMinutesPerRound: z.number().int().min(1).max(60).optional(),
+        watchMinutesPerLive: z.number().int().min(0).max(120).optional(),
+        maxRounds: z.number().int().min(1).max(20).optional(),
+        maxCommentsPerRoom: z.number().int().min(0).max(5).optional(),
+        commentPool: z.array(z.string().trim().min(1).max(80)).max(50).optional()
+      })
+      .strict()
       .optional()
   })
   .strict();

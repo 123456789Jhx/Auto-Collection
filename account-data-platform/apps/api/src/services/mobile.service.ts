@@ -95,6 +95,17 @@ function buildFollowedAccounts(
   }));
 }
 
+function pickCommerceCardLiveCommentConfig(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const commerceConfig = (value as Record<string, unknown>).commerceCardLiveComment;
+  if (!commerceConfig || typeof commerceConfig !== "object" || Array.isArray(commerceConfig)) {
+    return null;
+  }
+  return commerceConfig as Record<string, unknown>;
+}
+
 export async function getCurrentTask(deviceId: string, platform: string, clientIp?: string, deviceToken?: string) {
   const device = await resolveMobileDevice({ deviceId, deviceToken, platform, clientIp });
   const result = await findDeviceTaskConfig(device.deviceCode, platform);
@@ -133,6 +144,7 @@ export async function getCurrentTask(deviceId: string, platform: string, clientI
     liveCommentBotConfig: taskConfig.liveCommentBotConfig,
     followedAccounts,
     liveCommentConfig: effectiveLiveCommentConfig,
+    commerceCardLiveComment: pickCommerceCardLiveCommentConfig(taskConfig.p3ExtensionsConfig),
     p3ExtensionsConfig: taskConfig.p3ExtensionsConfig ?? null,
     heartbeatMinutes: taskConfig.heartbeatMinutes,
     configSource: result.config ? "device" : "task"

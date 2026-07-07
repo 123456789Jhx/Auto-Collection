@@ -30,6 +30,7 @@ export const mobileTaskConfigSchema = z.object({
     }))
     .optional(),
   liveCommentConfig: z.record(z.unknown()).nullable().optional(),
+  commerceCardLiveComment: z.record(z.unknown()).nullable().optional(),
   p3ExtensionsConfig: z.record(z.unknown()).nullable().optional()
 });
 

@@ -805,6 +805,10 @@ function createControlLoop(context) {
     config.task.liveCommentMode = liveCommentMode;
     config.task.accountProfile = sanitizeObjectConfig(remoteConfig.accountProfile, config.task.accountProfile || {});
     config.task.liveCommentBotConfig = sanitizeObjectConfig(remoteConfig.liveCommentBotConfig, config.task.liveCommentBotConfig || {});
+    var commerceCardLiveComment = pickCommerceCardLiveCommentConfig(remoteConfig);
+    if (commerceCardLiveComment) {
+      config.task.commerceCardLiveComment = sanitizeCommerceCardLiveCommentConfig(commerceCardLiveComment);
+    }
     config.task.followedAccounts = sanitizeFollowedAccounts(remoteConfig.followedAccounts || []);
     if (remoteConfig.liveCommentConfig && typeof remoteConfig.liveCommentConfig === "object") {
       var liveCommentConfig = sanitizeLiveCommentConfig(remoteConfig.liveCommentConfig);
@@ -857,7 +861,10 @@ function createControlLoop(context) {
       accountProfileName: config.task.accountProfile && config.task.accountProfile.profileName || "",
       botName: config.task.liveCommentBotConfig && config.task.liveCommentBotConfig.botName || "",
       followedAccountCount: config.task.followedAccounts.length,
+      commerceCardLiveEnabled: !!(config.task.commerceCardLiveComment && config.task.commerceCardLiveComment.enabled),
+      commerceCardLiveSendApproved: !!(config.task.commerceCardLiveComment && config.task.commerceCardLiveComment.executeEnabled && config.task.commerceCardLiveComment.manualExecutionApproved),
       liveCommentConfigApplied: !!remoteConfig.liveCommentConfig,
+      commerceCardLiveConfigApplied: !!commerceCardLiveComment,
       p3ExtensionsConfigApplied: !!remoteConfig.p3ExtensionsConfig
     };
 
@@ -1032,6 +1039,35 @@ function createControlLoop(context) {
       }
     };
     return result;
+  }
+
+  function pickCommerceCardLiveCommentConfig(remoteConfig) {
+    if (remoteConfig && remoteConfig.commerceCardLiveComment && typeof remoteConfig.commerceCardLiveComment === "object") {
+      return remoteConfig.commerceCardLiveComment;
+    }
+    var p3 = remoteConfig && remoteConfig.p3ExtensionsConfig;
+    if (p3 && typeof p3 === "object" && p3.commerceCardLiveComment && typeof p3.commerceCardLiveComment === "object") {
+      return p3.commerceCardLiveComment;
+    }
+    return null;
+  }
+
+  function sanitizeCommerceCardLiveCommentConfig(value) {
+    value = value || {};
+    var current = config.task.commerceCardLiveComment || {};
+    return {
+      enabled: value.enabled === true,
+      executeEnabled: value.executeEnabled === true,
+      manualExecutionApproved: value.manualExecutionApproved === true,
+      searchKeywords: normalizeStringList(value.searchKeywords || current.searchKeywords || [], 20, 50),
+      matchKeywords: normalizeStringList(value.matchKeywords || current.matchKeywords || [], 20, 50),
+      liveSignals: normalizeStringList(value.liveSignals || current.liveSignals || [], 20, 50),
+      scanMinutesPerRound: clampNumber(value.scanMinutesPerRound, current.scanMinutesPerRound || 15, 1, 60),
+      watchMinutesPerLive: clampNumber(value.watchMinutesPerLive, current.watchMinutesPerLive || 15, 0, 120),
+      maxRounds: clampNumber(value.maxRounds, current.maxRounds || 3, 1, 20),
+      maxCommentsPerRoom: clampNumber(value.maxCommentsPerRoom, current.maxCommentsPerRoom || 1, 0, 5),
+      commentPool: normalizeStringList(value.commentPool || current.commentPool || [], 50, 80)
+    };
   }
 }
 

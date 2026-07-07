@@ -3579,6 +3579,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function requiresConfiguredLiveReply(options) {
     options = options || {};
+    if (options.allowUnconfiguredReply === true) {
+      return false;
+    }
     var commentMode = options.commentMode || config.task.liveCommentMode || "";
     return commentMode !== "agri_chatbot";
   }

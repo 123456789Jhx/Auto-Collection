@@ -60,7 +60,9 @@ module.exports = {
     liveCommentGroup: "",
     liveCommentMode: "agri_chatbot",
     commerceCardLiveComment: {
-      enabled: true,
+      enabled: false,
+      executeEnabled: false,
+      manualExecutionApproved: false,
       searchKeywords: ["夏橙"],
       matchKeywords: ["秭归", "夏橙"],
       liveSignals: ["直播中", "讲解中", "主播讲解", "进入直播间", "正在直播"],

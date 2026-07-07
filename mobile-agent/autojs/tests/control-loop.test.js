@@ -234,9 +234,87 @@ function testStopIsNotSupersededByLaterStartInSamePoll() {
   assert.strictEqual(startAck && startAck.result.reason, "superseded_by_stop_command");
 }
 
+function testRefreshRuntimeConfigAppliesCommerceCardConfig() {
+  var context = createContext({
+    config: {
+      upload: {
+        controlEnabled: true,
+        commandPollIntervalSeconds: 5
+      },
+      device: {
+        deviceId: "test-device"
+      },
+      task: {
+        taskId: "local-task",
+        platform: "douyin",
+        mode: "search",
+        collectComments: true,
+        commentLimit: 10,
+        commerceCardLiveComment: {
+          enabled: false
+        },
+        liveComment: {}
+      },
+      schedule: {
+        videoMinutesMin: 120,
+        videoMinutesMax: 180,
+        liveMinutesMin: 60,
+        liveMinutesMax: 120,
+        autoStart: false
+      },
+      runtime: {
+        heartbeatMinutes: 1,
+        idleHeartbeatSeconds: 60
+      },
+      match: {
+        agricultureKeywords: []
+      }
+    },
+    uploader: {
+      isRegistered: function () { return true; },
+      pollCommands: function () { return []; },
+      uploadRuntimeLog: function () {},
+      ackCommand: function () {},
+      fetchCurrentTask: function () {
+        return {
+          taskId: "remote-task",
+          platform: "douyin",
+          mode: "search",
+          videoMinutesMin: 120,
+          videoMinutesMax: 180,
+          liveMinutesMin: 60,
+          liveMinutesMax: 120,
+          heartbeatMinutes: 1,
+          autoStart: false,
+          collectComments: true,
+          commentLimit: 10,
+          liveCommentMode: "agri_chatbot",
+          liveCommentRole: "none",
+          commerceCardLiveComment: {
+            enabled: true,
+            executeEnabled: true,
+            manualExecutionApproved: true,
+            searchKeywords: ["夏橙"],
+            matchKeywords: ["秭归", "夏橙"]
+          }
+        };
+      }
+    }
+  });
+  var controlLoop = createControlLoop(context);
+
+  var result = controlLoop.refreshRuntimeConfig();
+
+  assert.strictEqual(result.applied, true);
+  assert.strictEqual(context.config.task.commerceCardLiveComment.enabled, true);
+  assert.deepStrictEqual(context.config.task.commerceCardLiveComment.searchKeywords, ["夏橙"]);
+  assert.deepStrictEqual(context.config.task.commerceCardLiveComment.matchKeywords, ["秭归", "夏橙"]);
+}
+
 testPollAsyncDoesNotStartThreadBeforeInterval();
 testUnregisteredPollAttemptsAreThrottled();
 testLiveCommentPauseRequestsInterrupt();
 testStopIsNotSupersededByLaterStartInSamePoll();
+testRefreshRuntimeConfigAppliesCommerceCardConfig();
 
 console.log("control-loop tests passed");

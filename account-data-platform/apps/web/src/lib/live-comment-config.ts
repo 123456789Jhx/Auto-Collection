@@ -96,6 +96,19 @@ export const defaultP3ExtensionsConfig = {
     allowM1Input: false,
     allowM2Input: false,
     allowM3OutputToMaterialPool: false
+  },
+  commerceCardLiveComment: {
+    enabled: false,
+    executeEnabled: false,
+    manualExecutionApproved: false,
+    searchKeywords: ["夏橙"],
+    matchKeywords: ["秭归", "夏橙"],
+    liveSignals: ["直播中", "讲解中", "主播讲解", "进入直播间", "正在直播"],
+    scanMinutesPerRound: 15,
+    watchMinutesPerLive: 15,
+    maxRounds: 3,
+    maxCommentsPerRoom: 1,
+    commentPool: ["111", "666", "👍", "🌹", "😊"]
   }
 };
 

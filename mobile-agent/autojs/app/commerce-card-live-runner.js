@@ -8,6 +8,9 @@ function createCommerceCardLiveRunner(context) {
   var heartbeatService = context.heartbeatService;
   var riskDetector = context.riskDetector;
   var taskScheduler = context.taskScheduler;
+  var storage = context.storage;
+  var uploader = context.uploader;
+  var commentedRoomKeys = {};
 
   function nowIso() {
     return new Date().toISOString();
@@ -41,6 +44,16 @@ function createCommerceCardLiveRunner(context) {
   function randomItem(list) {
     list = normalizeList(list, ["111", "666", "👍", "🌹", "😊"]);
     return list[Math.floor(Math.random() * list.length)];
+  }
+
+  function hashText(text) {
+    text = String(text || "").replace(/\s+/g, " ").trim();
+    var hash = 0;
+    for (var i = 0; i < text.length; i++) {
+      hash = ((hash << 5) - hash) + text.charCodeAt(i);
+      hash = hash & hash;
+    }
+    return Math.abs(hash).toString(36);
   }
 
   function pickNumber(value, fallback) {
@@ -98,6 +111,58 @@ function createCommerceCardLiveRunner(context) {
       phaseEndedAt: counters.phaseEndedAt,
       extra: extra || {}
     });
+  }
+
+  function buildRoomKey(searchResult, textSample) {
+    searchResult = searchResult || {};
+    var source = String([
+      searchResult.roomName || "",
+      searchResult.anchorName || "",
+      searchResult.textSample || "",
+      textSample || ""
+    ].join(" ")).replace(/\s+/g, " ").trim();
+    return source ? hashText(source.slice(0, 300)) : "";
+  }
+
+  function buildActionLogEntry(status, roundIndex, commentText, searchResult, extra) {
+    extra = extra || {};
+    return {
+      type: "commerce_card_live_comment_result",
+      sampleIndex: roundIndex,
+      taskId: config.task.taskId,
+      deviceId: config.device && config.device.deviceId || "",
+      groupName: "commerce_card",
+      triggerEventId: "commerce_card_live:" + roundIndex + ":" + nowIso(),
+      triggerText: searchResult && searchResult.textSample || "",
+      triggerAuthor: "",
+      leaderAccountName: "",
+      matchedKeywords: searchResult && searchResult.matchedKeywords || [],
+      confidence: 1,
+      roomName: searchResult && (searchResult.roomName || searchResult.anchorName) || "",
+      replyText: commentText || "",
+      plannedDelayMs: 0,
+      status: status,
+      skipReason: extra.skipReason || "",
+      failureReason: extra.failureReason || "",
+      plannedAt: nowIso(),
+      sentAt: extra.sentAt || "",
+      rawPayload: {
+        sceneType: "commerce_card_live_comment",
+        roundIndex: roundIndex,
+        searchResult: searchResult || {}
+      }
+    };
+  }
+
+  function logCommerceCommentAction(status, roundIndex, commentText, searchResult, extra) {
+    var entry = buildActionLogEntry(status, roundIndex, commentText, searchResult, extra || {});
+    if (storage && storage.appendLiveCommentLog) {
+      storage.appendLiveCommentLog(entry);
+    }
+    if (uploader && uploader.uploadLiveCommentAction) {
+      uploader.uploadLiveCommentAction(entry);
+    }
+    return entry;
   }
 
   function readVisibleText() {
@@ -200,7 +265,14 @@ function createCommerceCardLiveRunner(context) {
     };
   }
 
-  function sendSimpleComment(commentText, roundIndex) {
+  function sendSimpleComment(commentText, roundIndex, searchResult) {
+    var cfg = taskConfig();
+    if (!cfg.executeEnabled || cfg.manualExecutionApproved !== true) {
+      logCommerceCommentAction("skipped", roundIndex, commentText, searchResult, {
+        skipReason: "commerce_card_send_not_approved"
+      });
+      return { success: false, skipped: true, failureReason: "commerce_card_send_not_approved" };
+    }
     if (!douyin.sendLiveComment) {
       return { success: false, failureReason: "send_live_comment_missing" };
     }
@@ -210,15 +282,16 @@ function createCommerceCardLiveRunner(context) {
       commentText: commentText
     });
     return douyin.sendLiveComment(commentText, {
-      commentMode: "agri_chatbot",
-      plannedDelayMs: 0
+      commentMode: "commerce_card_live",
+      plannedDelayMs: 0,
+      allowUnconfiguredReply: true
     });
   }
 
   function runCommerceCardLiveCommentTask(options) {
     options = options || {};
     var cfg = taskConfig();
-    if (cfg.enabled === false && options.force !== true) {
+    if (cfg.enabled !== true && options.force !== true) {
       return finishFailure("commerce_card_live_disabled", "commerce_card_live_config", "");
     }
 
@@ -226,6 +299,7 @@ function createCommerceCardLiveRunner(context) {
     counters.phaseStartedAt = nowIso();
     counters.phaseEndedAt = "";
     counters.lastStopReason = "";
+    commentedRoomKeys = {};
 
     var searchKeyword = options.searchKeyword || pickFirst(cfg.searchKeywords, ["夏橙"]);
     var matchKeywords = normalizeList(options.matchKeywords || cfg.matchKeywords, ["秭归", "夏橙"]);
@@ -295,14 +369,50 @@ function createCommerceCardLiveRunner(context) {
       if (riskBeforeComment) {
         return riskBeforeComment;
       }
-      var commentText = randomItem(cfg.commentPool);
-      var sendResult = sendSimpleComment(commentText, roundIndex);
-      report(sendResult && sendResult.success ? "INFO" : "WARN", "商品卡直播随机评论结果", {
-        phase: "commerce_card_live_comment_result",
-        roundIndex: roundIndex,
-        success: !!(sendResult && sendResult.success),
-        failureReason: sendResult && sendResult.failureReason || ""
-      });
+      var currentTextSample = readVisibleText();
+      var roomKey = buildRoomKey(searchResult, currentTextSample);
+      var maxCommentsPerRoom = Math.max(0, pickNumber(options.maxCommentsPerRoom, pickNumber(cfg.maxCommentsPerRoom, 1)));
+      if (roomKey && commentedRoomKeys[roomKey]) {
+        logCommerceCommentAction("skipped", roundIndex, "", searchResult, {
+          skipReason: "commerce_card_room_already_commented"
+        });
+        report("INFO", "商品卡直播间已评论过，跳过重复发送", {
+          phase: "commerce_card_live_comment_result",
+          roundIndex: roundIndex,
+          roomKey: roomKey
+        });
+      } else if (maxCommentsPerRoom <= 0) {
+        logCommerceCommentAction("skipped", roundIndex, "", searchResult, {
+          skipReason: "commerce_card_room_comment_limit_zero"
+        });
+      } else {
+        var sentInRoom = 0;
+        for (var commentIndex = 0; commentIndex < maxCommentsPerRoom; commentIndex++) {
+          var commentText = randomItem(cfg.commentPool);
+          var sendResult = sendSimpleComment(commentText, roundIndex, searchResult);
+          var status = sendResult && sendResult.success ? "sent" : (sendResult && sendResult.skipped ? "skipped" : "failed");
+          if (!sendResult || !sendResult.skipped) {
+            logCommerceCommentAction(status, roundIndex, commentText, searchResult, {
+              failureReason: sendResult && sendResult.failureReason || "",
+              sentAt: sendResult && sendResult.sentAt || ""
+            });
+          }
+          report(sendResult && sendResult.success ? "INFO" : "WARN", "商品卡直播随机评论结果", {
+            phase: "commerce_card_live_comment_result",
+            roundIndex: roundIndex,
+            commentIndex: commentIndex + 1,
+            success: !!(sendResult && sendResult.success),
+            skipped: !!(sendResult && sendResult.skipped),
+            failureReason: sendResult && sendResult.failureReason || ""
+          });
+          if (sendResult && sendResult.success) {
+            sentInRoom += 1;
+          }
+        }
+        if (roomKey && sentInRoom > 0) {
+          commentedRoomKeys[roomKey] = true;
+        }
+      }
 
       counters.liveViewedCount = Number(counters.liveViewedCount || 0) + 1;
       if (watchMinutes > 0) {
