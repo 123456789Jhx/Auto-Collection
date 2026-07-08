@@ -185,6 +185,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       logger.warn("search keyword not visible after input", {
         keyword: keyword,
         source: source || "",
+        inputText: getSearchInputText(),
+        activity: safeCurrentActivity(),
         textSample: extractVisibleText().slice(0, 220)
       });
       activeSearchKeyword = previousSearchKeyword;
@@ -268,6 +270,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
             keyword: keyword,
             source: source || "",
             strategyIndex: i + 1,
+            inputText: getSearchInputText(),
             textSample: extractVisibleText().slice(0, 180)
           });
           return true;
@@ -277,6 +280,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         keyword: keyword,
         source: source || "",
         strategyIndex: i + 1,
+        inputText: getSearchInputText(),
+        activity: safeCurrentActivity(),
+        screen: autojsUtils.describeScreenSize(),
         textSample: extractVisibleText().slice(0, 180)
       });
     }
@@ -547,10 +553,44 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return null;
   }
 
+  function readNodeTextValue(node) {
+    if (!node) {
+      return "";
+    }
+    try {
+      if (node.text) {
+        var textValue = node.text();
+        if (textValue) {
+          return String(textValue);
+        }
+      }
+    } catch (error) {
+    }
+    try {
+      if (node.desc) {
+        var descValue = node.desc();
+        if (descValue) {
+          return String(descValue);
+        }
+      }
+    } catch (error2) {
+    }
+    return "";
+  }
+
+  function getSearchInputText() {
+    var inputNode = findSearchInputNode();
+    return readNodeTextValue(inputNode);
+  }
+
   function isSearchKeywordVisible(keyword) {
     keyword = String(keyword || "").trim();
     if (!keyword) {
       return false;
+    }
+    var inputText = getSearchInputText();
+    if (inputText && inputText.indexOf(keyword) >= 0) {
+      return true;
     }
     var visibleText = extractVisibleText();
     return !!(visibleText && visibleText.indexOf(keyword) >= 0);

@@ -202,6 +202,19 @@ function testKeywordUserLiveEntryPrecedesGenericLiveBadgeCard() {
   );
 }
 
+function testSearchKeywordVisibilityReadsInputNodeText() {
+  var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin.js"), "utf8");
+  var start = source.indexOf("function isSearchKeywordVisible(keyword)");
+  var end = source.indexOf("function isSearchResultForKeyword", start);
+  var body = source.slice(start, end);
+
+  assert(start >= 0 && end > start, "search keyword visibility function must be present");
+  assert(
+    body.indexOf("getSearchInputText") >= 0,
+    "search keyword verification must read the search input node text, not only full-screen visible text"
+  );
+}
+
 function testLiveCommentUsesConfiguredSearchKeyword() {
   var searchedKeyword = "";
   var context = createBaseContext();
@@ -565,6 +578,7 @@ function testRiskDetectorCoversObservedDouyinBlockPage() {
 testCollectorDoesNotRouteLiveCommentThroughLivePhase();
 testTargetUserLiveEntryPrecedesGenericLiveBadgeCard();
 testKeywordUserLiveEntryPrecedesGenericLiveBadgeCard();
+testSearchKeywordVisibilityReadsInputNodeText();
 testLiveCommentUsesConfiguredSearchKeyword();
 testLiveCommentTriesNextSearchKeywordWhenFirstMisses();
 testLiveCommentSearchFailureStopsWithReason();

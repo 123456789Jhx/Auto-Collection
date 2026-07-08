@@ -39,6 +39,13 @@ function createPermissionManager(config, logger, deps) {
     );
   }
 
+  function isAccessibilityStateUnknown(accessibilityState) {
+    return !!(
+      accessibilityState &&
+      (accessibilityState.source === "context_unavailable" || accessibilityState.source === "settings_unavailable")
+    );
+  }
+
   function waitForConfiguredAccessibilityBinding(accessibilityState) {
     logAccessibility("warn", "无障碍服务已在系统配置中开启但暂不可用", accessibilityState);
     for (var warmup = 0; warmup < 8; warmup++) {
@@ -53,6 +60,27 @@ function createPermissionManager(config, logger, deps) {
     return false;
   }
 
+  function waitForKnownAccessibilityState(accessibilityState) {
+    logAccessibility("warn", "无障碍服务状态无法确认，暂不打开设置页", accessibilityState);
+    for (var warmup = 0; warmup < 8; warmup++) {
+      sleepFn(500);
+      accessibilityState = accessibility.detectAccessibility();
+      if (accessibilityState.enabled) {
+        logAccessibility("info", "无障碍服务状态恢复可确认", accessibilityState);
+        return true;
+      }
+      if (!isAccessibilityStateUnknown(accessibilityState)) {
+        if (isConfiguredButBindingUnavailable(accessibilityState)) {
+          return waitForConfiguredAccessibilityBinding(accessibilityState);
+        }
+        logAccessibility("error", "无障碍服务状态恢复后仍未开启", accessibilityState);
+        return false;
+      }
+    }
+    logAccessibility("error", "无障碍服务状态持续无法确认", accessibilityState);
+    return false;
+  }
+
   function waitForAccessibility() {
     var accessibilityState = accessibility.detectAccessibility();
     logAccessibility("info", "无障碍服务检测结果", accessibilityState);
@@ -62,6 +90,10 @@ function createPermissionManager(config, logger, deps) {
 
     if (isConfiguredButBindingUnavailable(accessibilityState)) {
       return waitForConfiguredAccessibilityBinding(accessibilityState);
+    }
+
+    if (isAccessibilityStateUnknown(accessibilityState)) {
+      return waitForKnownAccessibilityState(accessibilityState);
     }
 
     logAccessibility("warn", "无障碍服务未开启，打开设置页", accessibilityState);
