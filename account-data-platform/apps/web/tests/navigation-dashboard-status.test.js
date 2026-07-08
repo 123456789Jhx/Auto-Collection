@@ -23,6 +23,15 @@ test("任务调度继续承接直播评论任务控制", () => {
   assert(/selectedDeviceState\s*&&\s*assignTask\(selectedDeviceState,\s*["']live_comment["']\)/.test(schedulerSource), "scheduler detail actions must still dispatch live_comment tasks");
 });
 
+test("任务调度提供暂停恢复和任务不一致诊断", () => {
+  assert(/assignTask\(row,\s*taskTypeForControl\(row\),\s*["']PAUSE["']\)/.test(schedulerSource), "row actions must dispatch PAUSE for the current task");
+  assert(/assignTask\(row,\s*taskTypeForControl\(row\),\s*["']RESUME["']\)/.test(schedulerSource), "row actions must dispatch RESUME for the current task");
+  assert(/selectedDeviceState\s*&&\s*assignTask\(selectedDeviceState,\s*taskTypeForControl\(selectedDeviceState\),\s*["']PAUSE["']\)/.test(schedulerSource), "detail actions must dispatch PAUSE for the current task");
+  assert(/selectedDeviceState\s*&&\s*assignTask\(selectedDeviceState,\s*taskTypeForControl\(selectedDeviceState\),\s*["']RESUME["']\)/.test(schedulerSource), "detail actions must dispatch RESUME for the current task");
+  assert(/hasTaskMismatch/.test(schedulerSource), "scheduler must compute assignment versus actual task mismatch");
+  assert(/任务不一致/.test(schedulerSource), "scheduler must show task mismatch in user-facing text");
+});
+
 test("搜索直播评论和商品卡直播评论是两个独立任务入口", () => {
   assert(/commerce_card_live_comment/.test(schedulerSource), "scheduler must expose commerce card live comment as an independent task type");
   assert(/assignTask\(row,\s*["']commerce_card_live_comment["']\)/.test(schedulerSource), "scheduler row actions must dispatch commerce card live comment tasks separately");

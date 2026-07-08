@@ -348,11 +348,50 @@ function testCommerceCardLiveStartUsesIndependentTaskType() {
   assert.strictEqual(ack && ack.result.taskType, "commerce_card_live_comment");
 }
 
+function testUnsupportedExplicitStartTaskDoesNotFallbackToVideo() {
+  var ack = null;
+  var requestedTasks = [];
+  var context = createContext({
+    uploader: {
+      isRegistered: function () { return true; },
+      pollCommands: function () {
+        return [{
+          id: "cmd-unknown-task",
+          commandType: "START",
+          payload: {
+            taskType: "new_task_from_backend"
+          }
+        }];
+      },
+      uploadRuntimeLog: function () {},
+      ackCommand: function (id, status, result) {
+        ack = { id: id, status: status, result: result };
+      }
+    },
+    taskScheduler: {
+      getActiveTaskType: function () { return ""; },
+      requestTask: function (taskType) { requestedTasks.push(taskType); },
+      pauseTask: function () {},
+      stopTask: function () {},
+      recordCheckpoint: function () {}
+    }
+  });
+  var controlLoop = createControlLoop(context);
+
+  controlLoop.pollControlCommands(true);
+
+  assert.deepStrictEqual(requestedTasks, []);
+  assert.strictEqual(ack && ack.status, "FAILED");
+  assert.strictEqual(ack && ack.result.reason, "unsupported_explicit_task_type");
+  assert.strictEqual(context.floatyControl.state.running, false);
+}
+
 testPollAsyncDoesNotStartThreadBeforeInterval();
 testUnregisteredPollAttemptsAreThrottled();
 testLiveCommentPauseRequestsInterrupt();
 testStopIsNotSupersededByLaterStartInSamePoll();
 testRefreshRuntimeConfigAppliesCommerceCardConfig();
 testCommerceCardLiveStartUsesIndependentTaskType();
+testUnsupportedExplicitStartTaskDoesNotFallbackToVideo();
 
 console.log("control-loop tests passed");

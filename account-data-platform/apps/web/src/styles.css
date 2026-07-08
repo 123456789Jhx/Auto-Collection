@@ -1228,6 +1228,18 @@ body {
   color: var(--scheduler-red);
 }
 
+.scheduler-btn.pause {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: var(--scheduler-amber);
+}
+
+.scheduler-btn.resume {
+  border-color: #9be7b1;
+  background: #ecfdf3;
+  color: var(--scheduler-green);
+}
+
 .scheduler-btn:disabled,
 .scheduler-mini-btn:disabled {
   opacity: 0.55;
@@ -1495,15 +1507,28 @@ body {
   font-size: 12px;
 }
 
+.scheduler-mismatch {
+  display: inline-flex;
+  width: fit-content;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: #fff7f7;
+  color: var(--scheduler-red);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
 .scheduler-actions-cell {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  min-width: 220px;
+  min-width: 300px;
 }
 
 .scheduler-actions-cell.compact {
-  min-width: 220px;
+  min-width: 300px;
 }
 
 .scheduler-mini-btn {
@@ -1564,6 +1589,18 @@ body {
   border-color: #fde68a;
   background: #fffbeb;
   color: #b45309;
+}
+
+.scheduler-action-btn.pause {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: var(--scheduler-amber);
+}
+
+.scheduler-action-btn.resume {
+  border-color: #9be7b1;
+  background: #ecfdf3;
+  color: var(--scheduler-green);
 }
 
 .scheduler-action-btn.stop {

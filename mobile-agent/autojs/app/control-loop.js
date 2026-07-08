@@ -450,6 +450,27 @@ function createControlLoop(context) {
         handleLiveCommentControlCommand(command, payload);
         return;
       }
+      if ((commandType === "START" || commandType === "RESUME") && hasExplicitTaskType(command) && !normalizeCommandTaskType(payload.taskType, "")) {
+        logger.warn("后台指令任务类型不受当前脚本支持，已拒绝执行", {
+          commandId: command.id,
+          commandType: commandType,
+          taskType: payload.taskType
+        });
+        reportRuntimeLog("ERROR", "后台指令任务类型不受当前脚本支持，已拒绝执行", {
+          commandId: command.id,
+          commandType: commandType,
+          taskType: payload.taskType,
+          reason: "unsupported_explicit_task_type"
+        });
+        uploader.ackCommand(command.id, "FAILED", {
+          applied: false,
+          commandType: commandType,
+          taskType: payload.taskType,
+          reason: "unsupported_explicit_task_type",
+          message: "当前手机脚本不支持后台下发的任务类型"
+        });
+        return;
+      }
       if (commandType === "START" || commandType === "RESUME") {
         var normalizedStartTaskType = syncTaskSchedulerState(payload.taskType, commandType, {
           reason: "backend_command",
