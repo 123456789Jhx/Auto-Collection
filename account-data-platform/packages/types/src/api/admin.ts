@@ -184,7 +184,7 @@ export const createMobileCommandSchema = z.object({
 
 export type CreateMobileCommandPayload = z.infer<typeof createMobileCommandSchema>;
 
-export const taskAssignmentTypeSchema = z.enum(["video", "live", "live_comment"]);
+export const taskAssignmentTypeSchema = z.enum(["video", "live", "live_comment", "commerce_card_live_comment"]);
 
 export const createTaskAssignmentSchema = z.object({
   deviceId: z.string().min(1),

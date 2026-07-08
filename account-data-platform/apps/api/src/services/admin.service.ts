@@ -68,6 +68,17 @@ function stringFromRaw(raw: unknown, key: string) {
   return text || null;
 }
 
+function isKnownTaskType(value?: string | null) {
+  return value === "video" || value === "live" || value === "live_comment" || value === "commerce_card_live_comment";
+}
+
+function currentTaskFromHeartbeat(heartbeat?: { status?: string | null; sceneType?: string | null; rawPayload?: Record<string, unknown> | null } | null) {
+  if (heartbeat?.status !== "running") return "none";
+  const rawCurrentTask = stringFromRaw(heartbeat.rawPayload, "currentTaskType");
+  if (isKnownTaskType(rawCurrentTask)) return rawCurrentTask;
+  return isKnownTaskType(heartbeat.sceneType) ? heartbeat.sceneType : "none";
+}
+
 function douyinAccountNameFromHeartbeat(heartbeat?: { rawPayload?: Record<string, unknown> | null } | null) {
   return stringFromRaw(heartbeat?.rawPayload, "douyinAccountName");
 }
@@ -96,14 +107,11 @@ export async function getOverview() {
   const deviceProgress = devicesWithStatus.map((device) => {
     const heartbeat = latestHeartbeatByDeviceId.get(device.id);
     const rawPayload = heartbeat?.rawPayload ?? {};
-    const rawCurrentTask = stringFromRaw(rawPayload, "currentTaskType");
     const todayProgress = todayProgressByDeviceCode.get(device.deviceCode);
     const todayLog = todayLogByDeviceCode.get(device.deviceCode);
     const todayLogFile = todayLogFileByDeviceCode.get(device.deviceCode);
     const isActiveHeartbeat = heartbeat?.status === "running";
-    const currentTask = isActiveHeartbeat && (rawCurrentTask === "video" || rawCurrentTask === "live" || rawCurrentTask === "live_comment")
-      ? rawCurrentTask
-      : (isActiveHeartbeat && (heartbeat?.sceneType === "video" || heartbeat?.sceneType === "live") ? heartbeat.sceneType : "none");
+    const currentTask = currentTaskFromHeartbeat(heartbeat);
     const rawVideoElapsed = isActiveHeartbeat ? numberFromRaw(rawPayload, "videoElapsedMinutes") ?? (heartbeat?.sceneType === "video" ? heartbeat.elapsedMinutes ?? 0 : 0) : 0;
     const rawLiveElapsed = isActiveHeartbeat ? numberFromRaw(rawPayload, "liveElapsedMinutes") ?? (heartbeat?.sceneType === "live" ? heartbeat.elapsedMinutes ?? 0 : 0) : 0;
     const videoElapsed = Math.max(Number(rawVideoElapsed ?? 0), Number(todayProgress?.maxVideoElapsedMinutes ?? 0));
@@ -162,11 +170,10 @@ export async function getDevices() {
   return devices.map((device) => {
     const latestHeartbeat = heartbeatByDeviceId.get(device.id);
     const deviceStatus = mapDeviceStatus(device);
-    const activeTask = latestHeartbeat?.status === "running" && (latestHeartbeat.sceneType === "video" || latestHeartbeat.sceneType === "live");
     return hideDeviceSecret({
       ...deviceStatus,
       douyinAccountName: douyinAccountNameFromHeartbeat(latestHeartbeat),
-      currentTask: activeTask ? latestHeartbeat.sceneType : "none",
+      currentTask: currentTaskFromHeartbeat(latestHeartbeat),
       latestHeartbeat
     });
   });
@@ -484,7 +491,7 @@ export async function getLiveCommentDeviceSummary(rawQuery: unknown) {
       latestActionAt: summary?.latestActionAt ?? null,
       deviceStatus: mapDeviceStatus(device).effectiveStatus,
       reportedStatus: device.status,
-      currentTask: latestHeartbeat?.status === "running" && (latestHeartbeat.sceneType === "video" || latestHeartbeat.sceneType === "live") ? latestHeartbeat.sceneType : "none",
+      currentTask: currentTaskFromHeartbeat(latestHeartbeat),
       lastHeartbeatAt: latestHeartbeat?.reportedAt ?? device.lastHeartbeatAt,
       heartbeatAgeMinutes: minutesSince(latestHeartbeat?.reportedAt ?? device.lastHeartbeatAt),
       lastMessage: latestHeartbeat?.lastMessage ?? null,

@@ -23,6 +23,7 @@ function addSeconds(seconds: number) {
 
 function defaultTargetContext(taskType: string) {
   if (taskType === "live_comment") return "target_live_room_context";
+  if (taskType === "commerce_card_live_comment") return "commerce_card_live_context";
   if (taskType === "live") return "feed_context";
   return "video_playback_context";
 }

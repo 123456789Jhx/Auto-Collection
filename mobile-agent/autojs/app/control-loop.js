@@ -62,13 +62,16 @@ function createControlLoop(context) {
     if (value === "live_comment_control" || value === "liveComment" || value === "live-comment") {
       value = "live_comment";
     }
+    if (value === "commerceCardLiveComment" || value === "commerce-card-live-comment" || value === "commerce_card_live") {
+      value = "commerce_card_live_comment";
+    }
     if (value === "video_control" || value === "video_feed") {
       value = "video";
     }
     if (value === "live_control" || value === "live_feed") {
       value = "live";
     }
-    if (value === "video" || value === "live" || value === "live_comment") {
+    if (value === "video" || value === "live" || value === "live_comment" || value === "commerce_card_live_comment") {
       return value;
     }
     return "";

@@ -224,14 +224,22 @@ function testCommerceCardLiveRequiresExplicitSendApproval() {
   assert.strictEqual(context.storage.liveCommentLogs[0].skipReason, "commerce_card_send_not_approved");
 }
 
-function testCollectorRoutesCommerceLiveBeforeOrdinaryLivePhase() {
+function testCollectorKeepsCommerceLiveSeparateFromOrdinaryLivePhase() {
   var source = fs.readFileSync(path.join(__dirname, "../app/collector-app.js"), "utf8");
-  var commerceIndex = source.indexOf("commerceCardLiveRunner.runCommerceCardLiveCommentTask");
-  var livePhaseIndex = source.indexOf("phaseRunner.runPhase(\"live\"");
+  var runLiveStart = source.indexOf("function runLiveTask");
+  var runVideoStart = source.indexOf("function runVideoTask", runLiveStart);
+  var runOneStart = source.indexOf("function runOneTask");
+  var finishStart = source.indexOf("function finishTask", runOneStart);
+  var runLiveBlock = source.slice(runLiveStart, runVideoStart);
+  var runOneBlock = source.slice(runOneStart, finishStart);
+  var commerceBranchIndex = runOneBlock.indexOf("requestedTaskType === \"commerce_card_live_comment\"");
+  var liveBranchIndex = runOneBlock.indexOf("requestedTaskType === \"live\"");
 
-  assert(commerceIndex >= 0, "collector app must call the commerce card live runner");
-  assert(livePhaseIndex >= 0, "ordinary live phase must still exist");
-  assert(commerceIndex < livePhaseIndex, "commerce card live route should be checked before ordinary live phase");
+  assert(runLiveBlock.indexOf("phaseRunner.runPhase(\"live\"") >= 0, "ordinary live phase must still exist");
+  assert.strictEqual(runLiveBlock.indexOf("commerceCardLiveRunner.runCommerceCardLiveCommentTask"), -1, "ordinary live task must not run the commerce card live runner");
+  assert(commerceBranchIndex >= 0, "collector app must have an independent commerce-card live comment branch");
+  assert(liveBranchIndex >= 0, "collector app must still have an ordinary live branch");
+  assert(commerceBranchIndex < liveBranchIndex, "commerce-card live comment branch should be handled before ordinary live");
 }
 
 testCommerceCardLiveRunsThreeMatchedRounds();
@@ -239,6 +247,6 @@ testCommerceCardLiveStopsGracefullyWhenNoMatchInRound();
 testCommerceCardLivePauseStopsBeforeScanning();
 testCommerceCardLiveIsDisabledByDefault();
 testCommerceCardLiveRequiresExplicitSendApproval();
-testCollectorRoutesCommerceLiveBeforeOrdinaryLivePhase();
+testCollectorKeepsCommerceLiveSeparateFromOrdinaryLivePhase();
 
 console.log("commerce-card-live-runner tests passed");

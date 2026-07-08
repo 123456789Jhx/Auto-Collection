@@ -26,7 +26,8 @@ export function sceneText(value?: string | null) {
   const map: Record<string, string> = {
     video: "视频",
     live: "直播",
-    live_comment: "直播评论"
+    live_comment: "搜索直播间评论",
+    commerce_card_live_comment: "商品卡直播评论"
   };
   return value ? (map[value] ?? value) : "-";
 }

@@ -88,10 +88,21 @@ function testLiveCommentControlAlias() {
   assert.strictEqual(resolver.resolveRequestedTaskType(), "live_comment");
 }
 
+function testCommerceCardLiveCommentAliases() {
+  var context = createContext("video");
+  var resolver = resolverModule.createRunRequestResolver(context);
+
+  assert.strictEqual(resolver.normalizeTaskType("commerce_card_live_comment", ""), "commerce_card_live_comment");
+  assert.strictEqual(resolver.normalizeTaskType("commerceCardLiveComment", ""), "commerce_card_live_comment");
+  assert.strictEqual(resolver.setPendingTaskType("commerce-card-live-comment", "backend_commerce_card"), "commerce_card_live_comment");
+  assert.strictEqual(resolver.resolveRequestedTaskType(), "commerce_card_live_comment");
+}
+
 testPendingLiveCommentBeatsStaleVideo();
 testPendingLiveBeatsStaleVideo();
 testLiveCommentPriorityFallbackBeatsStaleVideo();
 testNormalizeDoesNotUseStaleActiveTask();
 testLiveCommentControlAlias();
+testCommerceCardLiveCommentAliases();
 
 console.log("run-request-resolver tests passed");

@@ -1,10 +1,10 @@
-import { CommentOutlined, PauseCircleOutlined, PlaySquareOutlined, VideoCameraOutlined } from "@ant-design/icons";
+import { CommentOutlined, PauseCircleOutlined, PlaySquareOutlined, ShopOutlined, VideoCameraOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { createTaskAssignment, getDevices, getTaskAssignments } from "../lib/api-client";
 import { deviceDisplayName, deviceSubTitle } from "../lib/display-maps";
 
-type TaskType = "video" | "live" | "live_comment";
+type TaskType = "video" | "live" | "live_comment" | "commerce_card_live_comment";
 type CommandType = "START" | "RESUME" | "PAUSE" | "STOP";
 
 type DeviceRow = {
@@ -88,19 +88,21 @@ function formatDateTime(value?: string | null) {
 }
 
 function isTaskType(value?: string | null): value is TaskType {
-  return value === "video" || value === "live" || value === "live_comment";
+  return value === "video" || value === "live" || value === "live_comment" || value === "commerce_card_live_comment";
 }
 
 function taskTypeText(value?: string | null) {
   if (value === "video") return "视频";
   if (value === "live") return "直播";
-  if (value === "live_comment") return "直播评论任务";
+  if (value === "live_comment") return "搜索直播间评论";
+  if (value === "commerce_card_live_comment") return "商品卡直播评论";
   if (value === "none") return "待命";
   return value || "未知";
 }
 
 function taskTypeTone(value?: string | null) {
   if (value === "live_comment") return "purple";
+  if (value === "commerce_card_live_comment") return "amber";
   if (value === "live") return "green";
   if (value === "video") return "blue";
   return "gray";
@@ -198,7 +200,8 @@ function quickReason(taskType: TaskType, commandType: CommandType) {
   if (commandType === "STOP") return "手动停止当前分配";
   if (commandType === "PAUSE") return "手动暂停当前分配";
   if (commandType === "RESUME") return "手动恢复当前分配";
-  if (taskType === "live_comment") return "手动切到直播评论";
+  if (taskType === "live_comment") return "手动切到搜索直播间评论";
+  if (taskType === "commerce_card_live_comment") return "手动切到商品卡直播评论";
   if (taskType === "live") return "手动切到直播";
   return "手动切到视频";
 }
@@ -222,7 +225,8 @@ function targetContextText(value?: string | null) {
   if (value === "live_room_context") return "直播间";
   if (value === "video_context") return "视频采集";
   if (value === "live_context") return "直播采集";
-  if (value === "comment_context" || value === "live_comment_context") return "直播评论";
+  if (value === "comment_context" || value === "live_comment_context") return "搜索直播间评论";
+  if (value === "commerce_card_live_context" || value === "commerce_card_live_comment_context") return "商品卡直播评论";
   return value || "-";
 }
 
@@ -378,7 +382,7 @@ export function TaskSchedulerPage() {
       <header className="scheduler-topbar">
         <div>
           <h1>任务调度中心</h1>
-          <p>查看每台设备的任务安排和手机实际执行情况，视频、直播和直播评论任务都从这里下发。</p>
+          <p>查看每台设备的任务安排和手机实际执行情况，视频、直播、搜索直播间评论和商品卡直播评论都从这里下发。</p>
         </div>
         <div className="scheduler-toolbar">
           <button className="scheduler-btn" type="button" onClick={refreshData}>刷新</button>
@@ -394,7 +398,7 @@ export function TaskSchedulerPage() {
         <div className="scheduler-stat-card">
           <div className="scheduler-stat-label">已安排任务</div>
           <div className="scheduler-stat-value">{desiredRunningCount}</div>
-          <div className="scheduler-stat-note">含视频、直播、直播评论任务</div>
+          <div className="scheduler-stat-note">含视频、直播和两类评论任务</div>
         </div>
         <div className="scheduler-stat-card">
           <div className="scheduler-stat-label">执行一致</div>
@@ -430,7 +434,8 @@ export function TaskSchedulerPage() {
             <option value="">全部任务</option>
             <option value="video">视频</option>
             <option value="live">直播</option>
-            <option value="live_comment">直播评论任务</option>
+            <option value="live_comment">搜索直播间评论</option>
+            <option value="commerce_card_live_comment">商品卡直播评论</option>
             <option value="none">待命</option>
           </select>
         </div>
@@ -515,7 +520,8 @@ export function TaskSchedulerPage() {
                         <div className="scheduler-actions-cell compact" onClick={(event) => event.stopPropagation()}>
                           <button className="scheduler-action-btn video" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "video")}><VideoCameraOutlined />视频</button>
                           <button className="scheduler-action-btn live" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live")}><PlaySquareOutlined />直播</button>
-                          <button className="scheduler-action-btn comment" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live_comment")}><CommentOutlined />评论任务</button>
+                          <button className="scheduler-action-btn comment" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live_comment")}><CommentOutlined />搜直播评论</button>
+                          <button className="scheduler-action-btn commerce" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "commerce_card_live_comment")}><ShopOutlined />商品卡评论</button>
                           <button className="scheduler-action-btn stop" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, isTaskType(assignment?.taskType) ? assignment.taskType : "video", "STOP")}><PauseCircleOutlined />停止</button>
                         </div>
                       </td>
@@ -579,7 +585,8 @@ export function TaskSchedulerPage() {
             <div className="scheduler-toolbar detail-toolbar">
               <button className="scheduler-btn primary" type="button" disabled={!selectedDeviceState || mutation.isPending} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "video")}>切视频</button>
               <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "live")}>切直播</button>
-              <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "live_comment")}>切评论任务</button>
+              <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "live_comment")}>切搜索直播评论</button>
+              <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "commerce_card_live_comment")}>切商品卡评论</button>
               <button
                 className="scheduler-btn danger"
                 type="button"

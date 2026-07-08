@@ -311,10 +311,48 @@ function testRefreshRuntimeConfigAppliesCommerceCardConfig() {
   assert.deepStrictEqual(context.config.task.commerceCardLiveComment.matchKeywords, ["秭归", "夏橙"]);
 }
 
+function testCommerceCardLiveStartUsesIndependentTaskType() {
+  var ack = null;
+  var requestedTasks = [];
+  var context = createContext({
+    uploader: {
+      isRegistered: function () { return true; },
+      pollCommands: function () {
+        return [{
+          id: "cmd-commerce-card",
+          commandType: "START",
+          payload: {
+            taskType: "commerce_card_live_comment"
+          }
+        }];
+      },
+      uploadRuntimeLog: function () {},
+      ackCommand: function (id, status, result) {
+        ack = { id: id, status: status, result: result };
+      }
+    },
+    taskScheduler: {
+      getActiveTaskType: function () { return ""; },
+      requestTask: function (taskType) { requestedTasks.push(taskType); },
+      pauseTask: function () {},
+      stopTask: function () {},
+      recordCheckpoint: function () {}
+    }
+  });
+  var controlLoop = createControlLoop(context);
+
+  controlLoop.pollControlCommands(true);
+
+  assert.deepStrictEqual(requestedTasks, ["commerce_card_live_comment"]);
+  assert.strictEqual(ack && ack.status, "DONE");
+  assert.strictEqual(ack && ack.result.taskType, "commerce_card_live_comment");
+}
+
 testPollAsyncDoesNotStartThreadBeforeInterval();
 testUnregisteredPollAttemptsAreThrottled();
 testLiveCommentPauseRequestsInterrupt();
 testStopIsNotSupersededByLaterStartInSamePoll();
 testRefreshRuntimeConfigAppliesCommerceCardConfig();
+testCommerceCardLiveStartUsesIndependentTaskType();
 
 console.log("control-loop tests passed");

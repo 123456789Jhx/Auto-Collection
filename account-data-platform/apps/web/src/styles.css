@@ -1560,6 +1560,12 @@ body {
   color: #6d28d9;
 }
 
+.scheduler-action-btn.commerce {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #b45309;
+}
+
 .scheduler-action-btn.stop {
   border-color: #fecaca;
   background: #fff7f7;

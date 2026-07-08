@@ -6,7 +6,8 @@ function createTaskScheduler(context) {
   var supportedTaskTypes = {
     video: true,
     live: true,
-    live_comment: true
+    live_comment: true,
+    commerce_card_live_comment: true
   };
 
   var state = {
@@ -17,7 +18,8 @@ function createTaskScheduler(context) {
     tasks: {
       video: createEmptyTaskState("video"),
       live: createEmptyTaskState("live"),
-      live_comment: createEmptyTaskState("live_comment")
+      live_comment: createEmptyTaskState("live_comment"),
+      commerce_card_live_comment: createEmptyTaskState("commerce_card_live_comment")
     }
   };
 
@@ -59,6 +61,9 @@ function createTaskScheduler(context) {
     var value = String(taskType || "").trim();
     if (value === "live_comment_control" || value === "liveComment" || value === "live-comment") {
       value = "live_comment";
+    }
+    if (value === "commerceCardLiveComment" || value === "commerce-card-live-comment" || value === "commerce_card_live") {
+      value = "commerce_card_live_comment";
     }
     if (value === "video_control" || value === "video_feed") {
       value = "video";

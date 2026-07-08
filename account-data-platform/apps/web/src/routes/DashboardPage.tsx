@@ -106,6 +106,7 @@ function taskTone(value?: string | null) {
   if (value === "live") return "green";
   if (value === "video") return "blue";
   if (value === "live_comment") return "purple";
+  if (value === "commerce_card_live_comment") return "amber";
   return "gray";
 }
 

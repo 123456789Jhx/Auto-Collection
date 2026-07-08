@@ -14,7 +14,7 @@ type DeviceRow = {
   platform?: string;
   status: string;
   reportedStatus?: string;
-  currentTask?: "video" | "live" | "none";
+  currentTask?: "video" | "live" | "live_comment" | "commerce_card_live_comment" | "none";
   effectiveStatus: string;
   lastHeartbeatAt?: string;
   heartbeatAgeMinutes?: number | null;
@@ -114,7 +114,8 @@ function formatDateTime(value?: string | null) {
 function taskText(value?: string | null) {
   if (value === "video") return "视频";
   if (value === "live") return "直播";
-  if (value === "live_comment") return "直播评论";
+  if (value === "live_comment") return "搜索直播间评论";
+  if (value === "commerce_card_live_comment") return "商品卡直播评论";
   return "待命";
 }
 
@@ -127,6 +128,7 @@ function statusTone(value?: string | null) {
 
 function taskTone(value?: string | null) {
   if (value === "live_comment") return "purple";
+  if (value === "commerce_card_live_comment") return "amber";
   if (value === "live") return "green";
   if (value === "video") return "blue";
   return "gray";

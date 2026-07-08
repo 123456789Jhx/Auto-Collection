@@ -123,11 +123,6 @@ function createCollectorApp(context) {
       !!(floatyControl && floatyControl.state && floatyControl.state.liveCommentControlStatus === "running");
   }
 
-  function isCommerceCardLiveEnabled() {
-    var commerceConfig = config.task.commerceCardLiveComment || {};
-    return commerceConfig.enabled === true;
-  }
-
   function tryEnterTargetLiveRoomFromSearch(reason) {
     if (!shouldEnterTargetLiveRoom() || !douyin.openTargetLiveRoomFromSearch) {
       return false;
@@ -464,6 +459,7 @@ function createCollectorApp(context) {
     var isLiveCommentTask = taskScheduler ?
       taskScheduler.resolveTaskType(requestedTaskType) === "live_comment" :
       requestedTaskType === "live_comment";
+    var isCommerceCardLiveTask = normalizedTaskType === "commerce_card_live_comment";
     var isLiveTask = normalizedTaskType === "live";
     floatyControl.update({ lastMessage: "打开抖音" });
     logger.info("启动流程：打开抖音", { elapsedMs: Date.now() - flowStartedAt });
@@ -507,9 +503,9 @@ function createCollectorApp(context) {
       }
     }
 
-    if (isLiveTask && isCommerceCardLiveEnabled()) {
+    if (isCommerceCardLiveTask) {
       counters.lastStopReason = "";
-      floatyControl.update({ lastMessage: "商品卡直播任务准备中" });
+      floatyControl.update({ lastMessage: "商品卡直播评论准备中" });
       logger.info("启动流程：商品卡直播评论任务只打开抖音，后续交给独立 runner", {
         elapsedMs: Date.now() - flowStartedAt,
         taskType: normalizedTaskType
@@ -782,33 +778,46 @@ function createCollectorApp(context) {
     return result;
   }
 
+  function runCommerceCardLiveCommentTask(todayLiveMinutes) {
+    startTask("commerce_card_live_comment", "START", { reason: "run_commerce_card_live_comment_task" });
+    var commerceConfig = config.task.commerceCardLiveComment || {};
+    var estimatedMinutes = Math.max(1,
+      Number(commerceConfig.scanMinutesPerRound || 15) * Number(commerceConfig.maxRounds || 3) +
+      Number(commerceConfig.watchMinutesPerLive || 0) * Number(commerceConfig.maxRounds || 3)
+    );
+    counters.plannedVideoMinutes = 0;
+    counters.videoRemainingMinutes = 0;
+    counters.plannedLiveMinutes = counters.plannedLiveMinutes || todayLiveMinutes || estimatedMinutes;
+    counters.liveElapsedMinutes = counters.liveElapsedMinutes || 0;
+    counters.liveRemainingMinutes = Math.max(1, counters.liveRemainingMinutes || counters.plannedLiveMinutes - counters.liveElapsedMinutes || estimatedMinutes);
+    if (!commerceCardLiveRunner || !commerceCardLiveRunner.runCommerceCardLiveCommentTask) {
+      counters.lastStopReason = "commerce_card_live_runner_missing";
+      logger.error("商品卡直播评论 runner 缺失，停止任务");
+      controlLoop.reportRuntimeLog("ERROR", "商品卡直播评论 runner 缺失，停止任务", {
+        phase: "commerce_card_live_task_start",
+        taskType: "commerce_card_live_comment",
+        stopReason: counters.lastStopReason
+      });
+      return {
+        success: false,
+        reason: counters.lastStopReason
+      };
+    }
+    var result = commerceCardLiveRunner.runCommerceCardLiveCommentTask();
+    persistCheckpoint({
+      taskType: "commerce_card_live_comment",
+      checkpointType: result && result.success ? "commerce_card_live_task_end" : "commerce_card_live_task_failed",
+      stopReason: counters.lastStopReason,
+      result: result || null
+    });
+    return result;
+  }
+
   function runLiveTask(todayLiveMinutes) {
     startTask("live", "START", { reason: "run_live_task" });
     counters.plannedLiveMinutes = counters.plannedLiveMinutes || todayLiveMinutes || randomMinutes(config.schedule.liveMinutesMin, config.schedule.liveMinutesMax);
     counters.liveElapsedMinutes = counters.liveElapsedMinutes || 0;
     counters.liveRemainingMinutes = Math.max(1, counters.liveRemainingMinutes || counters.plannedLiveMinutes - counters.liveElapsedMinutes || counters.plannedLiveMinutes);
-    if (isCommerceCardLiveEnabled()) {
-      if (!commerceCardLiveRunner || !commerceCardLiveRunner.runCommerceCardLiveCommentTask) {
-        counters.lastStopReason = "commerce_card_live_runner_missing";
-        logger.error("商品卡直播评论 runner 缺失，停止 live 任务");
-        controlLoop.reportRuntimeLog("ERROR", "商品卡直播评论 runner 缺失，停止 live 任务", {
-          phase: "commerce_card_live_task_start",
-          stopReason: counters.lastStopReason
-        });
-        return {
-          success: false,
-          reason: counters.lastStopReason
-        };
-      }
-      var commerceResult = commerceCardLiveRunner.runCommerceCardLiveCommentTask();
-      persistCheckpoint({
-        taskType: "live",
-        checkpointType: commerceResult && commerceResult.success ? "commerce_card_live_task_end" : "commerce_card_live_task_failed",
-        stopReason: counters.lastStopReason,
-        result: commerceResult || null
-      });
-      return commerceResult;
-    }
     phaseRunner.runPhase("live", counters.liveRemainingMinutes, {
       taskType: "live"
     });
@@ -910,6 +919,15 @@ function createCollectorApp(context) {
           status: liveCommentResult && liveCommentResult.success ? "completed" : "failed",
           reason: (liveCommentResult && liveCommentResult.reason) || counters.lastStopReason || "live_comment_finished",
           commandType: liveCommentResult && liveCommentResult.success ? "FINISH" : "FAILED"
+        });
+        return;
+      }
+      if (requestedTaskType === "commerce_card_live_comment") {
+        var commerceCardLiveResult = runCommerceCardLiveCommentTask(todayLiveMinutes);
+        finishTask({
+          status: commerceCardLiveResult && commerceCardLiveResult.success ? "completed" : "failed",
+          reason: (commerceCardLiveResult && commerceCardLiveResult.reason) || counters.lastStopReason || "commerce_card_live_comment_finished",
+          commandType: commerceCardLiveResult && commerceCardLiveResult.success ? "FINISH" : "FAILED"
         });
         return;
       }

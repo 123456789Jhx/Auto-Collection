@@ -194,7 +194,7 @@ export function getTaskAssignments() {
 
 export function createTaskAssignment(payload: {
   deviceId: string;
-  taskType: "video" | "live" | "live_comment";
+  taskType: "video" | "live" | "live_comment" | "commerce_card_live_comment";
   commandType?: "START" | "RESUME" | "PAUSE" | "STOP";
   reason?: string;
   priority?: number;

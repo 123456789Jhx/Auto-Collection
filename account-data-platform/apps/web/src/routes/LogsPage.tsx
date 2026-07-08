@@ -135,8 +135,19 @@ function phaseText(log: RuntimeLog) {
     candidate_upload: "采集上传",
     live_room: "直播间停留",
     live_readonly: "直播采集",
-    live_comment_task_start: "直播评论启动",
-    live_comment_target_search: "查找直播间",
+    live_comment_task_start: "搜索直播间评论启动",
+    live_comment_target_search: "搜索目标直播间",
+    commerce_card_live_start: "商品卡直播评论启动",
+    commerce_card_live_task_start: "商品卡直播评论启动",
+    commerce_card_live_config: "商品卡直播评论配置",
+    commerce_card_scan_start: "商品卡扫描",
+    commerce_card_live_before_scan: "商品卡扫描",
+    commerce_card_live_before_comment: "商品卡直播评论",
+    commerce_card_live_comment: "商品卡直播评论",
+    commerce_card_live_comment_send: "商品卡直播评论发送",
+    commerce_card_live_comment_result: "商品卡直播评论结果",
+    commerce_card_live_watch: "商品卡直播观看",
+    commerce_card_live_finish: "商品卡直播评论完成",
     task_switch: "任务切换",
     search: "搜索入口",
     search_open: "搜索入口",
@@ -147,7 +158,8 @@ function phaseText(log: RuntimeLog) {
   if (map[phase]) return map[phase];
   if (phase === "video") return "视频采集";
   if (phase === "live") return "直播采集";
-  if (phase === "live_comment") return "直播评论";
+  if (phase === "live_comment") return "搜索直播间评论";
+  if (phase === "commerce_card_live_comment") return "商品卡直播评论";
   if (phase) return "运行事件";
   if (/直播评论/.test(log.message || "")) return "直播评论";
   if (/直播/.test(log.message || "")) return "直播采集";

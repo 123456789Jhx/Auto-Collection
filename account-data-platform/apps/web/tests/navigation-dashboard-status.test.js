@@ -8,6 +8,7 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const webSrcDir = path.join(currentDir, "../src");
 const appSource = fs.readFileSync(path.join(webSrcDir, "routes/App.tsx"), "utf8");
 const dashboardSource = fs.readFileSync(path.join(webSrcDir, "routes/DashboardPage.tsx"), "utf8");
+const logsSource = fs.readFileSync(path.join(webSrcDir, "routes/LogsPage.tsx"), "utf8");
 const schedulerSource = fs.readFileSync(path.join(webSrcDir, "routes/TaskSchedulerPage.tsx"), "utf8");
 
 test("后台导航不再暴露独立直播评论入口", () => {
@@ -20,6 +21,16 @@ test("任务调度继续承接直播评论任务控制", () => {
   assert(/type\s+TaskType\s*=\s*["']video["']\s*\|\s*["']live["']\s*\|\s*["']live_comment["']/.test(schedulerSource), "scheduler must keep live_comment as a task type");
   assert(/assignTask\(row,\s*["']live_comment["']\)/.test(schedulerSource), "scheduler row actions must still dispatch live_comment tasks");
   assert(/selectedDeviceState\s*&&\s*assignTask\(selectedDeviceState,\s*["']live_comment["']\)/.test(schedulerSource), "scheduler detail actions must still dispatch live_comment tasks");
+});
+
+test("搜索直播评论和商品卡直播评论是两个独立任务入口", () => {
+  assert(/commerce_card_live_comment/.test(schedulerSource), "scheduler must expose commerce card live comment as an independent task type");
+  assert(/assignTask\(row,\s*["']commerce_card_live_comment["']\)/.test(schedulerSource), "scheduler row actions must dispatch commerce card live comment tasks separately");
+  assert(/selectedDeviceState\s*&&\s*assignTask\(selectedDeviceState,\s*["']commerce_card_live_comment["']\)/.test(schedulerSource), "scheduler detail actions must dispatch commerce card live comment tasks separately");
+  assert(/搜索直播间评论/.test(schedulerSource), "old live_comment label must make the search-room flow explicit");
+  assert(/商品卡直播评论/.test(schedulerSource), "new commerce-card flow must have a separate label");
+  assert(/commerce_card_live_comment/.test(dashboardSource), "dashboard must recognize commerce-card live comment task status");
+  assert(/商品卡直播评论/.test(logsSource), "logs must display commerce-card live comment phases distinctly");
 });
 
 test("工作台展示功能状态看板而不是完整技术日志", () => {

@@ -99,8 +99,8 @@ function createCommerceCardLiveRunner(context) {
     if (!taskScheduler || !taskScheduler.recordCheckpoint) {
       return;
     }
-    taskScheduler.recordCheckpoint("live", {
-      taskType: "live",
+    taskScheduler.recordCheckpoint("commerce_card_live_comment", {
+      taskType: "commerce_card_live_comment",
       sceneType: "commerce_card_live_comment",
       checkpointType: extra && extra.checkpointType || "commerce_card_live_checkpoint",
       currentPhase: counters.currentPhase,
@@ -223,7 +223,7 @@ function createCommerceCardLiveRunner(context) {
     counters.phaseEndedAt = nowIso();
     report(reason === "risk_control" ? "ERROR" : "WARN", "商品卡直播评论任务失败，已停止", {
       phase: stage || "commerce_card_live_comment",
-      taskType: "live",
+      taskType: "commerce_card_live_comment",
       reason: reason,
       textSample: String(textSample || "").slice(0, 260)
     });
@@ -246,7 +246,7 @@ function createCommerceCardLiveRunner(context) {
     extra = extra || {};
     report("INFO", "商品卡直播评论任务结束", {
       phase: "commerce_card_live_finish",
-      taskType: "live",
+      taskType: "commerce_card_live_comment",
       reason: reason,
       completedRounds: completedRounds,
       maxRounds: extra.maxRounds || 0
@@ -311,7 +311,7 @@ function createCommerceCardLiveRunner(context) {
 
     report("INFO", "商品卡直播评论任务启动", {
       phase: "commerce_card_live_start",
-      taskType: "live",
+      taskType: "commerce_card_live_comment",
       searchKeyword: searchKeyword,
       matchKeywords: matchKeywords,
       scanMinutesPerRound: scanMinutes,
