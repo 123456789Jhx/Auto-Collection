@@ -94,7 +94,7 @@ function isTaskType(value?: string | null): value is TaskType {
 function taskTypeText(value?: string | null) {
   if (value === "video") return "视频";
   if (value === "live") return "直播";
-  if (value === "live_comment") return "直播评论";
+  if (value === "live_comment") return "直播评论任务";
   if (value === "none") return "待命";
   return value || "未知";
 }
@@ -378,7 +378,7 @@ export function TaskSchedulerPage() {
       <header className="scheduler-topbar">
         <div>
           <h1>任务调度中心</h1>
-          <p>查看每台设备的任务安排和手机实际执行情况，快速切换视频、直播和评论任务。</p>
+          <p>查看每台设备的任务安排和手机实际执行情况，视频、直播和直播评论任务都从这里下发。</p>
         </div>
         <div className="scheduler-toolbar">
           <button className="scheduler-btn" type="button" onClick={refreshData}>刷新</button>
@@ -394,7 +394,7 @@ export function TaskSchedulerPage() {
         <div className="scheduler-stat-card">
           <div className="scheduler-stat-label">已安排任务</div>
           <div className="scheduler-stat-value">{desiredRunningCount}</div>
-          <div className="scheduler-stat-note">含视频、直播、直播评论</div>
+          <div className="scheduler-stat-note">含视频、直播、直播评论任务</div>
         </div>
         <div className="scheduler-stat-card">
           <div className="scheduler-stat-label">执行一致</div>
@@ -430,7 +430,7 @@ export function TaskSchedulerPage() {
             <option value="">全部任务</option>
             <option value="video">视频</option>
             <option value="live">直播</option>
-            <option value="live_comment">直播评论</option>
+            <option value="live_comment">直播评论任务</option>
             <option value="none">待命</option>
           </select>
         </div>
@@ -515,7 +515,7 @@ export function TaskSchedulerPage() {
                         <div className="scheduler-actions-cell compact" onClick={(event) => event.stopPropagation()}>
                           <button className="scheduler-action-btn video" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "video")}><VideoCameraOutlined />视频</button>
                           <button className="scheduler-action-btn live" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live")}><PlaySquareOutlined />直播</button>
-                          <button className="scheduler-action-btn comment" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live_comment")}><CommentOutlined />评论</button>
+                          <button className="scheduler-action-btn comment" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, "live_comment")}><CommentOutlined />评论任务</button>
                           <button className="scheduler-action-btn stop" type="button" disabled={mutation.isPending} onClick={() => assignTask(row, isTaskType(assignment?.taskType) ? assignment.taskType : "video", "STOP")}><PauseCircleOutlined />停止</button>
                         </div>
                       </td>
@@ -579,7 +579,7 @@ export function TaskSchedulerPage() {
             <div className="scheduler-toolbar detail-toolbar">
               <button className="scheduler-btn primary" type="button" disabled={!selectedDeviceState || mutation.isPending} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "video")}>切视频</button>
               <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "live")}>切直播</button>
-              <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "live_comment")}>切评论</button>
+              <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "live_comment")}>切评论任务</button>
               <button
                 className="scheduler-btn danger"
                 type="button"

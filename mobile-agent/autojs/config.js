@@ -222,6 +222,8 @@ module.exports = {
     requestStartLogIntervalMs: 300000,
     maxLogUploadBytes: 2097152,
     logUploadRecentDays: 7,
+    realtimeLogUploadEnabled: true,
+    realtimeLogUploadIntervalSeconds: 120,
     dailyLogUploadHour: 23,
     dailyLogUploadMinute: 55,
     versionCheckEnabled: true,

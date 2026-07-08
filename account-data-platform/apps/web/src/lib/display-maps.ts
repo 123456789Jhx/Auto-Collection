@@ -25,7 +25,8 @@ export function statusColor(value?: string | null) {
 export function sceneText(value?: string | null) {
   const map: Record<string, string> = {
     video: "视频",
-    live: "直播"
+    live: "直播",
+    live_comment: "直播评论"
   };
   return value ? (map[value] ?? value) : "-";
 }

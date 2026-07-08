@@ -75,12 +75,14 @@ function douyinAccountNameFromHeartbeat(heartbeat?: { rawPayload?: Record<string
 export async function getOverview() {
   const todayStart = startOfToday();
   const todayKey = utcDateKey();
-  const [devices, todayRecordCount, todaySceneCounts, todayErrorCount, latestHeartbeats] = await Promise.all([
+  const [devices, todayRecordCount, todaySceneCounts, todayErrorCount, latestHeartbeats, todayLogSummaries, todayLogFileSummaries] = await Promise.all([
     listDevices(),
     countCollectionRecords({ createdFrom: todayStart }),
     getSceneCountsSince(todayStart),
     countRuntimeLogs({ createdFrom: todayStart, level: "ERROR" }),
-    listLatestHeartbeats(50)
+    listLatestHeartbeats(50),
+    getLogDeviceSummaries(todayStart),
+    getLogFileDeviceSummaries(todayStart)
   ]);
   const todayProgressRows = await Promise.all(devices.map((device) => getDeviceDailyProgressSummaries(device.deviceCode, 1)));
   const todayProgressByDeviceCode = new Map(devices.map((device, index) => {
@@ -89,12 +91,19 @@ export async function getOverview() {
   }));
   const devicesWithStatus = devices.map(mapDeviceStatus);
   const latestHeartbeatByDeviceId = new Map(latestHeartbeats.filter((heartbeat) => heartbeat.deviceId).map((heartbeat) => [heartbeat.deviceId, heartbeat]));
+  const todayLogByDeviceCode = new Map(todayLogSummaries.map((summary) => [summary.deviceCode, summary]));
+  const todayLogFileByDeviceCode = new Map(todayLogFileSummaries.map((summary) => [summary.deviceCode, summary]));
   const deviceProgress = devicesWithStatus.map((device) => {
     const heartbeat = latestHeartbeatByDeviceId.get(device.id);
     const rawPayload = heartbeat?.rawPayload ?? {};
+    const rawCurrentTask = stringFromRaw(rawPayload, "currentTaskType");
     const todayProgress = todayProgressByDeviceCode.get(device.deviceCode);
+    const todayLog = todayLogByDeviceCode.get(device.deviceCode);
+    const todayLogFile = todayLogFileByDeviceCode.get(device.deviceCode);
     const isActiveHeartbeat = heartbeat?.status === "running";
-    const currentTask = isActiveHeartbeat && (heartbeat?.sceneType === "video" || heartbeat?.sceneType === "live") ? heartbeat.sceneType : "none";
+    const currentTask = isActiveHeartbeat && (rawCurrentTask === "video" || rawCurrentTask === "live" || rawCurrentTask === "live_comment")
+      ? rawCurrentTask
+      : (isActiveHeartbeat && (heartbeat?.sceneType === "video" || heartbeat?.sceneType === "live") ? heartbeat.sceneType : "none");
     const rawVideoElapsed = isActiveHeartbeat ? numberFromRaw(rawPayload, "videoElapsedMinutes") ?? (heartbeat?.sceneType === "video" ? heartbeat.elapsedMinutes ?? 0 : 0) : 0;
     const rawLiveElapsed = isActiveHeartbeat ? numberFromRaw(rawPayload, "liveElapsedMinutes") ?? (heartbeat?.sceneType === "live" ? heartbeat.elapsedMinutes ?? 0 : 0) : 0;
     const videoElapsed = Math.max(Number(rawVideoElapsed ?? 0), Number(todayProgress?.maxVideoElapsedMinutes ?? 0));
@@ -123,6 +132,13 @@ export async function getOverview() {
       liveViewedCount: Math.max(isActiveHeartbeat ? Number(heartbeat?.liveViewedCount ?? 0) : 0, Number(todayProgress?.maxLiveViewedCount ?? 0)),
       capturedCount: Math.max(isActiveHeartbeat ? Number(heartbeat?.capturedCount ?? 0) : 0, Number(todayProgress?.maxCapturedCount ?? 0)),
       lastHeartbeatAt: heartbeat?.reportedAt ?? device.lastHeartbeatAt,
+      todayLogCount: todayLog?.totalCount ?? 0,
+      todayWarnCount: todayLog?.warnCount ?? 0,
+      todayErrorCount: todayLog?.errorCount ?? 0,
+      latestLogAt: todayLog?.latestLogAt ?? null,
+      logFileCount: todayLogFile?.fileCount ?? 0,
+      logFileSizeBytes: todayLogFile?.fileSizeBytes ?? 0,
+      latestFileUploadedAt: todayLogFile?.latestUploadedAt ?? null,
       heartbeat
     };
   });

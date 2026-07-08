@@ -6,6 +6,11 @@ function createHeartbeatService(context) {
   var counters = context.counters;
   var heartbeat = context.heartbeat;
   var douyin = context.douyin;
+  var realtimeLogSync = context.realtimeLogSync || {
+    lastAt: 0,
+    running: false
+  };
+  context.realtimeLogSync = realtimeLogSync;
 
   heartbeat.douyinAccountName = heartbeat.douyinAccountName || "";
   heartbeat.douyinAccountNameLastAt = heartbeat.douyinAccountNameLastAt || 0;
@@ -24,6 +29,52 @@ function createHeartbeatService(context) {
       douyinAccountName: heartbeat.douyinAccountName || "",
       douyinAccountNameUpdatedAt: heartbeat.douyinAccountNameLastAt ? new Date(heartbeat.douyinAccountNameLastAt).toISOString() : ""
     };
+  }
+
+  function realtimeLogUploadEnabled() {
+    return !!(config.upload && config.upload.enabled && config.upload.realtimeLogUploadEnabled !== false);
+  }
+
+  function realtimeLogUploadIntervalMs() {
+    return Math.max(60 * 1000, Number(config.upload && config.upload.realtimeLogUploadIntervalSeconds || 120) * 1000);
+  }
+
+  function uploadCurrentLogNow(filePath, reason) {
+    try {
+      uploader.uploadLogFile(filePath);
+    } catch (error) {
+      logger.warn("实时完整日志同步失败", { reason: reason, message: String(error) });
+    } finally {
+      realtimeLogSync.running = false;
+    }
+  }
+
+  function maybeUploadCurrentLog(reason) {
+    if (!realtimeLogUploadEnabled() || !uploader || !uploader.uploadLogFile || !logger.getLogFile) {
+      return;
+    }
+    var now = Date.now();
+    if (realtimeLogSync.running || now - realtimeLogSync.lastAt < realtimeLogUploadIntervalMs()) {
+      return;
+    }
+    var filePath = logger.getLogFile();
+    if (!filePath) {
+      return;
+    }
+    realtimeLogSync.lastAt = now;
+    realtimeLogSync.running = true;
+    if (typeof threads !== "undefined" && threads.start) {
+      try {
+        threads.start(function () {
+          uploadCurrentLogNow(filePath, reason);
+        });
+        return;
+      } catch (error) {
+        realtimeLogSync.running = false;
+        logger.warn("实时完整日志同步线程启动失败", { reason: reason, message: String(error) });
+      }
+    }
+    uploadCurrentLogNow(filePath, reason);
   }
 
   function shouldRefreshDouyinAccountName(force) {
@@ -108,6 +159,7 @@ function createHeartbeatService(context) {
     };
     logger.info("采集心跳", payload);
     uploader.uploadHeartbeat(payload);
+    maybeUploadCurrentLog("heartbeat");
   }
 
   function reportImmediateHeartbeat(sceneType, status, message) {
@@ -142,6 +194,7 @@ function createHeartbeatService(context) {
     };
     logger.info("即时状态心跳", payload);
     uploader.uploadHeartbeat(payload);
+    maybeUploadCurrentLog("immediate_heartbeat");
   }
 
   function reportAgentHeartbeat(status, message, force) {

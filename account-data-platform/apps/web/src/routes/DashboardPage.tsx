@@ -21,6 +21,13 @@ type DeviceProgress = {
   viewedCount?: number;
   liveViewedCount?: number;
   capturedCount?: number;
+  todayLogCount?: number;
+  todayWarnCount?: number;
+  todayErrorCount?: number;
+  latestLogAt?: string | null;
+  logFileCount?: number;
+  logFileSizeBytes?: number;
+  latestFileUploadedAt?: string | null;
   lastHeartbeatAt?: string | null;
   heartbeat?: {
     lastMessage?: string | null;
@@ -52,6 +59,14 @@ type DailyProgress = {
 };
 
 type CommandType = "START" | "PAUSE" | "RESUME" | "STOP" | "REFRESH_CONFIG";
+type FeatureTone = "ok" | "warn" | "danger" | "idle";
+
+type FeatureStatus = {
+  label: string;
+  text: string;
+  note: string;
+  tone: FeatureTone;
+};
 
 function formatDateTime(value?: string | null) {
   if (!value) return "-";
@@ -94,6 +109,21 @@ function taskTone(value?: string | null) {
   return "gray";
 }
 
+function minutesSinceTime(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
+}
+
+function recentText(value?: string | null) {
+  const minutes = minutesSinceTime(value);
+  if (minutes === null) return "未上报";
+  if (minutes <= 0) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟前`;
+  return `${Math.floor(minutes / 60)} 小时前`;
+}
+
 function heartbeatInfo(device: DeviceProgress) {
   if (!device.lastHeartbeatAt) {
     return { text: "从未上报", tone: "danger" as const, note: "检查手机网络、脚本常驻和后台地址" };
@@ -115,6 +145,101 @@ function heartbeatInfo(device: DeviceProgress) {
 function needsAttention(device: DeviceProgress) {
   const heartbeat = heartbeatInfo(device);
   return heartbeat.tone !== "ok" || ["offline", "error", "risk_control", "stopped"].includes(device.status || "");
+}
+
+function configFeatureStatus(device: DeviceProgress): FeatureStatus {
+  const heartbeat = heartbeatInfo(device);
+  const message = device.heartbeat?.lastMessage || "";
+  if (heartbeat.tone === "danger") {
+    return { label: "配置同步", text: "待确认", note: "手机未稳定在线", tone: "danger" };
+  }
+  if (/后台未就绪|配置拉取失败|注册失败/.test(message)) {
+    return { label: "配置同步", text: "未完成", note: "等待注册或重新拉取配置", tone: "warn" };
+  }
+  return { label: "配置同步", text: "已同步", note: "最近心跳正常", tone: "ok" };
+}
+
+function collectionFeatureStatus(device: DeviceProgress): FeatureStatus {
+  if (device.status === "error" || device.status === "risk_control") {
+    return { label: "采集链路", text: "异常", note: device.heartbeat?.lastMessage || "检查手机状态", tone: "danger" };
+  }
+  if (device.currentTask && device.currentTask !== "none") {
+    return { label: "采集链路", text: "运行中", note: currentTaskText(device.currentTask), tone: "ok" };
+  }
+  if (Number(device.capturedCount || 0) > 0 || Number(device.viewedCount || 0) > 0 || Number(device.liveViewedCount || 0) > 0) {
+    return { label: "采集链路", text: "有结果", note: `今日采集 ${device.capturedCount ?? 0} 条`, tone: "ok" };
+  }
+  return { label: "采集链路", text: "待执行", note: "等待任务调度", tone: "idle" };
+}
+
+function logFeatureStatus(device: DeviceProgress): FeatureStatus {
+  const latestLogMinutes = minutesSinceTime(device.latestLogAt);
+  const latestFileMinutes = minutesSinceTime(device.latestFileUploadedAt);
+  if (Number(device.todayErrorCount || 0) > 0) {
+    return { label: "日志同步", text: "有异常", note: `今日错误 ${device.todayErrorCount} 条`, tone: "danger" };
+  }
+  if (latestLogMinutes !== null && latestLogMinutes <= 5) {
+    return { label: "日志同步", text: "实时更新", note: `结构化 ${recentText(device.latestLogAt)}`, tone: "ok" };
+  }
+  if (latestFileMinutes !== null && latestFileMinutes <= 30) {
+    return { label: "日志同步", text: "完整日志已同步", note: `完整日志 ${recentText(device.latestFileUploadedAt)}`, tone: "ok" };
+  }
+  if (Number(device.todayLogCount || 0) > 0 || Number(device.logFileCount || 0) > 0) {
+    return { label: "日志同步", text: "有上报", note: `结构化 ${recentText(device.latestLogAt)}`, tone: "warn" };
+  }
+  return { label: "日志同步", text: "未上报", note: "等待脚本心跳自动同步", tone: "warn" };
+}
+
+function deviceFeatureStatuses(device: DeviceProgress): FeatureStatus[] {
+  const heartbeat = heartbeatInfo(device);
+  return [
+    {
+      label: "设备在线",
+      text: heartbeat.tone === "ok" ? "在线" : heartbeat.tone === "warn" ? "延迟" : "离线",
+      note: heartbeat.text,
+      tone: heartbeat.tone === "ok" ? "ok" : heartbeat.tone === "warn" ? "warn" : "danger"
+    },
+    configFeatureStatus(device),
+    collectionFeatureStatus(device),
+    logFeatureStatus(device)
+  ];
+}
+
+function FeatureStatusBoard(props: { devices: DeviceProgress[] }) {
+  const total = props.devices.length || 0;
+  const statuses = props.devices.map(deviceFeatureStatuses);
+  const boardItems = ["设备在线", "配置同步", "采集链路", "日志同步"].map((label) => {
+    const flat = statuses.map((items) => items.find((item) => item.label === label)).filter((item): item is FeatureStatus => !!item);
+    const okCount = flat.filter((item) => item.tone === "ok").length;
+    const dangerCount = flat.filter((item) => item.tone === "danger").length;
+    const warnCount = flat.filter((item) => item.tone === "warn").length;
+    return {
+      label,
+      okCount,
+      dangerCount,
+      warnCount,
+      tone: dangerCount > 0 ? "danger" : warnCount > 0 ? "warn" : okCount > 0 ? "ok" : "idle"
+    };
+  });
+  return (
+    <section className="ops-panel feature-status-panel">
+      <div className="ops-panel-head">
+        <span>功能状态看板</span>
+        <span className="ops-small">只看核心功能是否跑通，完整日志进入日志中心查看</span>
+      </div>
+      <div className="feature-status-grid">
+        {boardItems.map((item) => (
+          <div className={`feature-status-card ${item.tone}`} key={item.label}>
+            <div className="feature-status-label">{item.label}</div>
+            <div className="feature-status-value">{item.okCount} / {total}</div>
+            <div className="feature-status-note">
+              {item.dangerCount > 0 ? `异常 ${item.dangerCount} 台` : item.warnCount > 0 ? `待确认 ${item.warnCount} 台` : "当前正常"}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function ProgressLine(props: { label: string; percent: number; note: string; tone?: "blue" | "purple" }) {
@@ -226,6 +351,8 @@ export function DashboardPage() {
         </div>
       </section>
 
+      <FeatureStatusBoard devices={devices} />
+
       <section className="ops-panel">
         <div className="ops-panel-head">
           <span>设备监控看板</span>
@@ -262,6 +389,14 @@ export function DashboardPage() {
                   <div className={`heartbeat-status ${heartbeat.tone}`}>
                     <strong>{heartbeat.text}</strong>
                     <span>{item.heartbeat?.lastMessage || heartbeat.note}</span>
+                  </div>
+                  <div className="device-function-strip">
+                    {deviceFeatureStatuses(item).map((status) => (
+                      <div className={`device-function-pill ${status.tone}`} key={status.label}>
+                        <span>{status.label}</span>
+                        <strong>{status.text}</strong>
+                      </div>
+                    ))}
                   </div>
                   <div className="device-run-progress">
                     <ProgressLine label="视频进度" percent={videoPercent} note={progressLabel(item.videoElapsedMinutes, item.videoRemainingMinutes, item.plannedVideoMinutes)} />

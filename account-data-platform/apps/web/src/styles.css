@@ -385,6 +385,56 @@ body {
   gap: 12px;
 }
 
+.feature-status-panel {
+  margin-bottom: 14px;
+}
+
+.feature-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.feature-status-card {
+  min-height: 92px;
+  border: 1px solid #dbe4ef;
+  border-left: 4px solid #94a3b8;
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #fff;
+}
+
+.feature-status-card.ok {
+  border-left-color: var(--ops-green);
+}
+
+.feature-status-card.warn {
+  border-left-color: var(--ops-amber);
+}
+
+.feature-status-card.danger {
+  border-left-color: var(--ops-red);
+}
+
+.feature-status-label {
+  color: var(--ops-muted);
+  font-size: 12px;
+}
+
+.feature-status-value {
+  margin-top: 8px;
+  font-size: 24px;
+  font-weight: 760;
+  line-height: 1;
+}
+
+.feature-status-note {
+  margin-top: 8px;
+  color: var(--ops-muted);
+  font-size: 12px;
+}
+
 .ops-main {
   display: grid;
   gap: 12px;
@@ -791,6 +841,59 @@ body {
   color: #b91c1c;
 }
 
+.device-function-strip {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.device-function-pill {
+  min-height: 54px;
+  border: 1px solid #dbe4ef;
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: #f8fafc;
+}
+
+.device-function-pill span {
+  display: block;
+  color: var(--ops-muted);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.device-function-pill strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.device-function-pill.ok {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.device-function-pill.warn {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.device-function-pill.danger {
+  border-color: #fecaca;
+  background: #fff7f7;
+  color: #b91c1c;
+}
+
+.device-function-pill.idle {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+}
+
 .device-progress-line {
   display: grid;
   gap: 7px;
@@ -1002,6 +1105,11 @@ body {
 
   .ops-stats,
   .ops-stats.four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .feature-status-grid,
+  .device-function-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

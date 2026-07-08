@@ -1,0 +1,33 @@
+import assert from "node:assert";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { test } from "bun:test";
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
+const webSrcDir = path.join(currentDir, "../src");
+const appSource = fs.readFileSync(path.join(webSrcDir, "routes/App.tsx"), "utf8");
+const dashboardSource = fs.readFileSync(path.join(webSrcDir, "routes/DashboardPage.tsx"), "utf8");
+const schedulerSource = fs.readFileSync(path.join(webSrcDir, "routes/TaskSchedulerPage.tsx"), "utf8");
+
+test("后台导航不再暴露独立直播评论入口", () => {
+  assert.strictEqual(/import\s+\{\s*LiveCommentsPage\s*\}/.test(appSource), false, "App should not import the standalone live comments page");
+  assert.strictEqual(/liveComments\s*:/.test(appSource), false, "pages should not keep a standalone liveComments route");
+  assert.strictEqual(/key:\s*["']liveComments["']/.test(appSource), false, "sidebar should not render a standalone live comments menu item");
+});
+
+test("任务调度继续承接直播评论任务控制", () => {
+  assert(/type\s+TaskType\s*=\s*["']video["']\s*\|\s*["']live["']\s*\|\s*["']live_comment["']/.test(schedulerSource), "scheduler must keep live_comment as a task type");
+  assert(/assignTask\(row,\s*["']live_comment["']\)/.test(schedulerSource), "scheduler row actions must still dispatch live_comment tasks");
+  assert(/selectedDeviceState\s*&&\s*assignTask\(selectedDeviceState,\s*["']live_comment["']\)/.test(schedulerSource), "scheduler detail actions must still dispatch live_comment tasks");
+});
+
+test("工作台展示功能状态看板而不是完整技术日志", () => {
+  assert(/latestLogAt\?:\s*string\s*\|\s*null/.test(dashboardSource), "dashboard device model should include latest structured log time");
+  assert(/latestFileUploadedAt\?:\s*string\s*\|\s*null/.test(dashboardSource), "dashboard device model should include latest full log upload time");
+  assert(/功能状态看板/.test(dashboardSource), "dashboard should render a feature status board");
+  assert(/设备在线/.test(dashboardSource), "feature board should show device online status");
+  assert(/配置同步/.test(dashboardSource), "feature board should show config sync status");
+  assert(/采集链路/.test(dashboardSource), "feature board should show collection status");
+  assert(/日志同步/.test(dashboardSource), "feature board should show log sync status");
+});

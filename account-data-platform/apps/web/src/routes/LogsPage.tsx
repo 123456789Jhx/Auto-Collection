@@ -69,7 +69,7 @@ type DisplayLog = RuntimeLog & {
   latestCreatedAt?: string;
 };
 
-type LogTab = "events" | "issues" | "full";
+type LogTab = "status" | "issues" | "full";
 
 function formatDateTime(value?: string | null) {
   if (!value) return "-";
@@ -259,6 +259,10 @@ function latestLogContent(content?: string | null, lines = 80) {
   return text.split(/\r?\n/).filter((line) => line.trim()).slice(-lines).join("\n");
 }
 
+function fullLogContent(content?: string | null) {
+  return String(content || "").trim();
+}
+
 function downloadText(filename: string, content: string) {
   const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -291,8 +295,8 @@ export function LogsPage() {
   const [previewLog, setPreviewLog] = useState<RuntimeLog | null>(null);
   const [level, setLevel] = useState<string>();
   const [keyword, setKeyword] = useState("");
-  const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(15);
-  const [activeTab, setActiveTab] = useState<LogTab>("events");
+  const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(5);
+  const [activeTab, setActiveTab] = useState<LogTab>("status");
   const [logsPage, setLogsPage] = useState(1);
   const [logsPageSize, setLogsPageSize] = useState(20);
   const refreshInterval = autoRefreshSeconds > 0 ? autoRefreshSeconds * 1000 : false;
@@ -360,7 +364,7 @@ export function LogsPage() {
       });
     },
     onSuccess: async () => {
-      messageApi.success("已要求手机同步完整日志，等待手机领取指令");
+      messageApi.success("已触发日志重新同步，手机会在领取指令后上报");
       await Promise.all([
         summaryQuery.refetch(),
         dateQuery.refetch(),
@@ -381,7 +385,7 @@ export function LogsPage() {
   const visibleLogs = activeTab === "issues" ? displayIssueLogs : displayLogs;
   const fullLogText = fileDetailQuery.isFetching && !selectedFile?.content
     ? "正在读取完整日志..."
-    : latestLogContent(selectedFile?.content) || "完整日志内容为空";
+    : fullLogContent(selectedFile?.content) || "完整日志内容为空";
 
   if (summaryQuery.isLoading) return <Skeleton active />;
   if (summaryQuery.isError) return <Alert type="error" message="日志加载失败" description={summaryQuery.error.message} showIcon />;
@@ -413,13 +417,13 @@ export function LogsPage() {
     setPreviewLog(null);
     setLevel(undefined);
     setKeyword("");
-    setActiveTab("events");
+    setActiveTab("status");
     setLogsPage(1);
   };
   const openDate = (date: string) => {
     setSelectedDateValue(date);
     setPreviewLog(null);
-    setActiveTab("events");
+    setActiveTab("status");
     setLogsPage(1);
   };
   const backToDevices = () => {
@@ -428,13 +432,13 @@ export function LogsPage() {
     setPreviewLog(null);
     setLevel(undefined);
     setKeyword("");
-    setActiveTab("events");
+    setActiveTab("status");
     setLogsPage(1);
   };
   const backToDates = () => {
     setSelectedDateValue(undefined);
     setPreviewLog(null);
-    setActiveTab("events");
+    setActiveTab("status");
     setLogsPage(1);
   };
   const totalLogPages = Math.max(1, Number(logsPagination.totalPages || 1));
@@ -442,7 +446,7 @@ export function LogsPage() {
   const renderLogPagination = () => (
     <div className="log-center-pagination">
       <div className="log-center-panel-note">
-        原始 {totalLogItems} 条，本页 {logs.length} 条，{activeTab === "issues" ? `异常合并后 ${displayIssueLogs.length} 条` : `合并后 ${displayLogs.length} 条`}
+        原始 {totalLogItems} 条，本页 {logs.length} 条，{activeTab === "issues" ? `异常合并后 ${displayIssueLogs.length} 条` : `功能状态合并后 ${displayLogs.length} 条`}
       </div>
       <div className="log-center-pagination-controls">
         <Button disabled={logsPage <= 1} onClick={() => setLogsPage((page) => Math.max(1, page - 1))}>上一页</Button>
@@ -470,7 +474,7 @@ export function LogsPage() {
           <div className="log-center-title-wrap">
             <div>
               <h1 className="log-center-title">日志中心</h1>
-              <div className="log-center-subtitle">先选择手机，再选择日期，最后查看当天运行动态、异常汇总和完整日志。</div>
+              <div className="log-center-subtitle">先选择手机，再选择日期，默认查看功能状态；完整日志在独立标签中展示。</div>
             </div>
           </div>
           <div className="log-center-actions">
@@ -494,7 +498,7 @@ export function LogsPage() {
             <div className="log-center-summary-card">
               <div className="log-center-label">结构化日志</div>
               <div className="log-center-metric">{totalLogs}</div>
-              <div className="log-center-note">后台已接收的运行动态</div>
+              <div className="log-center-note">后台已接收的功能状态</div>
             </div>
             <div className="log-center-summary-card">
               <div className="log-center-label">需要关注</div>
@@ -581,7 +585,7 @@ export function LogsPage() {
             <button className="log-center-back" type="button" aria-label="返回手机列表" onClick={backToDevices}>‹</button>
             <div>
               <h1 className="log-center-title">{deviceDisplayName(selectedDevice)}</h1>
-              <div className="log-center-subtitle">选择日期后查看运行动态、异常汇总和完整日志。</div>
+              <div className="log-center-subtitle">选择日期后查看功能状态、异常汇总和完整日志。</div>
             </div>
           </div>
           <div className="log-center-actions">
@@ -668,7 +672,7 @@ export function LogsPage() {
           <button className="log-center-back" type="button" aria-label="返回日期列表" onClick={backToDates}>‹</button>
           <div>
             <h1 className="log-center-title">{title}</h1>
-            <div className="log-center-subtitle">完整日志自动同步中，结构化动态每 {refreshLabel(autoRefreshSeconds)}</div>
+            <div className="log-center-subtitle">脚本自动同步日志，功能状态每 {refreshLabel(autoRefreshSeconds)}</div>
           </div>
         </div>
         <div className="log-center-actions">
@@ -721,14 +725,14 @@ export function LogsPage() {
 
       <section className="log-center-content">
         <nav className="log-center-tabs" aria-label="日志标签">
-          <button className={activeTab === "events" ? "active" : ""} type="button" onClick={() => setActiveTab("events")}>运行动态</button>
+          <button className={activeTab === "status" ? "active" : ""} type="button" onClick={() => setActiveTab("status")}>功能状态</button>
           <button className={activeTab === "issues" ? "active" : ""} type="button" onClick={() => setActiveTab("issues")}>异常汇总</button>
           <button className={activeTab === "full" ? "active" : ""} type="button" onClick={() => setActiveTab("full")}>完整日志</button>
         </nav>
 
         <div className="log-center-summary-grid">
           <div className="log-center-summary-card">
-            <div className="log-center-label">今日运行动态</div>
+            <div className="log-center-label">今日功能状态</div>
             <div className="log-center-metric">{selectedDate?.totalCount ?? logs.length}</div>
             <div className="log-center-note">最近一条：{formatClock(selectedDate?.latestLogAt || selectedDevice?.latestLogAt)}</div>
           </div>
@@ -753,8 +757,8 @@ export function LogsPage() {
           <section className="log-center-panel">
             <div className="log-center-panel-header">
               <div>
-                <div className="log-center-panel-title">{activeTab === "full" ? "完整日志" : activeTab === "issues" ? "异常汇总" : "运行动态"}</div>
-                <div className="log-center-panel-note">只展示对运营和排查有用的关键信息，重复事件已按当前页合并</div>
+                <div className="log-center-panel-title">{activeTab === "full" ? "完整日志" : activeTab === "issues" ? "异常汇总" : "功能状态"}</div>
+                <div className="log-center-panel-note">默认只看设备在线、配置同步、采集链路、日志同步等关键状态；完整日志进入独立标签</div>
               </div>
               <Button
                 icon={<DownloadOutlined />}
@@ -778,7 +782,7 @@ export function LogsPage() {
               <>
                 {(dateQuery.isLoading || logsQuery.isLoading) ? <div className="log-center-loading"><Skeleton active /></div> : null}
                 {logsQuery.isError ? <Alert type="error" message="日志加载失败" description={logsQuery.error.message} showIcon /> : null}
-                {!logsQuery.isLoading && visibleLogs.length === 0 ? <Empty className="log-center-empty" description={activeTab === "issues" ? "当前没有需要关注的日志" : "暂无运行动态"} /> : null}
+                {!logsQuery.isLoading && visibleLogs.length === 0 ? <Empty className="log-center-empty" description={activeTab === "issues" ? "当前没有需要关注的日志" : "暂无功能状态"} /> : null}
                 {visibleLogs.length > 0 ? (
                   <>
                     {renderLogPagination()}
@@ -833,7 +837,7 @@ export function LogsPage() {
                   <div className="log-center-sync-title">{selectedFile ? "自动同步中" : "等待手机同步"}</div>
                   <div className="log-center-panel-note">最后同步：{formatClock(latestUploadedAt)}</div>
                 </div>
-                <Button size="small" disabled={!effectiveDeviceCode} loading={syncLogMutation.isPending} onClick={() => syncLogMutation.mutate()}>要求手机同步</Button>
+                <Button size="small" disabled={!effectiveDeviceCode} loading={syncLogMutation.isPending} onClick={() => syncLogMutation.mutate()}>重新同步</Button>
               </div>
               <div className="log-center-mini-list">
                 <div className="log-center-mini-item"><div>文件</div><span>{selectedFile?.fileName || `${effectiveDate || "-"}.log`}</span></div>
