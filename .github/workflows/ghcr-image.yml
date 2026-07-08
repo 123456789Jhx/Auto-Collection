@@ -19,6 +19,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Mobile Agent static checks
+        working-directory: .
+        shell: bash
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('mobile-agent/autojs/project.json', 'utf8')); console.log('mobile project json ok')"
+          find mobile-agent/autojs -name '*.js' \
+            -not -path '*/datasource/*' \
+            -not -path '*/core/floaty-control.js' \
+            -not -name 'launcher.js' \
+            -print0 | xargs -0 -n1 node --check
+          for file in mobile-agent/autojs/tests/*.test.js; do
+            node "$file"
+          done
+
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
