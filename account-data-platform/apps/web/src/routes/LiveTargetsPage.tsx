@@ -41,6 +41,8 @@ type BindingFormValues = {
   deviceCodes: string[];
 };
 
+type LiveTargetTabKey = "live_comment" | "commerce_card_live_comment" | "bindings";
+
 function toLines(value: unknown) {
   return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean).join("\n") : "";
 }
@@ -136,13 +138,14 @@ function targetInitialValues(target: LiveTarget | null): TargetFormValues {
   };
 }
 
-export function LiveTargetsPage() {
+export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: boolean; activeTab?: LiveTargetTabKey } = {}) {
   const [targetForm] = Form.useForm<TargetFormValues>();
   const [liveForm] = Form.useForm<FeatureFormValues>();
   const [commerceForm] = Form.useForm<FeatureFormValues>();
   const [bindingForm] = Form.useForm<BindingFormValues>();
   const [selectedId, setSelectedId] = useState<string>("");
   const [creating, setCreating] = useState(false);
+  const [tabKey, setTabKey] = useState<LiveTargetTabKey>(activeTab || "live_comment");
   const queryClient = useQueryClient();
   const targetQuery = useQuery({ queryKey: ["liveTargets"], queryFn: () => getLiveTargets("douyin") });
   const deviceQuery = useQuery({ queryKey: ["devices"], queryFn: getDevices });
@@ -150,6 +153,10 @@ export function LiveTargetsPage() {
   const devices = (deviceQuery.data || []) as DeviceRow[];
   const selectedTarget = useMemo(() => (creating ? null : targets.find((item) => item.id === selectedId) || null), [targets, selectedId, creating]);
   const deviceCodeById = useMemo(() => new Map(devices.map((device) => [device.id, device.deviceCode])), [devices]);
+
+  useEffect(() => {
+    if (activeTab) setTabKey(activeTab);
+  }, [activeTab]);
 
   useEffect(() => {
     if (!creating && !selectedId && targets[0]?.id) {
@@ -235,11 +242,11 @@ export function LiveTargetsPage() {
   }
 
   return (
-    <div className="ops-page">
+    <div className={`ops-page live-targets-page ${embedded ? "embedded-ops-page" : ""}`}>
       <div className="ops-topbar">
         <div>
           <h1>直播目标配置</h1>
-          <p>配置关键词搜索、目标直播间名称匹配、直播间别名和商品卡直播评论参数。</p>
+          <p>配置关键词搜索、目标直播间名称匹配、直播间别名、设备绑定和商品卡直播评论参数。</p>
         </div>
         <div className="ops-toolbar">
           <Button icon={<ReloadOutlined />} onClick={() => targetQuery.refetch()}>
@@ -342,6 +349,8 @@ export function LiveTargetsPage() {
 
             <Tabs
               className="live-target-tabs"
+              activeKey={tabKey}
+              onChange={(key) => setTabKey(key as LiveTargetTabKey)}
               items={[
                 {
                   key: "live_comment",

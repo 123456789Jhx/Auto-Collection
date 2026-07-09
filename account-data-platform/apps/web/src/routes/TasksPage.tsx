@@ -118,7 +118,7 @@ function buildBotConfig(values: ConfigForm) {
   };
 }
 
-export function TasksPage() {
+export function TasksPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [form] = Form.useForm<ConfigForm>();
   const [editingTask, setEditingTask] = useState<TaskRow | null>(null);
   const queryClient = useQueryClient();
@@ -193,11 +193,11 @@ export function TasksPage() {
 
   return (
     <>
-      <div className="ops-page">
+      <div className={`ops-page task-templates-page ${embedded ? "embedded-ops-page" : ""}`}>
         <header className="ops-topbar">
           <div>
-            <h1>配置</h1>
-            <p>维护公共任务模板、直播评论机器人话术和高级 JSON；设备单独覆盖在设备运行页处理。</p>
+            <h1>公共模板</h1>
+            <p>维护任务默认值、直播评论机器人话术和高级 JSON；公共模板只作为素材池，不会直接下发到手机。</p>
           </div>
           <div className="ops-toolbar">
             <button className="ops-btn" type="button" onClick={() => void query.refetch()}>刷新</button>
@@ -413,8 +413,8 @@ export function TasksPage() {
           <Alert
             type="warning"
             showIcon
-            message="模板配置会作为所有设备默认值"
-            description="设备级配置可以覆盖模板；当前主线默认只生成 planned/skipped 记录。测试真实发送时需要显式开启 executeEnabled 和 manualExecutionApproved，并从手机端或后台启动直播评论控制。"
+            message="公共模板不会直接下发"
+            description="公共模板只提供默认素材和参数；需要被功能配置引用，并通过设备绑定确认下发范围后，手机才会收到对应配置。测试真实发送时仍需要显式开启 executeEnabled 和 manualExecutionApproved。"
             style={{ marginTop: 16 }}
           />
         </Form>

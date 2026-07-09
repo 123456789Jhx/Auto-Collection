@@ -4,13 +4,14 @@
 
 body {
   margin: 0;
-  background: #f5f7fa;
+  background: #eef3f8;
   color: #1f2933;
   font-family: Inter, "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
 }
 
 .app-shell {
   min-height: 100vh;
+  background: #eef3f8;
 }
 
 .login-page {
@@ -44,28 +45,46 @@ body {
 }
 
 .sidebar {
-  background: #17212b;
+  background: #111c28 !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .brand {
-  height: 56px;
+  height: 64px;
   display: flex;
   align-items: center;
-  padding: 0 18px;
+  padding: 0 20px;
   color: #fff;
   font-size: 17px;
   font-weight: 700;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.sidebar .ant-menu-dark {
+  background: transparent;
+  padding: 10px 8px;
+}
+
+.sidebar .ant-menu-dark .ant-menu-item {
+  height: 42px;
+  margin: 4px 0;
+  border-radius: 8px;
+  color: #d6e1ee;
+}
+
+.sidebar .ant-menu-dark .ant-menu-item-selected {
+  background: #2563eb;
+  color: #fff;
+}
+
 .topbar {
-  height: 56px;
+  height: 64px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
+  padding: 0 22px;
   background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid #dde5ef;
 }
 
 .page-title {
@@ -73,7 +92,8 @@ body {
 }
 
 .content {
-  padding: 18px;
+  padding: 20px;
+  background: #eef3f8;
 }
 
 .metrics {
@@ -1060,6 +1080,233 @@ body {
   color: #1d4ed8;
 }
 
+.config-center-page {
+  background: #eef3f8;
+}
+
+.config-center-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  padding: 0 12px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.config-center-brief {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(300px, 0.9fr);
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.config-center-chain,
+.config-center-rule,
+.config-center-nav,
+.config-center-context {
+  border: 1px solid var(--ops-line-soft);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--ops-shadow);
+}
+
+.config-center-chain {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 68px;
+  padding: 14px 16px;
+}
+
+.config-center-chain span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  padding: 0 12px;
+  background: #f8fbff;
+  color: #1e40af;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.config-center-chain b {
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.config-center-rule {
+  display: flex;
+  align-items: center;
+  min-height: 68px;
+  padding: 14px 16px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.config-center-shell {
+  display: grid;
+  grid-template-columns: 292px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.config-center-nav {
+  position: sticky;
+  top: 14px;
+  overflow: hidden;
+}
+
+.config-center-nav-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--ops-line-soft);
+  font-weight: 750;
+}
+
+.config-center-nav-group {
+  padding: 12px;
+}
+
+.config-center-nav-group + .config-center-nav-group {
+  border-top: 1px solid var(--ops-line-soft);
+}
+
+.config-center-nav-group-title {
+  margin: 0 0 8px 4px;
+  color: var(--ops-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.config-module-button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  margin-bottom: 8px;
+  border: 1px solid #dde5ef;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+  color: var(--ops-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.config-module-button:hover,
+.config-module-button.active {
+  border-color: #93c5fd;
+  background: #f0f7ff;
+}
+
+.config-module-button.active {
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+
+.config-module-icon {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.config-module-button strong,
+.config-module-button small {
+  display: block;
+}
+
+.config-module-button strong {
+  margin-bottom: 4px;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.config-module-button small {
+  color: var(--ops-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.config-scope-card {
+  margin: 0 12px 14px;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.config-scope-card strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.config-scope-card p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.config-center-main {
+  min-width: 0;
+}
+
+.config-center-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+}
+
+.config-center-context h2 {
+  margin: 8px 0 4px;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.config-center-context p {
+  margin: 0;
+  color: var(--ops-muted);
+  font-size: 13px;
+}
+
+.config-center-context-note {
+  min-width: 180px;
+  color: var(--ops-muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+.embedded-ops-page {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.embedded-ops-page > .ops-topbar {
+  margin-bottom: 12px;
+}
+
 @media (max-width: 720px) {
   .app-shell {
     display: block;
@@ -1125,6 +1372,29 @@ body {
   .ops-workbench,
   .ops-workbench.wide-side {
     grid-template-columns: 1fr;
+  }
+
+  .config-center-status {
+    white-space: normal;
+  }
+
+  .config-center-brief,
+  .config-center-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .config-center-nav {
+    position: static;
+  }
+
+  .config-center-context {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .config-center-context-note {
+    min-width: 0;
+    text-align: left;
   }
 
   .device-run-card {

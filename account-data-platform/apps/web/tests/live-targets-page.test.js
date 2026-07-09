@@ -8,12 +8,27 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const webSrcDir = path.join(currentDir, "../src");
 const appSource = fs.readFileSync(path.join(webSrcDir, "routes/App.tsx"), "utf8");
 const apiClientSource = fs.readFileSync(path.join(webSrcDir, "lib/api-client.ts"), "utf8");
+const configCenterPagePath = path.join(webSrcDir, "routes/ConfigCenterPage.tsx");
 const liveTargetsPagePath = path.join(webSrcDir, "routes/LiveTargetsPage.tsx");
 
-test("后台导航暴露直播目标配置页面", () => {
-  assert(/LiveTargetsPage/.test(appSource), "App should import and render LiveTargetsPage");
-  assert(/liveTargets/.test(appSource), "pages should include a liveTargets route key");
-  assert(/直播目标配置/.test(appSource), "sidebar should render live target config text");
+test("后台导航收敛到配置中心", () => {
+  assert(/ConfigCenterPage/.test(appSource), "App should import and render ConfigCenterPage");
+  assert(/configCenter/.test(appSource), "pages should include a configCenter route key");
+  assert(/配置中心/.test(appSource), "sidebar should render config center text");
+  assert(!/key:\s*"liveTargets"/.test(appSource), "live target config should not stay as a top-level sidebar route");
+  assert(!/label:\s*"直播目标配置"/.test(appSource), "live target config should be inside config center instead of sidebar");
+});
+
+test("配置中心组织公共模板、功能配置和设备绑定", () => {
+  assert(fs.existsSync(configCenterPagePath), "ConfigCenterPage.tsx should exist");
+  const source = fs.readFileSync(configCenterPagePath, "utf8");
+  assert(/公共模板/.test(source), "config center should expose public templates");
+  assert(/直播目标配置/.test(source), "config center should expose live target config");
+  assert(/搜索直播评论/.test(source), "config center should expose search live comment settings");
+  assert(/商品卡直播评论/.test(source), "config center should expose commerce-card live comment settings");
+  assert(/设备绑定/.test(source), "config center should expose device binding settings");
+  assert(/公共模板不会直接下发/.test(source), "config center should explain that public templates are not globally auto-applied");
+  assert(/公共模板 -> 功能配置 -> 设备绑定 -> 手机下发/.test(source), "config center should show the effective configuration chain");
 });
 
 test("API client exposes live-targets admin operations", () => {
