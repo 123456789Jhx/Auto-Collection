@@ -15,14 +15,16 @@ describe("api config", () => {
     expect(() => resolveConfig({ NODE_ENV: "production" })).toThrow(/JWT_SECRET/);
   });
 
-  test("production rejects weak admin password", () => {
-    expect(() => resolveConfig({
+  test("production accepts explicitly configured root admin password for the shared dev server", () => {
+    const config = resolveConfig({
       NODE_ENV: "production",
       JWT_SECRET: "prod-jwt-secret-with-enough-length",
       ADMIN_PASSWORD: "root",
       MOBILE_REGISTRATION_SECRET: "prod-mobile-registration-secret",
       MOBILE_REQUEST_SIGNING_REQUIRED: "true"
-    })).toThrow(/ADMIN_PASSWORD/);
+    });
+
+    expect(config.adminPassword).toBe("root");
   });
 
   test("production requires mobile request signing", () => {

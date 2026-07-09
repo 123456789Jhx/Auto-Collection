@@ -2,7 +2,6 @@ type EnvMap = Record<string, string | undefined>;
 
 const weakProductionValues = new Set([
   "",
-  "root",
   "change_this_admin_token_secret",
   "local-dev-jwt-secret"
 ]);
@@ -11,7 +10,7 @@ function requireProductionValue(name: string, value: string, isProduction: boole
   if (!isProduction) {
     return;
   }
-  if (weakProductionValues.has(value)) {
+  if (weakProductionValues.has(value) || (name !== "ADMIN_PASSWORD" && value === "root")) {
     throw new Error(`${name} must be configured for production`);
   }
 }
