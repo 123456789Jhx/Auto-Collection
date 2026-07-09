@@ -17,6 +17,39 @@ function createLogger(logs) {
   };
 }
 
+function withFakeClock(callback) {
+  var realDateNow = Date.now;
+  var realSleep = global.sleep;
+  var fakeNow = new Date("2026-07-09T00:00:00.000Z").getTime();
+  var sleeps = [];
+  Date.now = function () {
+    return fakeNow;
+  };
+  global.sleep = function (ms) {
+    var duration = Math.max(0, Number(ms) || 0);
+    sleeps.push(duration);
+    fakeNow += duration;
+  };
+  try {
+    return callback(sleeps);
+  } finally {
+    Date.now = realDateNow;
+    if (realSleep === undefined) {
+      delete global.sleep;
+    } else {
+      global.sleep = realSleep;
+    }
+  }
+}
+
+function sum(values) {
+  var total = 0;
+  for (var i = 0; i < values.length; i++) {
+    total += Number(values[i] || 0);
+  }
+  return total;
+}
+
 function createContext(overrides) {
   var logs = [];
   var checkpoints = [];
@@ -34,7 +67,7 @@ function createContext(overrides) {
           matchKeywords: ["秭归", "夏橙"],
           liveSignals: ["直播中", "讲解中", "主播讲解", "进入直播间", "正在直播"],
           scanMinutesPerRound: 15,
-          watchMinutesPerLive: 0,
+          watchMinutesPerLive: 15,
           maxRounds: 3,
           maxCommentsPerRoom: 1,
           commentPool: ["111", "666", "👍", "🌹", "😊"]
@@ -140,23 +173,26 @@ function createContext(overrides) {
 }
 
 function testCommerceCardLiveRunsThreeMatchedRounds() {
-  var context = createContext();
-  var runner = createCommerceCardLiveRunner(context);
+  withFakeClock(function (sleeps) {
+    var context = createContext();
+    var runner = createCommerceCardLiveRunner(context);
 
-  var result = runner.runCommerceCardLiveCommentTask();
+    var result = runner.runCommerceCardLiveCommentTask();
 
-  assert.strictEqual(result.success, true);
-  assert.strictEqual(result.reason, "commerce_card_live_rounds_finished");
-  assert.strictEqual(result.completedRounds, 3);
-  assert.strictEqual(context.scans.length, 3);
-  assert.strictEqual(context.comments.length, 3);
-  assert.strictEqual(context.getExitCount(), 3);
-  assert.strictEqual(context.scans[0].searchKeyword, "夏橙");
-  assert.deepStrictEqual(context.scans[0].matchKeywords, ["秭归", "夏橙"]);
-  assert.strictEqual(context.scans[0].scanMinutes, 15);
-  assert.strictEqual(context.storage.liveCommentLogs.length, 3);
-  assert.strictEqual(context.uploader.liveCommentActions.length, 3);
-  assert.strictEqual(context.storage.liveCommentLogs[0].status, "sent");
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.reason, "commerce_card_live_rounds_finished");
+    assert.strictEqual(result.completedRounds, 3);
+    assert.strictEqual(context.scans.length, 3);
+    assert.strictEqual(context.comments.length, 3);
+    assert.strictEqual(context.getExitCount(), 3);
+    assert.strictEqual(context.scans[0].searchKeyword, "夏橙");
+    assert.deepStrictEqual(context.scans[0].matchKeywords, ["秭归", "夏橙"]);
+    assert.strictEqual(context.scans[0].scanMinutes, 15);
+    assert.strictEqual(sum(sleeps), 3 * 15 * 60 * 1000);
+    assert.strictEqual(context.storage.liveCommentLogs.length, 3);
+    assert.strictEqual(context.uploader.liveCommentActions.length, 3);
+    assert.strictEqual(context.storage.liveCommentLogs[0].status, "sent");
+  });
 }
 
 function testCommerceCardLiveStopsGracefullyWhenNoMatchInRound() {
@@ -180,6 +216,40 @@ function testCommerceCardLiveStopsGracefullyWhenNoMatchInRound() {
   assert.strictEqual(context.scans.length, 1);
   assert.strictEqual(context.comments.length, 0);
   assert.strictEqual(context.counters.lastStopReason, "commerce_live_not_found");
+}
+
+function testCommerceCardLiveStopsAfterLaterNoMatchWithoutThirdRound() {
+  withFakeClock(function (sleeps) {
+    var context = createContext();
+    context.douyin.openMatchingCommerceLiveFromCards = function (options) {
+      context.scans.push(options);
+      if (context.scans.length === 1) {
+        return {
+          success: true,
+          reason: "commerce_live_entry_found",
+          matchedKeywords: ["秭归", "夏橙"],
+          textSample: "秭归夏橙 正在直播 第一轮"
+        };
+      }
+      return {
+        success: false,
+        reason: "commerce_live_not_found",
+        matchedKeywords: [],
+        textSample: "夏橙 商品卡 第二轮无直播"
+      };
+    };
+    var runner = createCommerceCardLiveRunner(context);
+
+    var result = runner.runCommerceCardLiveCommentTask();
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.reason, "commerce_live_not_found");
+    assert.strictEqual(result.completedRounds, 1);
+    assert.strictEqual(context.scans.length, 2);
+    assert.strictEqual(context.comments.length, 1);
+    assert.strictEqual(context.getExitCount(), 1);
+    assert.strictEqual(sum(sleeps), 15 * 60 * 1000);
+  });
 }
 
 function testCommerceCardLivePauseStopsBeforeScanning() {
@@ -209,19 +279,21 @@ function testCommerceCardLiveIsDisabledByDefault() {
 }
 
 function testCommerceCardLiveRequiresExplicitSendApproval() {
-  var context = createContext();
-  context.config.task.commerceCardLiveComment.executeEnabled = false;
-  context.config.task.commerceCardLiveComment.manualExecutionApproved = false;
-  var runner = createCommerceCardLiveRunner(context);
+  withFakeClock(function () {
+    var context = createContext();
+    context.config.task.commerceCardLiveComment.executeEnabled = false;
+    context.config.task.commerceCardLiveComment.manualExecutionApproved = false;
+    var runner = createCommerceCardLiveRunner(context);
 
-  var result = runner.runCommerceCardLiveCommentTask({ maxRounds: 1 });
+    var result = runner.runCommerceCardLiveCommentTask({ maxRounds: 1 });
 
-  assert.strictEqual(result.success, true);
-  assert.strictEqual(context.scans.length, 1);
-  assert.strictEqual(context.comments.length, 0);
-  assert.strictEqual(context.storage.liveCommentLogs.length, 1);
-  assert.strictEqual(context.storage.liveCommentLogs[0].status, "skipped");
-  assert.strictEqual(context.storage.liveCommentLogs[0].skipReason, "commerce_card_send_not_approved");
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(context.scans.length, 1);
+    assert.strictEqual(context.comments.length, 0);
+    assert.strictEqual(context.storage.liveCommentLogs.length, 1);
+    assert.strictEqual(context.storage.liveCommentLogs[0].status, "skipped");
+    assert.strictEqual(context.storage.liveCommentLogs[0].skipReason, "commerce_card_send_not_approved");
+  });
 }
 
 function testCollectorKeepsCommerceLiveSeparateFromOrdinaryLivePhase() {
@@ -244,6 +316,7 @@ function testCollectorKeepsCommerceLiveSeparateFromOrdinaryLivePhase() {
 
 testCommerceCardLiveRunsThreeMatchedRounds();
 testCommerceCardLiveStopsGracefullyWhenNoMatchInRound();
+testCommerceCardLiveStopsAfterLaterNoMatchWithoutThirdRound();
 testCommerceCardLivePauseStopsBeforeScanning();
 testCommerceCardLiveIsDisabledByDefault();
 testCommerceCardLiveRequiresExplicitSendApproval();
