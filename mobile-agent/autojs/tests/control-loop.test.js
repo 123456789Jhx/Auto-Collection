@@ -295,7 +295,13 @@ function testRefreshRuntimeConfigAppliesCommerceCardConfig() {
             executeEnabled: true,
             manualExecutionApproved: true,
             searchKeywords: ["夏橙"],
-            matchKeywords: ["秭归", "夏橙"]
+            matchKeywords: ["秭归", "夏橙"],
+            targetRoom: {
+              enabled: true,
+              targetName: "鲜橙四季秭归",
+              matchKeywords: ["鲜橙四季秭归"],
+              similarityThreshold: 0.9
+            }
           }
         };
       }
@@ -309,6 +315,10 @@ function testRefreshRuntimeConfigAppliesCommerceCardConfig() {
   assert.strictEqual(context.config.task.commerceCardLiveComment.enabled, true);
   assert.deepStrictEqual(context.config.task.commerceCardLiveComment.searchKeywords, ["夏橙"]);
   assert.deepStrictEqual(context.config.task.commerceCardLiveComment.matchKeywords, ["秭归", "夏橙"]);
+  assert.strictEqual(context.config.task.commerceCardLiveComment.targetRoom.enabled, true);
+  assert.strictEqual(context.config.task.commerceCardLiveComment.targetRoom.targetName, "鲜橙四季秭归");
+  assert.deepStrictEqual(context.config.task.commerceCardLiveComment.targetRoom.matchKeywords, ["鲜橙四季秭归"]);
+  assert.strictEqual(context.config.task.commerceCardLiveComment.targetRoom.similarityThreshold, 0.9);
 }
 
 function testCommerceCardLiveStartUsesIndependentTaskType() {

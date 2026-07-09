@@ -1156,7 +1156,7 @@ function createControlLoop(context) {
   function sanitizeCommerceCardLiveCommentConfig(value) {
     value = value || {};
     var current = config.task.commerceCardLiveComment || {};
-    return {
+    var result = {
       enabled: value.enabled === true,
       executeEnabled: value.executeEnabled === true,
       manualExecutionApproved: value.manualExecutionApproved === true,
@@ -1168,6 +1168,33 @@ function createControlLoop(context) {
       maxRounds: clampNumber(value.maxRounds, current.maxRounds || 3, 1, 20),
       maxCommentsPerRoom: clampNumber(value.maxCommentsPerRoom, current.maxCommentsPerRoom || 1, 0, 5),
       commentPool: normalizeStringList(value.commentPool || current.commentPool || [], 50, 80)
+    };
+    var targetRoom = sanitizeCommerceTargetRoomConfig(value.targetRoom, current.targetRoom);
+    if (targetRoom) {
+      result.targetRoom = targetRoom;
+    }
+    return result;
+  }
+
+  function sanitizeCommerceTargetRoomConfig(value, fallback) {
+    var source = value && typeof value === "object" && !value.length ? value : null;
+    var current = fallback && typeof fallback === "object" && !fallback.length ? fallback : {};
+    if (!source && !fallback) {
+      return null;
+    }
+    source = source || {};
+    return {
+      enabled: typeof source.enabled === "boolean" ? source.enabled : current.enabled === true,
+      targetCode: normalizeStringList([source.targetCode || current.targetCode || ""], 1, 64)[0] || "",
+      targetName: normalizeStringList([source.targetName || current.targetName || ""], 1, 200)[0] || "",
+      anchorName: normalizeStringList([source.anchorName || current.anchorName || ""], 1, 100)[0] || "",
+      roomName: normalizeStringList([source.roomName || current.roomName || ""], 1, 100)[0] || "",
+      searchKeywords: normalizeStringList(source.searchKeywords || current.searchKeywords || [], 30, 100),
+      matchKeywords: normalizeStringList(source.matchKeywords || current.matchKeywords || [], 30, 100),
+      requiredKeywords: normalizeStringList(source.requiredKeywords || current.requiredKeywords || [], 30, 100),
+      forbiddenKeywords: normalizeStringList(source.forbiddenKeywords || current.forbiddenKeywords || [], 30, 100),
+      aliases: sanitizeLiveTargetAliases(source.aliases || current.aliases || []),
+      similarityThreshold: clampDecimal(source.similarityThreshold, current.similarityThreshold || 0.9, 0.5, 1)
     };
   }
 }
