@@ -1084,6 +1084,191 @@ body {
   background: #eef3f8;
 }
 
+.config-device-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.config-device-summary > div {
+  min-height: 76px;
+  border: 1px solid var(--ops-line-soft);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: #fff;
+  box-shadow: var(--ops-shadow);
+}
+
+.config-device-summary span,
+.config-device-meta span {
+  display: block;
+  color: var(--ops-muted);
+  font-size: 12px;
+}
+
+.config-device-summary strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--ops-text);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.config-device-layout {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.config-device-list {
+  position: sticky;
+  top: 14px;
+  border: 1px solid var(--ops-line-soft);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+  box-shadow: var(--ops-shadow);
+}
+
+.config-device-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.config-device-list-head span {
+  color: var(--ops-muted);
+  font-size: 12px;
+}
+
+.config-device-scroll {
+  display: grid;
+  gap: 8px;
+  max-height: calc(100vh - 290px);
+  min-height: 260px;
+  overflow: auto;
+  margin-top: 12px;
+  padding-right: 2px;
+}
+
+.config-device-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #dde5ef;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+  color: var(--ops-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.config-device-item:hover,
+.config-device-item.active {
+  border-color: #2563eb;
+  background: #eef6ff;
+}
+
+.config-device-item.active {
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+
+.config-device-item strong,
+.config-device-item small {
+  display: block;
+}
+
+.config-device-item strong {
+  margin-bottom: 4px;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.config-device-item small {
+  color: var(--ops-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.config-device-editor {
+  min-width: 0;
+}
+
+.config-device-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.config-device-meta > div {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.config-device-meta strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.config-feature-form .ant-tabs-nav {
+  margin-bottom: 12px;
+}
+
+.config-form-section {
+  border: 1px solid #dde5ef;
+  border-radius: 8px;
+  padding: 16px;
+  background: #ffffff;
+}
+
+.config-form-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.config-form-header h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.config-form-header p {
+  margin: 0;
+  color: var(--ops-muted);
+  font-size: 13px;
+}
+
+.config-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.config-form-grid.textareas {
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+}
+
+.config-form-wide {
+  grid-column: 1 / -1;
+}
+
 .config-center-status {
   display: inline-flex;
   align-items: center;
@@ -1395,6 +1580,27 @@ body {
   .config-center-context-note {
     min-width: 0;
     text-align: left;
+  }
+
+  .config-device-summary,
+  .config-device-layout,
+  .config-device-meta,
+  .config-form-grid,
+  .config-form-grid.textareas {
+    grid-template-columns: 1fr;
+  }
+
+  .config-device-list {
+    position: static;
+  }
+
+  .config-device-scroll {
+    max-height: none;
+    min-height: 0;
+  }
+
+  .config-form-header {
+    display: grid;
   }
 
   .device-run-card {

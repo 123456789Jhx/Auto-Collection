@@ -111,6 +111,22 @@ export const p3ExtensionsConfigSchema = z
         searchKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
         matchKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
         liveSignals: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+        targetRoom: z
+          .object({
+            enabled: z.boolean().optional(),
+            targetName: z.string().trim().max(200).optional(),
+            anchorName: z.string().trim().max(100).optional(),
+            roomName: z.string().trim().max(200).optional(),
+            searchKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+            matchKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+            roomKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+            titleKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+            requiredKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+            forbiddenKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+            similarityThreshold: z.number().min(0.5).max(1).optional()
+          })
+          .strict()
+          .optional(),
         scanMinutesPerRound: z.number().int().min(1).max(60).optional(),
         watchMinutesPerLive: z.number().int().min(0).max(120).optional(),
         maxRounds: z.number().int().min(1).max(20).optional(),

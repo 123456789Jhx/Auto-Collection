@@ -64,6 +64,39 @@ function normalizeList(value: unknown, maxItems = 50) {
   return result;
 }
 
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function stringValue(value: unknown) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function numberValue(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function targetNameFromRoom(targetRoom: Record<string, unknown>, fallback: string) {
+  return stringValue(targetRoom.targetName) ||
+    stringValue(targetRoom.anchorName) ||
+    stringValue(targetRoom.roomName) ||
+    fallback;
+}
+
+function aliasesFromKeywords(values: string[]) {
+  return values.map((aliasText, index) => ({
+    aliasText,
+    aliasType: "room_name",
+    weight: 100 + index,
+    enabled: true
+  }));
+}
+
+function targetCode(deviceCode: string | undefined, featureType: "live_comment" | "commerce_card_live_comment") {
+  return `${stringValue(deviceCode) || "device"}_${featureType}`;
+}
+
 export function thresholdToPercent(value: unknown) {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) {
@@ -127,4 +160,78 @@ export function buildMobileLiveTargetConfig(input: {
     aliases,
     enabled: input.target.enabled !== false && input.featureConfig.enabled !== false
   };
+}
+
+export function buildDeviceLiveTargetsFromTaskConfig(input: {
+  deviceCode?: string;
+  liveCommentBotConfig?: Record<string, unknown> | null;
+  p3ExtensionsConfig?: Record<string, unknown> | null;
+}) {
+  const targets: ReturnType<typeof buildMobileLiveTargetConfig>[] = [];
+  const botConfig = objectValue(input.liveCommentBotConfig);
+  const targetRoom = objectValue(botConfig?.targetRoom);
+  if (targetRoom && targetRoom.enabled === true) {
+    const searchKeywords = normalizeList(targetRoom.searchKeywords);
+    const matchKeywords = normalizeList(targetRoom.matchKeywords).concat(normalizeList(targetRoom.roomKeywords), normalizeList(targetRoom.titleKeywords));
+    if (searchKeywords.length > 0) {
+      targets.push(buildMobileLiveTargetConfig({
+        target: {
+          targetCode: targetCode(input.deviceCode, "live_comment"),
+          targetName: targetNameFromRoom(targetRoom, searchKeywords[0]),
+          platform: "douyin",
+          similarityThreshold: numberValue(targetRoom.similarityThreshold, 0.9),
+          enabled: true
+        },
+        aliases: aliasesFromKeywords(matchKeywords),
+        featureConfig: {
+          featureType: "live_comment",
+          searchKeywords,
+          requiredKeywords: normalizeList(targetRoom.requiredKeywords),
+          forbiddenKeywords: normalizeList(targetRoom.forbiddenKeywords),
+          enabled: true
+        }
+      }));
+    }
+  }
+
+  const p3Config = objectValue(input.p3ExtensionsConfig);
+  const commerceConfig = objectValue(p3Config?.commerceCardLiveComment);
+  if (commerceConfig && commerceConfig.enabled === true) {
+    const commerceTargetRoom = objectValue(commerceConfig.targetRoom) ?? {};
+    const searchKeywords = normalizeList(commerceConfig.searchKeywords);
+    const productKeywords = normalizeList(commerceConfig.matchKeywords).concat(normalizeList(commerceConfig.productKeywords));
+    const matchKeywords = normalizeList(commerceTargetRoom.matchKeywords).concat(normalizeList(commerceTargetRoom.roomKeywords), normalizeList(commerceTargetRoom.titleKeywords));
+    if (searchKeywords.length > 0) {
+      targets.push(buildMobileLiveTargetConfig({
+        target: {
+          targetCode: targetCode(input.deviceCode, "commerce_card_live_comment"),
+          targetName: targetNameFromRoom(commerceTargetRoom, productKeywords[0] || searchKeywords[0]),
+          platform: "douyin",
+          similarityThreshold: numberValue(commerceTargetRoom.similarityThreshold, 0.9),
+          enabled: true
+        },
+        aliases: aliasesFromKeywords(matchKeywords.length > 0 ? matchKeywords : productKeywords),
+        featureConfig: {
+          featureType: "commerce_card_live_comment",
+          searchKeywords,
+          requiredKeywords: normalizeList(commerceTargetRoom.requiredKeywords),
+          forbiddenKeywords: normalizeList(commerceTargetRoom.forbiddenKeywords),
+          productKeywords,
+          liveSignals: normalizeList(commerceConfig.liveSignals),
+          runtimeConfig: {
+            executeEnabled: commerceConfig.executeEnabled === true,
+            manualExecutionApproved: commerceConfig.manualExecutionApproved === true,
+            scanMinutesPerRound: numberValue(commerceConfig.scanMinutesPerRound, 15),
+            watchMinutesPerLive: numberValue(commerceConfig.watchMinutesPerLive, 15),
+            maxRounds: numberValue(commerceConfig.maxRounds, 3),
+            maxCommentsPerRoom: numberValue(commerceConfig.maxCommentsPerRoom, 1),
+            commentPool: normalizeList(commerceConfig.commentPool)
+          },
+          enabled: true
+        }
+      }));
+    }
+  }
+
+  return targets;
 }

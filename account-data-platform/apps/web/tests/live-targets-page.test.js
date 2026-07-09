@@ -19,16 +19,18 @@ test("后台导航收敛到配置中心", () => {
   assert(!/label:\s*"直播目标配置"/.test(appSource), "live target config should be inside config center instead of sidebar");
 });
 
-test("配置中心组织公共模板、功能配置和设备绑定", () => {
+test("配置中心按手机维护直播评论和商品卡配置", () => {
   assert(fs.existsSync(configCenterPagePath), "ConfigCenterPage.tsx should exist");
   const source = fs.readFileSync(configCenterPagePath, "utf8");
-  assert(/公共模板/.test(source), "config center should expose public templates");
-  assert(/直播目标配置/.test(source), "config center should expose live target config");
+  assert(/getDevices/.test(source), "config center should load device list");
+  assert(/getDeviceTaskConfig/.test(source), "config center should load per-device task config");
+  assert(/updateDeviceTaskConfig/.test(source), "config center should save per-device task config");
+  assert(/按手机配置/.test(source), "config center should use per-phone configuration wording");
+  assert(/目标直播间名称/.test(source), "config center should edit target live room name per phone");
   assert(/搜索直播评论/.test(source), "config center should expose search live comment settings");
   assert(/商品卡直播评论/.test(source), "config center should expose commerce-card live comment settings");
-  assert(/设备绑定/.test(source), "config center should expose device binding settings");
-  assert(/公共模板不会直接下发/.test(source), "config center should explain that public templates are not globally auto-applied");
-  assert(/公共模板 -> 功能配置 -> 设备绑定 -> 手机下发/.test(source), "config center should show the effective configuration chain");
+  assert(/商品卡搜索关键词/.test(source), "config center should edit commerce-card search keywords");
+  assert(!/LiveTargetsPage/.test(source), "config center should not use the old public live target page as the main UI");
 });
 
 test("API client exposes live-targets admin operations", () => {

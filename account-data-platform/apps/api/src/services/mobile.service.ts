@@ -8,6 +8,7 @@ import { listMobileLiveTargetsForDevice } from "../repositories/live-target.repo
 import { createCollectionRecord } from "../repositories/record.repository";
 import { findCurrentTask, findDeviceTaskConfig, findTaskByCode, resolveTaskConfig } from "../repositories/task.repository";
 import { findDeviceByCode, findDeviceByToken, registerDeviceByToken, resolveDeviceByToken } from "../repositories/device.repository";
+import { buildDeviceLiveTargetsFromTaskConfig } from "./live-target-config.service";
 import type { MobileCollectionRecordPayload, MobileHeartbeatPayload, MobileLiveCommentActionPayload, MobileLogFilePayload, MobileRuntimeLogPayload } from "@pkg/types";
 
 function normalizeDouyinAccountName(value: unknown) {
@@ -112,7 +113,13 @@ export async function getCurrentTask(deviceId: string, platform: string, clientI
   const result = await findDeviceTaskConfig(device.deviceCode, platform);
   const task = result.task ?? (await findCurrentTask(platform));
   const taskConfig = resolveTaskConfig(task, result.config);
-  const liveTargets = await listMobileLiveTargetsForDevice(device.id, platform);
+  const publicLiveTargets = await listMobileLiveTargetsForDevice(device.id, platform);
+  const deviceLiveTargets = buildDeviceLiveTargetsFromTaskConfig({
+    deviceCode: device.deviceCode,
+    liveCommentBotConfig: taskConfig.liveCommentBotConfig,
+    p3ExtensionsConfig: taskConfig.p3ExtensionsConfig
+  });
+  const liveTargets = [...deviceLiveTargets, ...publicLiveTargets];
   const liveCommentConfig = (taskConfig.liveCommentConfig ?? {}) as Record<string, unknown>;
   const followedAccounts = buildFollowedAccounts(result.followedConfigs ?? [], liveCommentConfig);
   const leaderAccountNames = followedAccounts.flatMap((account) => [account.accountName, ...(account.aliasNames || [])]).filter(Boolean);
