@@ -60,17 +60,33 @@ $resolvedApkPath = Resolve-ApkPath $ApkPath
 
 function Invoke-Adb([string[]]$Arguments, [switch]$IgnoreError) {
   Write-Host "adb $($Arguments -join ' ')"
-  $output = & $script:ResolvedAdbPath @Arguments 2>&1
-  $exitCode = $LASTEXITCODE
+  $previousErrorActionPreference = $ErrorActionPreference
+  $nativePreference = Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+  $hasNativePreference = $null -ne $nativePreference
+  $previousNativePreference = if ($hasNativePreference) { [bool]$nativePreference.Value } else { $false }
+  try {
+    $ErrorActionPreference = "Continue"
+    if ($hasNativePreference) {
+      $PSNativeCommandUseErrorActionPreference = $false
+    }
+    $output = & $script:ResolvedAdbPath @Arguments 2>&1
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($hasNativePreference) {
+      $PSNativeCommandUseErrorActionPreference = $previousNativePreference
+    }
+  }
+  $outputLines = @($output) | ForEach-Object { $_.ToString() }
   if ($output) {
-    $output | ForEach-Object { Write-Host $_ }
+    $outputLines | ForEach-Object { Write-Host $_ }
   }
   if ($exitCode -ne 0 -and -not $IgnoreError) {
     throw "adb $($Arguments -join ' ') failed with exit code $exitCode"
   }
   [pscustomobject]@{
     ExitCode = $exitCode
-    Output = ($output -join "`n")
+    Output = ($outputLines -join "`n")
   }
 }
 

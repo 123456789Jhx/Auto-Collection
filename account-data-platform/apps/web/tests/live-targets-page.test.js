@@ -100,4 +100,7 @@ test("automation helper scripts cover submit deploy and USB apk install", () => 
   assert(/INSTALL_FAILED_USER_RESTRICTED/.test(installSource), "USB install should detect MIUI user restriction");
   assert(/sdcard\/Download/.test(installSource), "USB install should push APK for manual installer fallback");
   assert(/am start/.test(installSource), "USB install should launch the system package installer when restricted");
+  assert(/previousErrorActionPreference/.test(installSource), "USB install should preserve caller error handling around adb");
+  assert(/\$ErrorActionPreference\s*=\s*"Continue"/.test(installSource), "USB install should capture adb stderr without aborting MIUI fallback");
+  assert(/PSNativeCommandUseErrorActionPreference/.test(installSource), "USB install should disable native command promotion while capturing adb output");
 });
