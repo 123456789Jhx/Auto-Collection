@@ -302,6 +302,7 @@ type DeviceConfigFormPanelProps = {
   saving: boolean;
   onCheck: (checked: boolean) => void;
   onChange: (values: ConfigFormValues) => void;
+  onApplyTemplate: () => void;
   onSave: () => void;
   onReload: () => void;
 };
@@ -316,6 +317,7 @@ function DeviceConfigFormPanel({
   saving,
   onCheck,
   onChange,
+  onApplyTemplate,
   onSave,
   onReload
 }: DeviceConfigFormPanelProps) {
@@ -327,18 +329,28 @@ function DeviceConfigFormPanel({
   }, [form, values]);
 
   return (
-    <section className={`config-phone-form-panel ${dirty ? "dirty" : ""}`}>
-      <div className="config-phone-form-head">
-        <div className="config-phone-check">
+    <section className={`config-phone-config-row ${dirty ? "dirty" : ""}`}>
+      <div className="config-phone-row-head">
+        <div className="config-phone-row-main">
           <Checkbox checked={checked} onChange={(event) => onCheck(event.target.checked)} />
-          <div>
-            <h2>{deviceDisplayName(device)}</h2>
+          <div className="config-phone-identity">
+            <div className="config-phone-title-line">
+              <h2>{deviceDisplayName(device)}</h2>
+              <Tag color={statusTone(status)}>{statusText(status)}</Tag>
+              {dirty ? <Tag color="gold">未保存</Tag> : <Tag>已同步</Tag>}
+            </div>
             <p>{deviceSubTitle(device)}</p>
           </div>
         </div>
-        <div className="config-phone-head-actions">
-          <Tag color={statusTone(status)}>{statusText(status)}</Tag>
-          {dirty ? <Tag color="gold">未保存</Tag> : <Tag>已同步</Tag>}
+        <div className="config-phone-row-meta">
+          <span>平台 <strong>{device.platform || "douyin"}</strong></span>
+          <span>当前任务 <strong>{device.currentTask || "-"}</strong></span>
+          <span>最近心跳 <strong>{formatTime(device.lastHeartbeatAt)}</strong></span>
+        </div>
+        <div className="config-phone-row-actions">
+          <Button icon={<CopyOutlined />} onClick={onApplyTemplate}>
+            应用模板到本机
+          </Button>
           <Button icon={<ReloadOutlined />} onClick={onReload}>
             重新载入
           </Button>
@@ -348,34 +360,26 @@ function DeviceConfigFormPanel({
         </div>
       </div>
 
-      <div className="config-phone-meta">
-        <div><span>平台</span><strong>{device.platform || "douyin"}</strong></div>
-        <div><span>运行状态</span><strong>{statusText(status)}</strong></div>
-        <div><span>当前任务</span><strong>{device.currentTask || "-"}</strong></div>
-        <div><span>最近心跳</span><strong>{formatTime(device.lastHeartbeatAt)}</strong></div>
-      </div>
-
       {loading ? <Skeleton active paragraph={{ rows: 6 }} /> : null}
       {errorMessage ? <Alert type="error" message="配置加载失败" description={errorMessage} showIcon /> : null}
       {!loading && !errorMessage ? (
         <Form
           form={form}
           layout="vertical"
-          className="config-feature-form"
+          className="config-feature-form config-phone-inline-form"
           onValuesChange={() => onChange(form.getFieldsValue())}
         >
-          <div className="config-phone-form-body">
-            <div className="config-form-section">
-              <div className="config-form-header">
-                <div>
+          <div className="config-feature-fields">
+            <section className="config-feature-block">
+              <div className="config-feature-heading">
+                <div className="config-feature-name">
                   <h3><CommentOutlined /> 搜索直播评论</h3>
-                  <p>按关键词搜索直播间，命中目标直播间名称或别名后执行评论。</p>
                 </div>
                 <Form.Item name="liveEnabled" valuePropName="checked" noStyle>
                   <Switch checkedChildren="启用" unCheckedChildren="关闭" />
                 </Form.Item>
               </div>
-              <div className="config-form-grid">
+              <div className="config-feature-grid">
                 <Form.Item label="目标直播间名称" name="targetRoomName">
                   <Input maxLength={200} placeholder="秭归夏橙直播间" />
                 </Form.Item>
@@ -395,7 +399,7 @@ function DeviceConfigFormPanel({
                   <InputNumber min={10} max={3600} style={{ width: "100%" }} />
                 </Form.Item>
               </div>
-              <div className="config-form-grid textareas">
+              <div className="config-feature-grid textareas">
                 <Form.Item label="搜索关键词" name="liveSearchKeywords">
                   <Input.TextArea rows={4} placeholder={"夏橙\n秭归夏橙"} />
                 </Form.Item>
@@ -409,13 +413,12 @@ function DeviceConfigFormPanel({
                   <Input.TextArea rows={3} placeholder={"回放\n录播"} />
                 </Form.Item>
               </div>
-            </div>
+            </section>
 
-            <div className="config-form-section">
-              <div className="config-form-header">
-                <div>
+            <section className="config-feature-block">
+              <div className="config-feature-heading">
+                <div className="config-feature-name">
                   <h3><ShoppingOutlined /> 商品卡直播评论</h3>
-                  <p>按商品卡关键词搜索，进入相似度超过 90% 的目标直播间。</p>
                 </div>
                 <Space>
                   <Form.Item name="commerceEnabled" valuePropName="checked" noStyle>
@@ -426,7 +429,7 @@ function DeviceConfigFormPanel({
                   </Form.Item>
                 </Space>
               </div>
-              <div className="config-form-grid">
+              <div className="config-feature-grid">
                 <Form.Item label="目标直播间名称" name="commerceTargetRoomName">
                   <Input maxLength={200} placeholder="秭归夏橙直播间" />
                 </Form.Item>
@@ -443,7 +446,7 @@ function DeviceConfigFormPanel({
                   <InputNumber min={0} max={5} style={{ width: "100%" }} />
                 </Form.Item>
               </div>
-              <div className="config-form-grid textareas">
+              <div className="config-feature-grid textareas">
                 <Form.Item label="商品卡搜索关键词" name="commerceSearchKeywords">
                   <Input.TextArea rows={4} placeholder={"夏橙\n秭归夏橙"} />
                 </Form.Item>
@@ -460,7 +463,7 @@ function DeviceConfigFormPanel({
                   <Input.TextArea rows={4} maxLength={2000} placeholder={"111\n666"} />
                 </Form.Item>
               </div>
-            </div>
+            </section>
           </div>
         </Form>
       ) : null}
@@ -674,7 +677,7 @@ export function ConfigCenterPage() {
             刷新
           </Button>
           <Button type="primary" icon={<SaveOutlined />} loading={saveMutation.isPending} disabled={dirtyDeviceCodes.length === 0} onClick={saveChangedDevices}>
-            保存已修改手机
+            保存全部已修改
           </Button>
         </div>
       </header>
@@ -727,7 +730,7 @@ export function ConfigCenterPage() {
           <Button icon={<CheckSquareOutlined />} disabled={!activeTemplate || checkedDeviceCodes.length === 0} onClick={() => applyTemplateToDeviceCodes(checkedDeviceCodes, "选中手机")}>
             应用到选中手机
           </Button>
-          <Button icon={<CheckSquareOutlined />} disabled={!activeTemplate || filteredDevices.length === 0} onClick={() => applyTemplateToDeviceCodes(visibleCodes, "全部手机")}>
+          <Button icon={<CheckSquareOutlined />} disabled={!activeTemplate || devices.length === 0} onClick={() => applyTemplateToDeviceCodes(devices.map((device) => device.deviceCode), "全部手机")}>
             应用到全部手机
           </Button>
         </div>
@@ -735,7 +738,7 @@ export function ConfigCenterPage() {
 
       <section className="config-device-toolbar">
         <div>
-          <strong>手机配置表单</strong>
+          <strong>手机配置清单</strong>
           <span>{filteredDevices.length} 台可见，{checkedDeviceCodes.length} 台已选</span>
         </div>
         <Input
@@ -751,7 +754,7 @@ export function ConfigCenterPage() {
       {devicesQuery.isError ? <Alert type="error" message="手机列表加载失败" description={devicesQuery.error.message} showIcon /> : null}
       {!devicesQuery.isLoading && filteredDevices.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无手机" /> : null}
 
-      <main className="config-device-form-list" aria-label="手机配置表单列表">
+      <main className="config-phone-config-list" aria-label="手机配置表单列表">
         {filteredDevices.map((device) => (
           <DeviceConfigFormPanel
             key={device.id || device.deviceCode}
@@ -764,6 +767,7 @@ export function ConfigCenterPage() {
             saving={saveMutation.isPending}
             onCheck={(checked) => toggleDeviceChecked(device.deviceCode, checked)}
             onChange={(values) => updateDeviceForm(device.deviceCode, values)}
+            onApplyTemplate={() => applyTemplateToDeviceCodes([device.deviceCode], "本机")}
             onSave={() => saveDevices([device.deviceCode])}
             onReload={() => reloadDeviceConfig(device.deviceCode)}
           />

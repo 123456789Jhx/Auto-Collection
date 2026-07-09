@@ -27,11 +27,15 @@ test("配置中心按手机维护直播评论和商品卡配置", () => {
   assert(/updateDeviceTaskConfig/.test(source), "config center should save per-device task config");
   assert(/getLiveTargets/.test(source), "config center should load public live target templates");
   assert(/按手机配置/.test(source), "config center should use per-phone configuration wording");
-  assert(/config-device-form-list/.test(source), "config center should render every phone as a vertical form list");
+  assert(/手机配置清单/.test(source), "config center should show a phone configuration list title");
+  assert(/config-phone-config-list/.test(source), "config center should render every phone as a vertical configuration list");
+  assert(/config-phone-config-row/.test(source), "config center should render each phone as one list row");
+  assert(/config-feature-fields/.test(source), "config center should use dense feature form fields inside each phone row");
   assert(/DeviceConfigFormPanel/.test(source), "config center should render a dedicated form panel for every phone");
+  assert(/应用模板到本机/.test(source), "public template should apply to one phone form");
   assert(/应用到选中手机/.test(source), "public template should apply to selected phones");
   assert(/应用到全部手机/.test(source), "public template should apply to all visible phones");
-  assert(/保存已修改手机/.test(source), "config center should save modified phone forms in batches");
+  assert(/保存全部已修改/.test(source), "config center should save modified phone forms in batches");
   assert(/目标直播间名称/.test(source), "config center should edit target live room name per phone");
   assert(/搜索直播评论/.test(source), "config center should expose search live comment settings");
   assert(/商品卡直播评论/.test(source), "config center should expose commerce-card live comment settings");
