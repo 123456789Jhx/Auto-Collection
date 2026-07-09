@@ -51,3 +51,10 @@ test("工作台展示功能状态看板而不是完整技术日志", () => {
   assert(/采集链路/.test(dashboardSource), "feature board should show collection status");
   assert(/日志同步/.test(dashboardSource), "feature board should show log sync status");
 });
+
+test("工作台设备卡片采用有序行式布局", () => {
+  assert(/device-run-status-line/.test(dashboardSource), "device card should group current state into a compact status line");
+  assert(/device-run-body/.test(dashboardSource), "device card should group progress, feature status and metrics into a body area");
+  assert(/device-run-ops/.test(dashboardSource), "device card should keep action buttons in a dedicated operations area");
+  assert(/device-feature-list/.test(dashboardSource), "device card should render feature states as an ordered list");
+});

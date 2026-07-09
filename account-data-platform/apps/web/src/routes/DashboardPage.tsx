@@ -386,34 +386,38 @@ export function DashboardPage() {
                       <span className={`ops-tag ${statusTone(item.status)}`}>{statusText(item.status)}</span>
                       <span className={`ops-tag ${taskTone(item.currentTask)}`}>{currentTaskText(item.currentTask)}</span>
                     </div>
+                    <div className={`device-run-status-line ${heartbeat.tone}`}>
+                      <strong>{heartbeat.text}</strong>
+                      <span>{item.heartbeat?.lastMessage || heartbeat.note}</span>
+                    </div>
                   </div>
-                  <div className={`heartbeat-status ${heartbeat.tone}`}>
-                    <strong>{heartbeat.text}</strong>
-                    <span>{item.heartbeat?.lastMessage || heartbeat.note}</span>
+                  <div className="device-run-body">
+                    <div className="device-run-progress">
+                      <ProgressLine label="视频进度" percent={videoPercent} note={progressLabel(item.videoElapsedMinutes, item.videoRemainingMinutes, item.plannedVideoMinutes)} />
+                      <ProgressLine label="直播进度" percent={livePercent} note={progressLabel(item.liveElapsedMinutes, item.liveRemainingMinutes, item.plannedLiveMinutes)} tone="purple" />
+                    </div>
+                    <div className="device-feature-list">
+                      {deviceFeatureStatuses(item).map((status) => (
+                        <div className={`device-feature-item ${status.tone}`} key={status.label}>
+                          <span>{status.label}</span>
+                          <strong>{status.text}</strong>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="device-run-stats">
+                      <div><span>视频浏览</span><strong>{item.viewedCount ?? 0}</strong></div>
+                      <div><span>直播浏览</span><strong>{item.liveViewedCount ?? 0}</strong></div>
+                      <div><span>采集数</span><strong>{item.capturedCount ?? 0}</strong></div>
+                    </div>
                   </div>
-                  <div className="device-function-strip">
-                    {deviceFeatureStatuses(item).map((status) => (
-                      <div className={`device-function-pill ${status.tone}`} key={status.label}>
-                        <span>{status.label}</span>
-                        <strong>{status.text}</strong>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="device-run-progress">
-                    <ProgressLine label="视频进度" percent={videoPercent} note={progressLabel(item.videoElapsedMinutes, item.videoRemainingMinutes, item.plannedVideoMinutes)} />
-                    <ProgressLine label="直播进度" percent={livePercent} note={progressLabel(item.liveElapsedMinutes, item.liveRemainingMinutes, item.plannedLiveMinutes)} tone="purple" />
-                  </div>
-                  <div className="device-run-stats">
-                    <div><span>视频浏览</span><strong>{item.viewedCount ?? 0}</strong></div>
-                    <div><span>直播浏览</span><strong>{item.liveViewedCount ?? 0}</strong></div>
-                    <div><span>采集数</span><strong>{item.capturedCount ?? 0}</strong></div>
-                  </div>
-                  <div className="device-run-actions" onClick={(event) => event.stopPropagation()}>
-                    <button className="ops-mini-btn primary" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "START")}><PlayCircleOutlined />启动</button>
-                    <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "PAUSE")}><PauseOutlined />暂停</button>
-                    <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "RESUME")}><SyncOutlined />恢复</button>
-                    <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "REFRESH_CONFIG")}><ReloadOutlined />配置</button>
-                    <button className="ops-mini-btn danger" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "STOP")}><StopOutlined />停止</button>
+                  <div className="device-run-ops" onClick={(event) => event.stopPropagation()}>
+                    <div className="device-run-actions">
+                      <button className="ops-mini-btn primary" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "START")}><PlayCircleOutlined />启动</button>
+                      <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "PAUSE")}><PauseOutlined />暂停</button>
+                      <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "RESUME")}><SyncOutlined />恢复</button>
+                      <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "REFRESH_CONFIG")}><ReloadOutlined />配置</button>
+                      <button className="ops-mini-btn danger" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "STOP")}><StopOutlined />停止</button>
+                    </div>
                   </div>
                 </article>
               );

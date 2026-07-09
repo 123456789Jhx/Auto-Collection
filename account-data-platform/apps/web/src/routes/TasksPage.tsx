@@ -196,12 +196,12 @@ export function TasksPage({ embedded = false }: { embedded?: boolean } = {}) {
       <div className={`ops-page task-templates-page ${embedded ? "embedded-ops-page" : ""}`}>
         <header className="ops-topbar">
           <div>
-            <h1>公共模板</h1>
-            <p>维护任务默认值、直播评论机器人话术和高级 JSON；公共模板只作为素材池，不会直接下发到手机。</p>
+            <h1>配置</h1>
+            <p>维护公共任务模板、直播评论机器人话术和高级 JSON；设备单独覆盖在设备运行页处理。</p>
           </div>
           <div className="ops-toolbar">
             <button className="ops-btn" type="button" onClick={() => void query.refetch()}>刷新</button>
-            {selectedTask ? <button className="ops-btn primary" type="button" onClick={() => openConfig(selectedTask)}>模板配置</button> : null}
+            {selectedTask ? <button className="ops-btn primary" type="button" onClick={() => openConfig(selectedTask)}>配置模板</button> : null}
           </div>
         </header>
 
@@ -270,7 +270,7 @@ export function TasksPage({ embedded = false }: { embedded?: boolean } = {}) {
                         </td>
                         <td><span className={`ops-tag ${row.p3ExtensionsConfig ? "blue" : "gray"}`}>{row.p3ExtensionsConfig ? "已配置" : "未配置"}</span></td>
                         <td><span className={`ops-tag ${statusTone(row.status)}`}>{row.status || "-"}</span></td>
-                        <td><button className="ops-mini-btn primary" type="button" onClick={(event) => { event.stopPropagation(); openConfig(row); }}>模板配置</button></td>
+                        <td><button className="ops-mini-btn primary" type="button" onClick={(event) => { event.stopPropagation(); openConfig(row); }}>配置模板</button></td>
                       </tr>
                     );
                   })}
@@ -317,7 +317,7 @@ export function TasksPage({ embedded = false }: { embedded?: boolean } = {}) {
       </div>
 
       <Modal
-        title="直播聊天机器人公共模板"
+        title="直播聊天机器人配置"
         open={!!editingTask}
         onCancel={() => setEditingTask(null)}
         onOk={saveConfig}
@@ -413,8 +413,8 @@ export function TasksPage({ embedded = false }: { embedded?: boolean } = {}) {
           <Alert
             type="warning"
             showIcon
-            message="公共模板不会直接下发"
-            description="公共模板只提供默认素材和参数；需要被功能配置引用，并通过设备绑定确认下发范围后，手机才会收到对应配置。测试真实发送时仍需要显式开启 executeEnabled 和 manualExecutionApproved。"
+            message="模板配置会作为所有设备默认值"
+            description="设备级配置可以覆盖模板；当前主线默认只生成 planned/skipped 记录。测试真实发送时需要显式开启 executeEnabled 和 manualExecutionApproved，并从手机端或后台启动直播评论控制。"
             style={{ marginTop: 16 }}
           />
         </Form>
