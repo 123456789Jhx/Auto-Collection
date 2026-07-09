@@ -71,6 +71,11 @@ import posixpath
 import shlex
 import sys
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 try:
     import paramiko
 except ModuleNotFoundError:
@@ -151,6 +156,7 @@ finally:
   $env:AC_DEPLOY_ENV_FILE = $EnvFile
   $env:AC_DEPLOY_ARCHIVE = $archivePath
   $env:AC_DEPLOY_COMMIT = $commit
+  $env:PYTHONIOENCODING = "utf-8"
 
   Invoke-Native "python" @($pythonScript)
 
@@ -167,6 +173,7 @@ finally:
   Remove-Item Env:\AC_DEPLOY_ENV_FILE -ErrorAction SilentlyContinue
   Remove-Item Env:\AC_DEPLOY_ARCHIVE -ErrorAction SilentlyContinue
   Remove-Item Env:\AC_DEPLOY_COMMIT -ErrorAction SilentlyContinue
+  Remove-Item Env:\PYTHONIOENCODING -ErrorAction SilentlyContinue
   if (Test-Path $tempDir) {
     Remove-Item -LiteralPath $tempDir -Recurse -Force
   }
