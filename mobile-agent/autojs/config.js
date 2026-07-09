@@ -116,7 +116,8 @@ module.exports = {
       maxConsecutiveSendFailures: 3,
       perTaskMaxComments: 60,
       lowConfidenceAction: "log_only"
-    }
+    },
+    liveTargets: []
   },
 
   p3Extensions: {

@@ -277,6 +277,82 @@ export const deviceTaskAssignments = pgTable(
   ]
 );
 
+export const liveTargets = pgTable(
+  "live_targets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    targetCode: varchar("target_code", { length: 64 }).notNull(),
+    targetName: varchar("target_name", { length: 200 }).notNull(),
+    platform: varchar("platform", { length: 32 }).notNull().default("douyin"),
+    similarityThreshold: integer("similarity_threshold").notNull().default(90),
+    enabled: boolean("enabled").notNull().default(true),
+    remark: varchar("remark", { length: 500 }),
+    ...auditColumns
+  },
+  (table) => [
+    uniqueIndex("uniq_live_targets_tenant_target_code").on(table.tenantId, table.targetCode).where(sql`${table.deletedAt} is null`),
+    index("idx_live_targets_tenant_platform_enabled").on(table.tenantId, table.platform, table.enabled)
+  ]
+);
+
+export const liveTargetAliases = pgTable(
+  "live_target_aliases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    targetId: uuid("target_id").notNull().references(() => liveTargets.id),
+    aliasText: varchar("alias_text", { length: 200 }).notNull(),
+    aliasType: varchar("alias_type", { length: 32 }).notNull().default("room_name"),
+    weight: integer("weight").notNull().default(100),
+    enabled: boolean("enabled").notNull().default(true),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_live_target_aliases_tenant_target").on(table.tenantId, table.targetId),
+    uniqueIndex("uniq_live_target_aliases_tenant_target_text").on(table.tenantId, table.targetId, table.aliasText).where(sql`${table.deletedAt} is null`)
+  ]
+);
+
+export const liveTargetFeatureConfigs = pgTable(
+  "live_target_feature_configs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    targetId: uuid("target_id").notNull().references(() => liveTargets.id),
+    featureType: varchar("feature_type", { length: 64 }).notNull(),
+    searchKeywords: jsonb("search_keywords").$type<string[]>().notNull().default([]),
+    requiredKeywords: jsonb("required_keywords").$type<string[]>().notNull().default([]),
+    forbiddenKeywords: jsonb("forbidden_keywords").$type<string[]>().notNull().default([]),
+    productKeywords: jsonb("product_keywords").$type<string[]>().notNull().default([]),
+    liveSignals: jsonb("live_signals").$type<string[]>().notNull().default([]),
+    runtimeConfigJson: jsonb("runtime_config_json").$type<Record<string, unknown>>().notNull().default({}),
+    enabled: boolean("enabled").notNull().default(true),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_live_target_feature_configs_tenant_target").on(table.tenantId, table.targetId),
+    uniqueIndex("uniq_live_target_feature_configs_tenant_target_feature").on(table.tenantId, table.targetId, table.featureType).where(sql`${table.deletedAt} is null`)
+  ]
+);
+
+export const liveTargetDeviceBindings = pgTable(
+  "live_target_device_bindings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    deviceId: uuid("device_id").references(() => collectorDevices.id),
+    targetId: uuid("target_id").notNull().references(() => liveTargets.id),
+    featureType: varchar("feature_type", { length: 64 }).notNull(),
+    priority: integer("priority").notNull().default(100),
+    enabled: boolean("enabled").notNull().default(true),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_live_target_device_bindings_tenant_device").on(table.tenantId, table.deviceId),
+    index("idx_live_target_device_bindings_tenant_target").on(table.tenantId, table.targetId),
+    uniqueIndex("uniq_live_target_device_bindings_tenant_device_target_feature")
+      .on(table.tenantId, table.deviceId, table.targetId, table.featureType)
+      .where(sql`${table.deletedAt} is null`)
+  ]
+);
+
 export const liveCommentActions = pgTable(
   "live_comment_actions",
   {
@@ -336,7 +412,8 @@ export const collectorDevicesRelations = relations(collectorDevices, ({ many }) 
   taskAssignments: many(deviceTaskAssignments),
   liveCommentActions: many(liveCommentActions),
   updateEvents: many(agentUpdateEvents),
-  taskConfigs: many(deviceTaskConfigs)
+  taskConfigs: many(deviceTaskConfigs),
+  liveTargetBindings: many(liveTargetDeviceBindings)
 }));
 
 export const collectionTasksRelations = relations(collectionTasks, ({ many }) => ({
@@ -352,4 +429,10 @@ export const collectionTasksRelations = relations(collectionTasks, ({ many }) =>
 
 export const agentVersionsRelations = relations(agentVersions, ({ many }) => ({
   updateEvents: many(agentUpdateEvents)
+}));
+
+export const liveTargetsRelations = relations(liveTargets, ({ many }) => ({
+  aliases: many(liveTargetAliases),
+  featureConfigs: many(liveTargetFeatureConfigs),
+  deviceBindings: many(liveTargetDeviceBindings)
 }));

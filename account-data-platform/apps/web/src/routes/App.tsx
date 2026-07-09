@@ -1,10 +1,11 @@
-import { BarChartOutlined, ControlOutlined, DatabaseOutlined, FileTextOutlined, LockOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
+import { BarChartOutlined, CommentOutlined, ControlOutlined, DatabaseOutlined, FileTextOutlined, LockOutlined, LoginOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Form, Input, Layout, Menu, Space, Spin, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { clearAdminToken, getAdminToken, getCurrentAdmin, loginAdmin, setAdminToken, type AdminUser } from "../lib/api-client";
 import { DashboardPage } from "./DashboardPage";
 import { LogsPage } from "./LogsPage";
+import { LiveTargetsPage } from "./LiveTargetsPage";
 import { RecordsPage } from "./RecordsPage";
 import { TaskSchedulerPage } from "./TaskSchedulerPage";
 import { TasksPage } from "./TasksPage";
@@ -14,6 +15,7 @@ const { Header, Sider, Content } = Layout;
 const pages = {
   dashboard: { title: "工作台", component: <DashboardPage /> },
   scheduler: { title: "任务调度", component: <TaskSchedulerPage /> },
+  liveTargets: { title: "直播目标配置", component: <LiveTargetsPage /> },
   records: { title: "采集记录", component: <RecordsPage /> },
   logs: { title: "日志中心", component: <LogsPage /> },
   tasks: { title: "配置", component: <TasksPage /> }
@@ -133,6 +135,7 @@ export function App() {
           items={[
             { key: "dashboard", icon: <BarChartOutlined />, label: "工作台" },
             { key: "scheduler", icon: <ControlOutlined />, label: "任务调度" },
+            { key: "liveTargets", icon: <CommentOutlined />, label: "直播目标配置" },
             { key: "records", icon: <DatabaseOutlined />, label: "采集记录" },
             { key: "logs", icon: <FileTextOutlined />, label: "日志中心" },
             { key: "tasks", icon: <SettingOutlined />, label: "配置" }

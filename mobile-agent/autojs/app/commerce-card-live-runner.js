@@ -17,7 +17,73 @@ function createCommerceCardLiveRunner(context) {
   }
 
   function taskConfig() {
+    var liveTarget = pickLiveTarget("commerce_card_live_comment");
+    if (liveTarget) {
+      return buildCommerceConfigFromLiveTarget(liveTarget, config.task.commerceCardLiveComment || {});
+    }
     return config.task.commerceCardLiveComment || {};
+  }
+
+  function pickLiveTarget(featureType) {
+    var liveTargets = config.task.liveTargets || [];
+    for (var i = 0; i < liveTargets.length; i++) {
+      var target = liveTargets[i] || {};
+      if (target.enabled !== false && target.featureType === featureType) {
+        return target;
+      }
+    }
+    return null;
+  }
+
+  function targetAliasKeywords(target) {
+    var aliases = target.aliases || [];
+    var result = [];
+    for (var i = 0; i < aliases.length; i++) {
+      if (aliases[i] && aliases[i].enabled === false) {
+        continue;
+      }
+      var text = aliases[i] && aliases[i].aliasText;
+      if (text) {
+        result.push(text);
+      }
+    }
+    return result;
+  }
+
+  function buildTargetRoomFromLiveTarget(target) {
+    return {
+      enabled: target.enabled !== false,
+      targetCode: target.targetCode || "",
+      targetName: target.targetName || "",
+      searchKeywords: target.searchKeywords || [],
+      matchKeywords: targetAliasKeywords(target),
+      requiredKeywords: target.requiredKeywords || [],
+      forbiddenKeywords: target.forbiddenKeywords || [],
+      aliases: target.aliases || [],
+      similarityThreshold: target.similarityThreshold || 0.9
+    };
+  }
+
+  function buildCommerceConfigFromLiveTarget(target, legacy) {
+    var runtime = target.runtimeConfig || {};
+    var productKeywords = normalizeList(target.productKeywords, []);
+    if (!productKeywords.length) {
+      productKeywords = targetAliasKeywords(target);
+    }
+    return {
+      enabled: target.enabled !== false,
+      executeEnabled: runtime.executeEnabled === true || legacy.executeEnabled === true,
+      manualExecutionApproved: runtime.manualExecutionApproved === true || legacy.manualExecutionApproved === true,
+      searchKeywords: normalizeList(target.searchKeywords, legacy.searchKeywords || ["夏橙"]),
+      matchKeywords: normalizeList(productKeywords, legacy.matchKeywords || ["秭归", "夏橙"]),
+      liveSignals: normalizeList(target.liveSignals, legacy.liveSignals || ["直播中", "讲解中", "主播讲解", "进入直播间", "正在直播"]),
+      scanMinutesPerRound: pickNumber(runtime.scanMinutesPerRound, pickNumber(legacy.scanMinutesPerRound, 15)),
+      watchMinutesPerLive: pickNumber(runtime.watchMinutesPerLive, pickNumber(legacy.watchMinutesPerLive, 15)),
+      maxRounds: pickNumber(runtime.maxRounds, pickNumber(legacy.maxRounds, 3)),
+      maxCommentsPerRoom: pickNumber(runtime.maxCommentsPerRoom, pickNumber(legacy.maxCommentsPerRoom, 1)),
+      commentPool: normalizeList(runtime.commentPool, legacy.commentPool || ["111", "666", "👍", "🌹", "😊"]),
+      targetRoom: buildTargetRoomFromLiveTarget(target)
+    };
   }
 
   function normalizeList(value, fallback) {
@@ -351,6 +417,7 @@ function createCommerceCardLiveRunner(context) {
         searchKeyword: searchKeyword,
         matchKeywords: matchKeywords,
         liveSignals: liveSignals,
+        targetRoom: cfg.targetRoom,
         scanMinutes: scanMinutes,
         shouldStop: shouldStop
       }) || {};

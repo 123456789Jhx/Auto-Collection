@@ -188,6 +188,84 @@ export function getTasks() {
   return request<unknown[]>("/admin/tasks");
 }
 
+export type LiveTargetFeatureType = "live_comment" | "commerce_card_live_comment";
+
+export type LiveTargetAlias = {
+  id?: string;
+  aliasText: string;
+  aliasType: string;
+  weight: number;
+  enabled: boolean;
+};
+
+export type LiveTargetFeatureConfig = {
+  id?: string;
+  featureType: LiveTargetFeatureType;
+  searchKeywords: string[];
+  requiredKeywords?: string[];
+  forbiddenKeywords?: string[];
+  productKeywords?: string[];
+  liveSignals?: string[];
+  runtimeConfig?: Record<string, unknown>;
+  enabled: boolean;
+};
+
+export type LiveTarget = {
+  id?: string;
+  targetCode: string;
+  targetName: string;
+  platform: string;
+  similarityThreshold: number;
+  enabled: boolean;
+  remark?: string | null;
+  aliases: LiveTargetAlias[];
+  featureConfigs: LiveTargetFeatureConfig[];
+  bindings?: Array<{
+    deviceId?: string | null;
+    targetId: string;
+    featureType: LiveTargetFeatureType;
+    priority: number;
+    enabled: boolean;
+  }>;
+};
+
+export function getLiveTargets(platform = "douyin") {
+  return request<LiveTarget[]>("/admin/live-targets", { platform });
+}
+
+export function saveLiveTarget(payload: {
+  id?: string;
+  targetCode: string;
+  targetName: string;
+  platform?: string;
+  similarityThreshold?: number;
+  enabled?: boolean;
+  remark?: string | null;
+  aliases?: LiveTargetAlias[];
+}) {
+  if (payload.id) {
+    return patch<LiveTarget>(`/admin/live-targets/${encodeURIComponent(payload.id)}`, payload);
+  }
+  return mutate<LiveTarget>("/admin/live-targets", payload);
+}
+
+export function deleteLiveTarget(targetId: string) {
+  return remove<{ success: boolean }>(`/admin/live-targets/${encodeURIComponent(targetId)}`);
+}
+
+export function saveLiveTargetFeatureConfig(targetId: string, payload: LiveTargetFeatureConfig) {
+  return mutate<LiveTarget>(`/admin/live-targets/${encodeURIComponent(targetId)}/feature-configs`, payload);
+}
+
+export function saveDeviceLiveTargetBindings(payload: {
+  targetId: string;
+  featureType: LiveTargetFeatureType;
+  deviceCodes: string[];
+  defaultEnabled?: boolean;
+}) {
+  return mutate<LiveTarget>("/admin/live-target-device-bindings", payload);
+}
+
 export function getTaskAssignments() {
   return request<unknown[]>("/admin/task-assignments");
 }

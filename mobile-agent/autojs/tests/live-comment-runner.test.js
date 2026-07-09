@@ -237,6 +237,44 @@ function testLiveCommentUsesConfiguredSearchKeyword() {
   assert.deepStrictEqual(context.targetLiveRoomEntry.matchKeywords, ["room-match-keyword"]);
 }
 
+function testLiveCommentUsesLiveTargetsBeforeLegacyTargetRoomConfig() {
+  var searchedKeyword = "";
+  var passedTargetRoom = null;
+  var context = createBaseContext();
+  context.config.task.liveCommentBotConfig.targetRoom = {
+    enabled: false
+  };
+  context.config.task.liveTargets = [
+    {
+      targetCode: "zigui_xiacheng",
+      targetName: "秭归夏橙直播间",
+      featureType: "live_comment",
+      searchKeywords: ["xiacheng-search"],
+      similarityThreshold: 0.9,
+      aliases: [
+        { aliasText: "秭归夏橙", aliasType: "room_name", weight: 100 }
+      ],
+      forbiddenKeywords: ["回放"],
+      enabled: true
+    }
+  ];
+  context.douyin.openTargetLiveRoomFromSearch = function (options) {
+    searchedKeyword = options && options.keyword;
+    passedTargetRoom = options && options.targetRoom;
+    return true;
+  };
+  var runner = createLiveCommentRunner(context);
+
+  var result = runner.runTargetLiveCommentTask({ durationMinutes: 0 });
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(searchedKeyword, "xiacheng-search");
+  assert.strictEqual(passedTargetRoom.targetName, "秭归夏橙直播间");
+  assert.strictEqual(passedTargetRoom.similarityThreshold, 0.9);
+  assert.deepStrictEqual(passedTargetRoom.matchKeywords, ["秭归夏橙"]);
+  assert.deepStrictEqual(passedTargetRoom.forbiddenKeywords, ["回放"]);
+}
+
 function testLiveCommentTriesNextSearchKeywordWhenFirstMisses() {
   var searchedKeywords = [];
   var context = createBaseContext();
@@ -580,6 +618,7 @@ testTargetUserLiveEntryPrecedesGenericLiveBadgeCard();
 testKeywordUserLiveEntryPrecedesGenericLiveBadgeCard();
 testSearchKeywordVisibilityReadsInputNodeText();
 testLiveCommentUsesConfiguredSearchKeyword();
+testLiveCommentUsesLiveTargetsBeforeLegacyTargetRoomConfig();
 testLiveCommentTriesNextSearchKeywordWhenFirstMisses();
 testLiveCommentSearchFailureStopsWithReason();
 testLiveCommentRiskStopsBeforeCommenting();

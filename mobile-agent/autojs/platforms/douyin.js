@@ -1,7 +1,8 @@
-function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedScreenRecognizer) {
+function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedScreenRecognizer, injectedLiveTargetMatcher) {
   var autojsUtils = require(files.join(config.runtime.scriptDir, "utils/autojs-utils.js"));
   var liveCardGeometry = require(files.join(config.runtime.scriptDir, "platforms/live-card-geometry.js"));
   var createScreenRecognizer = require(files.join(config.runtime.scriptDir, "core/screen-recognizer.js")).createScreenRecognizer;
+  var liveTargetMatcher = injectedLiveTargetMatcher || require(files.join(config.runtime.scriptDir, "domain/live-target-matcher.js"));
   var packageName = "com.ss.android.ugc.aweme";
   var activeSearchKeyword = "";
   var lastSearchFailureReason = "";
@@ -1105,6 +1106,36 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return false;
   }
 
+  function matchesLiveTargetText(textValue, targetRoom) {
+    if (!targetRoom || !targetRoom.targetName || !liveTargetMatcher || !liveTargetMatcher.findBestLiveTargetMatch) {
+      return false;
+    }
+    var result = liveTargetMatcher.findBestLiveTargetMatch(textValue, [targetRoom]);
+    if (result && result.matched) {
+      logger.info("目标直播间相似度匹配命中", {
+        targetName: targetRoom.targetName || "",
+        targetCode: targetRoom.targetCode || "",
+        similarity: result.similarity,
+        threshold: result.threshold,
+        matchedAlias: result.matchedAlias || "",
+        textSample: String(textValue || "").slice(0, 180)
+      });
+      return true;
+    }
+    if (result && result.reason === "forbidden_keyword") {
+      logger.warn("目标直播间命中排除关键词，跳过", {
+        targetName: targetRoom.targetName || "",
+        forbiddenKeyword: result.forbiddenKeyword || "",
+        textSample: String(textValue || "").slice(0, 180)
+      });
+    }
+    return false;
+  }
+
+  function hasTargetTextMatch(textValue, keywords, targetRoom) {
+    return hasAnyTextKeyword(textValue, keywords) || matchesLiveTargetText(textValue, targetRoom);
+  }
+
   function enterMall() {
     if (!ensureDouyinForeground()) {
       openApp();
@@ -1286,7 +1317,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return true;
   }
 
-  function openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals) {
+  function openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals, targetRoom) {
     var entryNode = findCommerceLiveEntryNode(liveSignals);
     if (entryNode) {
       autojsUtils.axisClick(entryNode, logger);
@@ -1308,7 +1339,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       return false;
     }
     var detailText = extractVisibleText();
-    if (!hasAnyTextKeyword(detailText, matchKeywords) || !hasAnyTextKeyword(detailText, liveSignals)) {
+    if (!hasTargetTextMatch(detailText, matchKeywords, targetRoom) || !hasAnyTextKeyword(detailText, liveSignals)) {
       logger.info("商品详情页未同时命中商品关键词和直播信号", {
         textSample: detailText.slice(0, 180)
       });
@@ -1332,12 +1363,12 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return false;
   }
 
-  function confirmCommerceLiveRoom(matchKeywords) {
+  function confirmCommerceLiveRoom(matchKeywords, targetRoom) {
     if (!isLiveRoomVisible()) {
       return false;
     }
     var visibleText = extractVisibleText();
-    if (hasAnyTextKeyword(visibleText, matchKeywords)) {
+    if (hasTargetTextMatch(visibleText, matchKeywords, targetRoom)) {
       return true;
     }
     logger.warn("商品卡直播进房后二次关键词校验失败", {
@@ -1353,6 +1384,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     var searchKeyword = String(options.searchKeyword || "").replace(/\s+/g, " ").trim();
     var matchKeywords = options.matchKeywords || [];
     var liveSignals = options.liveSignals || [];
+    var targetRoom = options.targetRoom || {};
     var scanMinutes = Math.max(1, Number(options.scanMinutes || 15));
     if (!searchKeyword) {
       return {
@@ -1390,7 +1422,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         };
       }
       var visibleText = extractVisibleText();
-      var keywordMatched = hasAnyTextKeyword(visibleText, matchKeywords);
+      var keywordMatched = hasTargetTextMatch(visibleText, matchKeywords, targetRoom);
       var liveMatched = hasAnyTextKeyword(visibleText, liveSignals);
       logger.info("商品卡直播扫描页面", {
         attempt: attempt,
@@ -1398,8 +1430,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         liveMatched: liveMatched,
         textSample: visibleText.slice(0, 180)
       });
-      if (keywordMatched && liveMatched && openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals)) {
-        if (confirmCommerceLiveRoom(matchKeywords)) {
+      if (keywordMatched && liveMatched && openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals, targetRoom)) {
+        if (confirmCommerceLiveRoom(matchKeywords, targetRoom)) {
           return {
             success: true,
             reason: "commerce_live_entry_found",
@@ -1508,7 +1540,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         return false;
       }
       if (isLiveRoomVisible()) {
-        if (confirmTargetLiveRoom(keyword, targetKeywords, attempt, "already_in_live_room")) {
+        if (confirmTargetLiveRoom(keyword, targetKeywords, attempt, "already_in_live_room", targetRoom)) {
           logger.info("target live search already in target live room", { attempt: attempt, keyword: keyword });
           setTargetLiveSearchResult("room_verified", {
             keyword: keyword,
@@ -1582,7 +1614,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         return false;
       }
 
-      if (clickVisibleTargetLiveCardFromSearch(keyword, targetKeywords, attempt)) {
+      if (clickVisibleTargetLiveCardFromSearch(keyword, targetKeywords, targetRoom, attempt)) {
         setTargetLiveSearchResult("room_verified", {
           keyword: keyword,
           targetKeywords: targetKeywords,
@@ -1596,7 +1628,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         return false;
       }
 
-      if (clickVisibleTargetLiveCardByTextFallback(keyword, targetKeywords, attempt)) {
+      if (clickVisibleTargetLiveCardByTextFallback(keyword, targetKeywords, targetRoom, attempt)) {
         setTargetLiveSearchResult("room_verified", {
           keyword: keyword,
           targetKeywords: targetKeywords,
@@ -1610,7 +1642,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         return false;
       }
 
-      if (clickVisibleTargetLiveCardByOcrFallback(keyword, targetKeywords, attempt)) {
+      if (clickVisibleTargetLiveCardByOcrFallback(keyword, targetKeywords, targetRoom, attempt)) {
         setTargetLiveSearchResult("room_verified", {
           keyword: keyword,
           targetKeywords: targetKeywords,
@@ -1624,8 +1656,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         return false;
       }
 
-      var entry = findTargetLiveSearchEntry(targetKeywords);
-      if (entry && clickTargetLiveSearchEntry(entry, keyword, targetKeywords, attempt)) {
+      var entry = findTargetLiveSearchEntry(targetKeywords, targetRoom);
+      if (entry && clickTargetLiveSearchEntry(entry, keyword, targetKeywords, targetRoom, attempt)) {
         setTargetLiveSearchResult("room_verified", {
           keyword: keyword,
           targetKeywords: targetKeywords,
@@ -1671,7 +1703,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function clickTargetUserLiveEntryFromSearch(keyword, targetKeywords, targetRoom, attempt) {
     var block = findTargetUserSearchBlock(targetKeywords, targetRoom);
-    return clickUserLiveEntryBlock(block, keyword, targetKeywords, attempt, "target_user_live_entry");
+    return clickUserLiveEntryBlock(block, keyword, targetKeywords, targetRoom, attempt, "target_user_live_entry");
   }
 
   function clickKeywordUserLiveEntryFromSearch(keyword, targetKeywords, targetRoom, attempt) {
@@ -1680,7 +1712,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       return false;
     }
     var blockText = [block.targetText || "", block.contextText || ""].join("\n");
-    if (targetKeywords && targetKeywords.length && !containsAnyTargetKeyword(blockText, targetKeywords)) {
+    if (targetKeywords && targetKeywords.length && !hasTargetTextMatch(blockText, targetKeywords, targetRoom)) {
       logger.info("keyword user block does not match target keywords, skip", {
         keyword: keyword,
         attempt: attempt,
@@ -1698,10 +1730,10 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       });
       return false;
     }
-    return clickUserLiveEntryBlock(block, keyword, targetKeywords, attempt, "keyword_user_live_entry");
+    return clickUserLiveEntryBlock(block, keyword, targetKeywords, targetRoom, attempt, "keyword_user_live_entry");
   }
 
-  function clickUserLiveEntryBlock(block, keyword, targetKeywords, attempt, sourceName) {
+  function clickUserLiveEntryBlock(block, keyword, targetKeywords, targetRoom, attempt, sourceName) {
     if (!block) {
       return false;
     }
@@ -1769,7 +1801,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         refreshSearchResultsPage(keyword, attempt);
         return false;
       }
-      if (!isSearchResultPage(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, clickSource)) {
+      if (!isSearchResultPage(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, clickSource, targetRoom)) {
         return true;
       }
       if (!isSearchResultPage(afterText)) {
@@ -1788,15 +1820,15 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function findTargetUserSearchBlock(targetKeywords, targetRoom) {
     var keywords = buildTargetUserSearchKeywords(targetKeywords, targetRoom);
-    return findUserSearchBlockByKeywords(keywords, "target_user");
+    return findUserSearchBlockByKeywords(keywords, "target_user", targetRoom);
   }
 
   function findKeywordUserSearchBlock(keyword, targetRoom) {
     var keywords = buildKeywordUserSearchKeywords(keyword, targetRoom);
-    return findUserSearchBlockByKeywords(keywords, "keyword_user");
+    return findUserSearchBlockByKeywords(keywords, "keyword_user", targetRoom);
   }
 
-  function findUserSearchBlockByKeywords(keywords, sourceName) {
+  function findUserSearchBlockByKeywords(keywords, sourceName, targetRoom) {
     keywords = keywords || [];
     if (!keywords.length) {
       return null;
@@ -1819,7 +1851,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       var textValue = getNodeOwnText(node);
       var contextText = collectNodeContextText(node, 5);
       var combined = [textValue, contextText].join("\n");
-      var keywordHit = containsAnyTargetKeyword(combined, keywords);
+      var keywordHit = hasTargetTextMatch(combined, keywords, targetRoom);
       if (!keywordHit) {
         continue;
       }
@@ -2418,7 +2450,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         }
         continue;
       }
-      if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "live_badge_card_" + point.name)) {
+      if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "live_badge_card_" + point.name, targetRoom)) {
         logger.info("entered target live room from visible live badge card", {
           keyword: keyword,
           attempt: attempt,
@@ -2427,7 +2459,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         });
         return true;
       }
-      if (!isSearchResultPage(afterText) && containsLiveEntryText(afterText) && containsAnyTargetKeyword(afterText, targetKeywords)) {
+      if (!isSearchResultPage(afterText) && containsLiveEntryText(afterText) && hasTargetTextMatch(afterText, targetKeywords, targetRoom)) {
         logger.info("target page opened from live badge card, try visible live entry", {
           keyword: keyword,
           attempt: attempt,
@@ -2435,7 +2467,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
           point: point.name,
           textSample: afterText.slice(0, 180)
         });
-        if (openLiveRoomFromCurrentScreen(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry")) {
+        if (openLiveRoomFromCurrentScreen(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry", targetRoom)) {
           return true;
         }
       }
@@ -2457,7 +2489,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return autojsUtils.formatBounds(rect);
   }
 
-  function clickVisibleTargetLiveCardFromSearch(keyword, targetKeywords, attempt) {
+  function clickVisibleTargetLiveCardFromSearch(keyword, targetKeywords, targetRoom, attempt) {
     var visibleText = extractVisibleText();
     var searchState = screenRecognizer.detectSearchPageState(visibleText, recognitionOptions());
     var liveVisible = containsLiveEntryText(visibleText) || /直播[，,\s]*按钮/.test(visibleText);
@@ -2479,7 +2511,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       textSample: visibleText.slice(0, 220)
     });
 
-    if (clickTargetLiveSearchCardFallback(keywordEntry, keyword, targetKeywords, attempt, visibleText)) {
+    if (clickTargetLiveSearchCardFallback(keywordEntry, keyword, targetKeywords, targetRoom, attempt, visibleText)) {
       return true;
     }
 
@@ -2491,10 +2523,10 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return false;
   }
 
-  function clickVisibleTargetLiveCardByTextFallback(keyword, targetKeywords, attempt) {
+  function clickVisibleTargetLiveCardByTextFallback(keyword, targetKeywords, targetRoom, attempt) {
     var visibleText = extractVisibleText();
     var searchState = screenRecognizer.detectSearchPageState(visibleText, recognitionOptions());
-    var targetVisible = containsAnyTargetKeyword(visibleText, targetKeywords);
+    var targetVisible = hasTargetTextMatch(visibleText, targetKeywords, targetRoom);
     var liveVisible = containsLiveEntryText(visibleText) || /直播[中间]|正在直播|直播[，,\s]*按钮/.test(visibleText);
     if (!searchState.isResult || !targetVisible || !liveVisible) {
       return false;
@@ -2536,7 +2568,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         }
         continue;
       }
-      if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, points[i].name)) {
+      if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, points[i].name, targetRoom)) {
         logger.info("entered target live room from text coordinate fallback", {
           keyword: keyword,
           attempt: attempt,
@@ -2544,14 +2576,14 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         });
         return true;
       }
-      if (!isSearchResultPage(afterText) && containsLiveEntryText(afterText) && containsAnyTargetKeyword(afterText, targetKeywords)) {
+      if (!isSearchResultPage(afterText) && containsLiveEntryText(afterText) && hasTargetTextMatch(afterText, targetKeywords, targetRoom)) {
         logger.info("target page opened from text coordinate fallback, try visible live entry", {
           keyword: keyword,
           attempt: attempt,
           point: points[i].name,
           textSample: afterText.slice(0, 180)
         });
-        if (openLiveRoomFromCurrentScreen(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry")) {
+        if (openLiveRoomFromCurrentScreen(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry", targetRoom)) {
           return true;
         }
       }
@@ -2563,10 +2595,10 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return false;
   }
 
-  function clickVisibleTargetLiveCardByOcrFallback(keyword, targetKeywords, attempt) {
+  function clickVisibleTargetLiveCardByOcrFallback(keyword, targetKeywords, targetRoom, attempt) {
     var visibleText = extractVisibleText();
     var searchState = screenRecognizer.detectSearchPageState(visibleText, recognitionOptions());
-    var targetVisible = containsAnyTargetKeyword(visibleText, targetKeywords);
+    var targetVisible = hasTargetTextMatch(visibleText, targetKeywords, targetRoom);
     if (!searchState.isResult || !targetVisible) {
       return false;
     }
@@ -2631,7 +2663,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         }
         continue;
       }
-      if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "ocr_" + point.name)) {
+      if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "ocr_" + point.name, targetRoom)) {
         logger.info("entered target live room from OCR coordinate fallback", {
           keyword: keyword,
           attempt: attempt,
@@ -2639,14 +2671,14 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         });
         return true;
       }
-      if (!isSearchResultPage(afterText) && containsLiveEntryText(afterText) && containsAnyTargetKeyword(afterText, targetKeywords)) {
+      if (!isSearchResultPage(afterText) && containsLiveEntryText(afterText) && hasTargetTextMatch(afterText, targetKeywords, targetRoom)) {
         logger.info("target page opened from OCR coordinate fallback, try visible live entry", {
           keyword: keyword,
           attempt: attempt,
           point: point.name,
           textSample: afterText.slice(0, 180)
         });
-        if (openLiveRoomFromCurrentScreen(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry")) {
+        if (openLiveRoomFromCurrentScreen(afterText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry", targetRoom)) {
           return true;
         }
       }
@@ -2773,7 +2805,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     result.push(value);
   }
 
-  function findTargetLiveSearchEntry(targetKeywords) {
+  function findTargetLiveSearchEntry(targetKeywords, targetRoom) {
     var nodes = [];
     pushFoundNodes(nodes, textMatches(".*(进入直播间|点击进入直播间|正在直播|直播中|热聊中|讲解中|LIVE|live).*"));
     pushFoundNodes(nodes, descMatches(".*(进入直播间|点击进入直播间|正在直播|直播中|热聊中|讲解中|LIVE|live).*"));
@@ -2796,7 +2828,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       var textValue = getNodeOwnText(node);
       var contextText = collectNodeContextText(node, 4);
       var liveHit = containsLiveEntryText(textValue) || containsLiveEntryText(contextText);
-      var targetHit = containsAnyTargetKeyword(contextText || textValue, targetKeywords);
+      var targetHit = hasTargetTextMatch(contextText || textValue, targetKeywords, targetRoom);
       var score = 0;
       if (targetHit) {
         score += 60;
@@ -2816,7 +2848,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       if (!targetHit && targetKeywords.length > 0) {
         score -= 80;
       }
-      if (!liveHit && !containsAnyTargetKeyword(textValue, targetKeywords)) {
+      if (!liveHit && !hasTargetTextMatch(textValue, targetKeywords, targetRoom)) {
         score -= 40;
       }
 
@@ -2927,7 +2959,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return bestScore >= 40 ? best : null;
   }
 
-  function clickTargetLiveSearchEntry(entry, keyword, targetKeywords, attempt) {
+  function clickTargetLiveSearchEntry(entry, keyword, targetKeywords, targetRoom, attempt) {
     logger.info("click target live search entry", {
       keyword: keyword,
       attempt: attempt,
@@ -2940,8 +2972,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     });
 
     var currentText = extractVisibleText();
-    if (containsLiveEntryText(currentText) && containsAnyTargetKeyword(currentText, targetKeywords)) {
-      if (clickTargetLiveSearchCardFallback(entry, keyword, targetKeywords, attempt, currentText)) {
+    if (containsLiveEntryText(currentText) && hasTargetTextMatch(currentText, targetKeywords, targetRoom)) {
+      if (clickTargetLiveSearchCardFallback(entry, keyword, targetKeywords, targetRoom, attempt, currentText)) {
         return true;
       }
     }
@@ -2951,18 +2983,18 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     autojsUtils.sleepRandom(2500, 4200);
 
     var visibleText = extractVisibleText();
-    if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "node_click")) {
+    if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "node_click", targetRoom)) {
       logger.info("entered target live room from search", { keyword: keyword, attempt: attempt });
       return true;
     }
 
-    if (containsLiveEntryText(visibleText) && containsAnyTargetKeyword(visibleText, targetKeywords)) {
+    if (containsLiveEntryText(visibleText) && hasTargetTextMatch(visibleText, targetKeywords, targetRoom)) {
       logger.info("target profile/result page opened, try live entry on current screen", {
         keyword: keyword,
         attempt: attempt,
         textSample: visibleText.slice(0, 180)
       });
-      if (openLiveRoomFromCurrentScreen(visibleText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry")) {
+      if (openLiveRoomFromCurrentScreen(visibleText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry", targetRoom)) {
         return true;
       }
     }
@@ -2979,7 +3011,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return false;
   }
 
-  function clickTargetLiveSearchCardFallback(entry, keyword, targetKeywords, attempt, visibleText) {
+  function clickTargetLiveSearchCardFallback(entry, keyword, targetKeywords, targetRoom, attempt, visibleText) {
     var screen = autojsUtils.getScreenSize();
     var bounds = entry && entry.bounds;
     var anchorY = bounds && bounds.centerY ? bounds.centerY() : Math.floor(screen.height * 0.35);
@@ -3016,7 +3048,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       autojsUtils.clickPoint(x, y, logger, "target_live_search_card_" + points[i].name);
       autojsUtils.sleepRandom(2600, 3800);
       var afterClickText = extractVisibleText();
-      if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, points[i].name)) {
+      if (isLiveRoomVisible() && confirmTargetLiveRoom(keyword, targetKeywords, attempt, points[i].name, targetRoom)) {
         logger.info("entered target live room from search card coordinate", {
           keyword: keyword,
           attempt: attempt,
@@ -3024,14 +3056,14 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         });
         return true;
       }
-      if (!isSearchResultPage(afterClickText) && containsLiveEntryText(afterClickText) && containsAnyTargetKeyword(afterClickText, targetKeywords)) {
+      if (!isSearchResultPage(afterClickText) && containsLiveEntryText(afterClickText) && hasTargetTextMatch(afterClickText, targetKeywords, targetRoom)) {
         logger.info("target page opened from search card, try visible live entry", {
           keyword: keyword,
           attempt: attempt,
           point: points[i].name,
           textSample: afterClickText.slice(0, 180)
         });
-        if (openLiveRoomFromCurrentScreen(afterClickText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry")) {
+        if (openLiveRoomFromCurrentScreen(afterClickText) && confirmTargetLiveRoom(keyword, targetKeywords, attempt, "current_screen_live_entry", targetRoom)) {
           return true;
         }
       }
@@ -3043,11 +3075,11 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return false;
   }
 
-  function confirmTargetLiveRoom(keyword, targetKeywords, attempt, source) {
+  function confirmTargetLiveRoom(keyword, targetKeywords, attempt, source, targetRoom) {
     var visibleText = extractVisibleText();
     var searchState = screenRecognizer.detectSearchPageState(visibleText, recognitionOptions());
     if (isLiveRoomVisible()) {
-      if (containsAnyTargetKeyword(visibleText, targetKeywords)) {
+      if (hasTargetTextMatch(visibleText, targetKeywords, targetRoom)) {
         clearPendingTargetLiveEntry();
         return true;
       }

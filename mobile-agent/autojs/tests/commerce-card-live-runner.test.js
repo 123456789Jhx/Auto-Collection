@@ -252,6 +252,59 @@ function testCommerceCardLiveStopsAfterLaterNoMatchWithoutThirdRound() {
   });
 }
 
+function testCommerceCardLiveUsesLiveTargetsBeforeLegacyCommerceConfig() {
+  withFakeClock(function (sleeps) {
+    var context = createContext();
+    context.config.task.commerceCardLiveComment = {
+      enabled: false
+    };
+    context.config.task.liveTargets = [
+      {
+        targetCode: "zigui_xiacheng",
+        targetName: "秭归夏橙直播间",
+        featureType: "commerce_card_live_comment",
+        searchKeywords: ["夏橙商品"],
+        productKeywords: ["秭归", "夏橙"],
+        liveSignals: ["直播中"],
+        similarityThreshold: 0.9,
+        aliases: [
+          { aliasText: "秭归夏橙", aliasType: "room_name", weight: 100 }
+        ],
+        runtimeConfig: {
+          scanMinutesPerRound: 15,
+          watchMinutesPerLive: 15,
+          maxRounds: 1,
+          maxCommentsPerRoom: 1,
+          commentPool: ["111"]
+        },
+        enabled: true
+      }
+    ];
+    var passedOptions = null;
+    context.douyin.openMatchingCommerceLiveFromCards = function (options) {
+      context.scans.push(options);
+      passedOptions = options;
+      return {
+        success: true,
+        reason: "commerce_live_entry_found",
+        matchedKeywords: ["秭归", "夏橙"],
+        textSample: "秭归夏橙 直播中"
+      };
+    };
+    var runner = createCommerceCardLiveRunner(context);
+
+    var result = runner.runCommerceCardLiveCommentTask();
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.completedRounds, 1);
+    assert.strictEqual(passedOptions.searchKeyword, "夏橙商品");
+    assert.deepStrictEqual(passedOptions.matchKeywords, ["秭归", "夏橙"]);
+    assert.deepStrictEqual(passedOptions.liveSignals, ["直播中"]);
+    assert.strictEqual(passedOptions.targetRoom.targetName, "秭归夏橙直播间");
+    assert.strictEqual(sum(sleeps), 15 * 60 * 1000);
+  });
+}
+
 function testCommerceCardLivePauseStopsBeforeScanning() {
   var context = createContext();
   context.floatyControl.state.paused = true;
@@ -317,6 +370,7 @@ function testCollectorKeepsCommerceLiveSeparateFromOrdinaryLivePhase() {
 testCommerceCardLiveRunsThreeMatchedRounds();
 testCommerceCardLiveStopsGracefullyWhenNoMatchInRound();
 testCommerceCardLiveStopsAfterLaterNoMatchWithoutThirdRound();
+testCommerceCardLiveUsesLiveTargetsBeforeLegacyCommerceConfig();
 testCommerceCardLivePauseStopsBeforeScanning();
 testCommerceCardLiveIsDisabledByDefault();
 testCommerceCardLiveRequiresExplicitSendApproval();

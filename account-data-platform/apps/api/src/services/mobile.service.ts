@@ -4,6 +4,7 @@ import { createHeartbeat } from "../repositories/heartbeat.repository";
 import { createRuntimeLog } from "../repositories/log.repository";
 import { upsertDeviceLogFile } from "../repositories/log-file.repository";
 import { createLiveCommentAction } from "../repositories/live-comment.repository";
+import { listMobileLiveTargetsForDevice } from "../repositories/live-target.repository";
 import { createCollectionRecord } from "../repositories/record.repository";
 import { findCurrentTask, findDeviceTaskConfig, findTaskByCode, resolveTaskConfig } from "../repositories/task.repository";
 import { findDeviceByCode, findDeviceByToken, registerDeviceByToken, resolveDeviceByToken } from "../repositories/device.repository";
@@ -111,6 +112,7 @@ export async function getCurrentTask(deviceId: string, platform: string, clientI
   const result = await findDeviceTaskConfig(device.deviceCode, platform);
   const task = result.task ?? (await findCurrentTask(platform));
   const taskConfig = resolveTaskConfig(task, result.config);
+  const liveTargets = await listMobileLiveTargetsForDevice(device.id, platform);
   const liveCommentConfig = (taskConfig.liveCommentConfig ?? {}) as Record<string, unknown>;
   const followedAccounts = buildFollowedAccounts(result.followedConfigs ?? [], liveCommentConfig);
   const leaderAccountNames = followedAccounts.flatMap((account) => [account.accountName, ...(account.aliasNames || [])]).filter(Boolean);
@@ -142,6 +144,7 @@ export async function getCurrentTask(deviceId: string, platform: string, clientI
     liveCommentMode: taskConfig.liveCommentMode,
     accountProfile: result.device?.accountProfile ?? null,
     liveCommentBotConfig: taskConfig.liveCommentBotConfig,
+    liveTargets,
     followedAccounts,
     liveCommentConfig: effectiveLiveCommentConfig,
     commerceCardLiveComment: pickCommerceCardLiveCommentConfig(taskConfig.p3ExtensionsConfig),

@@ -88,6 +88,7 @@ var createCommentCache = localRequire("domain/comment-cache.js").createCommentCa
 var createTriggerDetector = localRequire("domain/trigger-detector.js").createTriggerDetector;
 var createCommentActionPlanner = localRequire("domain/comment-action-planner.js").createCommentActionPlanner;
 var createP3ExtensionActions = localRequire("domain/p3-extension-actions.js").createP3ExtensionActions;
+var liveTargetMatcher = localRequire("domain/live-target-matcher.js");
 var riskDetector = localRequire("domain/risk-detector.js");
 var createPhaseRunner = localRequire("app/phase-runner.js").createPhaseRunner;
 var createLiveCommentRunner = localRequire("app/live-comment-runner.js").createLiveCommentRunner;
@@ -105,7 +106,7 @@ if (ocrEngine.setPermissionManager) {
 var matcher = createMatcher(config);
 var floatyControl = createFloatyControl(config, logger);
 var screenRecognizer = createScreenRecognizer(config, logger, ocrEngine, { expectedPackage: "com.ss.android.ugc.aweme" });
-var douyin = createDouyinAdapter(config, logger, ocrEngine, floatyControl, screenRecognizer);
+var douyin = createDouyinAdapter(config, logger, ocrEngine, floatyControl, screenRecognizer, liveTargetMatcher);
 
 var context = {
   config: config,

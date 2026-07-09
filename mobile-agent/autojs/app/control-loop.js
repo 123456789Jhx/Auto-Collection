@@ -829,6 +829,7 @@ function createControlLoop(context) {
     config.task.liveCommentMode = liveCommentMode;
     config.task.accountProfile = sanitizeObjectConfig(remoteConfig.accountProfile, config.task.accountProfile || {});
     config.task.liveCommentBotConfig = sanitizeObjectConfig(remoteConfig.liveCommentBotConfig, config.task.liveCommentBotConfig || {});
+    config.task.liveTargets = sanitizeLiveTargets(remoteConfig.liveTargets || []);
     var commerceCardLiveComment = pickCommerceCardLiveCommentConfig(remoteConfig);
     if (commerceCardLiveComment) {
       config.task.commerceCardLiveComment = sanitizeCommerceCardLiveCommentConfig(commerceCardLiveComment);
@@ -884,6 +885,7 @@ function createControlLoop(context) {
       liveCommentMode: config.task.liveCommentMode,
       accountProfileName: config.task.accountProfile && config.task.accountProfile.profileName || "",
       botName: config.task.liveCommentBotConfig && config.task.liveCommentBotConfig.botName || "",
+      liveTargetCount: config.task.liveTargets.length,
       followedAccountCount: config.task.followedAccounts.length,
       commerceCardLiveEnabled: !!(config.task.commerceCardLiveComment && config.task.commerceCardLiveComment.enabled),
       commerceCardLiveSendApproved: !!(config.task.commerceCardLiveComment && config.task.commerceCardLiveComment.executeEnabled && config.task.commerceCardLiveComment.manualExecutionApproved),
@@ -1074,6 +1076,81 @@ function createControlLoop(context) {
       return p3.commerceCardLiveComment;
     }
     return null;
+  }
+
+  function sanitizeLiveTargets(value) {
+    if (!value || !value.length) {
+      return [];
+    }
+    var result = [];
+    for (var i = 0; i < value.length && result.length < 50; i++) {
+      var item = value[i] || {};
+      var featureType = item.featureType === "live_comment" || item.featureType === "commerce_card_live_comment" ? item.featureType : "";
+      var targetCode = normalizeStringList([item.targetCode || ""], 1, 64)[0] || "";
+      var targetName = normalizeStringList([item.targetName || ""], 1, 200)[0] || "";
+      if (!featureType || !targetName) {
+        continue;
+      }
+      result.push({
+        targetId: normalizeStringList([item.targetId || ""], 1, 64)[0] || "",
+        targetCode: targetCode,
+        targetName: targetName,
+        platform: normalizeStringList([item.platform || "douyin"], 1, 32)[0] || "douyin",
+        featureType: featureType,
+        enabled: item.enabled !== false,
+        similarityThreshold: clampDecimal(item.similarityThreshold, 0.9, 0.5, 1),
+        searchKeywords: normalizeStringList(item.searchKeywords || [], 30, 100),
+        requiredKeywords: normalizeStringList(item.requiredKeywords || [], 30, 100),
+        forbiddenKeywords: normalizeStringList(item.forbiddenKeywords || [], 30, 100),
+        productKeywords: normalizeStringList(item.productKeywords || [], 30, 100),
+        liveSignals: normalizeStringList(item.liveSignals || [], 30, 100),
+        aliases: sanitizeLiveTargetAliases(item.aliases || []),
+        runtimeConfig: sanitizeLiveTargetRuntimeConfig(item.runtimeConfig || {})
+      });
+    }
+    return result;
+  }
+
+  function sanitizeLiveTargetAliases(value) {
+    if (!value || !value.length) {
+      return [];
+    }
+    var result = [];
+    for (var i = 0; i < value.length && result.length < 50; i++) {
+      var item = value[i] || {};
+      var aliasText = normalizeStringList([item.aliasText || ""], 1, 200)[0] || "";
+      if (!aliasText) {
+        continue;
+      }
+      result.push({
+        aliasText: aliasText,
+        aliasType: normalizeStringList([item.aliasType || "room_name"], 1, 32)[0] || "room_name",
+        weight: clampNumber(item.weight, 100, 0, 1000),
+        enabled: item.enabled !== false
+      });
+    }
+    return result;
+  }
+
+  function sanitizeLiveTargetRuntimeConfig(value) {
+    value = value || {};
+    return {
+      executeEnabled: value.executeEnabled === true,
+      manualExecutionApproved: value.manualExecutionApproved === true,
+      scanMinutesPerRound: clampNumber(value.scanMinutesPerRound, 15, 1, 60),
+      watchMinutesPerLive: clampNumber(value.watchMinutesPerLive, 15, 0, 120),
+      maxRounds: clampNumber(value.maxRounds, 3, 1, 20),
+      maxCommentsPerRoom: clampNumber(value.maxCommentsPerRoom, 1, 0, 5),
+      commentPool: normalizeStringList(value.commentPool || [], 50, 80)
+    };
+  }
+
+  function clampDecimal(value, fallback, minValue, maxValue) {
+    var number = Number(value);
+    if (!isFinite(number)) {
+      number = fallback;
+    }
+    return Math.max(minValue, Math.min(maxValue, number));
   }
 
   function sanitizeCommerceCardLiveCommentConfig(value) {

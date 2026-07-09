@@ -130,8 +130,48 @@ function createLiveCommentRunner(context) {
   }
 
   function buildTargetRoom() {
+    var liveTarget = pickLiveTarget("live_comment");
+    if (liveTarget) {
+      return buildTargetRoomFromLiveTarget(liveTarget);
+    }
     var botConfig = config.task.liveCommentBotConfig || {};
     return botConfig.targetRoom || {};
+  }
+
+  function pickLiveTarget(featureType) {
+    var liveTargets = config.task.liveTargets || [];
+    for (var i = 0; i < liveTargets.length; i++) {
+      var target = liveTargets[i] || {};
+      if (target.enabled !== false && target.featureType === featureType) {
+        return target;
+      }
+    }
+    return null;
+  }
+
+  function buildTargetRoomFromLiveTarget(target) {
+    var matchKeywords = [];
+    var aliases = target.aliases || [];
+    for (var i = 0; i < aliases.length; i++) {
+      if (aliases[i] && aliases[i].enabled === false) {
+        continue;
+      }
+      addTargetKeyword(matchKeywords, aliases[i] && aliases[i].aliasText);
+    }
+    if (!matchKeywords.length) {
+      addTargetKeywordList(matchKeywords, target.requiredKeywords);
+    }
+    return {
+      enabled: target.enabled !== false,
+      targetCode: target.targetCode || "",
+      targetName: target.targetName || "",
+      searchKeywords: target.searchKeywords || [],
+      matchKeywords: matchKeywords,
+      requiredKeywords: target.requiredKeywords || [],
+      forbiddenKeywords: target.forbiddenKeywords || [],
+      aliases: target.aliases || [],
+      similarityThreshold: target.similarityThreshold || 0.9
+    };
   }
 
   function addTargetKeyword(result, value) {
