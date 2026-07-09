@@ -58,3 +58,10 @@ test("工作台设备卡片采用有序行式布局", () => {
   assert(/device-run-ops/.test(dashboardSource), "device card should keep action buttons in a dedicated operations area");
   assert(/device-feature-list/.test(dashboardSource), "device card should render feature states as an ordered list");
 });
+
+test("工作台配置按钮打开表单而不是下发刷新指令", () => {
+  assert(/DeviceLiveCommentConfigModal/.test(dashboardSource), "dashboard should reuse the live comment config modal");
+  assert(/openDashboardConfig\(item\)/.test(dashboardSource), "device card config action should open the config form");
+  assert(!/sendCommand\(item\.deviceCode,\s*["']REFRESH_CONFIG["']\)}><ReloadOutlined \/>配置/.test(dashboardSource), "card label 配置 must not send REFRESH_CONFIG directly");
+  assert(/刷新配置/.test(dashboardSource), "refresh command should keep explicit wording");
+});

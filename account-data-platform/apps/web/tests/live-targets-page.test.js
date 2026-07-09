@@ -10,6 +10,8 @@ const appSource = fs.readFileSync(path.join(webSrcDir, "routes/App.tsx"), "utf8"
 const apiClientSource = fs.readFileSync(path.join(webSrcDir, "lib/api-client.ts"), "utf8");
 const schedulerSource = fs.readFileSync(path.join(webSrcDir, "routes/TaskSchedulerPage.tsx"), "utf8");
 const tasksSource = fs.readFileSync(path.join(webSrcDir, "routes/TasksPage.tsx"), "utf8");
+const deviceConfigModalSource = fs.readFileSync(path.join(webSrcDir, "routes/DeviceLiveCommentConfigModal.tsx"), "utf8");
+const repoRootDir = path.join(currentDir, "../../../..");
 const configCenterPagePath = path.join(webSrcDir, "routes/ConfigCenterPage.tsx");
 const liveTargetsPagePath = path.join(webSrcDir, "routes/LiveTargetsPage.tsx");
 
@@ -26,17 +28,18 @@ test("后台导航恢复配置侧边栏并移除配置中心", () => {
 
 test("任务调度内置单台手机直播评论配置弹窗", () => {
   assert(!fs.existsSync(configCenterPagePath), "ConfigCenterPage.tsx should be removed");
-  assert(/getDeviceTaskConfig/.test(schedulerSource), "scheduler config modal should load per-device task config");
-  assert(/updateDeviceTaskConfig/.test(schedulerSource), "scheduler config modal should save per-device task config");
-  assert(/scheduler-config-modal/.test(schedulerSource), "scheduler should render a configuration modal");
-  assert(/搜索关键词/.test(schedulerSource), "modal should expose search keyword field");
-  assert(/目标直播间名称/.test(schedulerSource), "modal should expose target room field");
-  assert(/直播间评论上限/.test(schedulerSource), "modal should expose room comment limit");
-  assert(/每小时直播评论上限/.test(schedulerSource), "modal should expose hourly comment limit");
-  assert(/目标直播间发送上限/.test(schedulerSource), "modal should expose target send limit");
-  assert(/目标房间发送间隔/.test(schedulerSource), "modal should expose target interval");
-  assert(/评论内容/.test(schedulerSource), "modal should expose comment content");
-  assert(/REFRESH_CONFIG/.test(schedulerSource), "modal copy should reflect save-triggered phone config refresh");
+  assert(/DeviceLiveCommentConfigModal/.test(schedulerSource), "scheduler should mount the shared device config modal");
+  assert(/getDeviceTaskConfig/.test(deviceConfigModalSource), "scheduler config modal should load per-device task config");
+  assert(/updateDeviceTaskConfig/.test(deviceConfigModalSource), "scheduler config modal should save per-device task config");
+  assert(/scheduler-config-modal/.test(deviceConfigModalSource), "scheduler should render a configuration modal");
+  assert(/搜索关键词/.test(deviceConfigModalSource), "modal should expose search keyword field");
+  assert(/目标直播间名称/.test(deviceConfigModalSource), "modal should expose target room field");
+  assert(/直播间评论上限/.test(deviceConfigModalSource), "modal should expose room comment limit");
+  assert(/每小时直播评论上限/.test(deviceConfigModalSource), "modal should expose hourly comment limit");
+  assert(/目标直播间发送上限/.test(deviceConfigModalSource), "modal should expose target send limit");
+  assert(/目标房间发送间隔/.test(deviceConfigModalSource), "modal should expose target interval");
+  assert(/评论内容/.test(deviceConfigModalSource), "modal should expose comment content");
+  assert(/REFRESH_CONFIG/.test(deviceConfigModalSource), "modal copy should reflect save-triggered phone config refresh");
 });
 
 test("配置页恢复公共模板原有表单口径", () => {
@@ -63,4 +66,38 @@ test("直播目标配置页面管理目标名、别名和两类功能配置", ()
   assert(/搜索直播评论/.test(source), "page should manage search live comment config");
   assert(/商品卡直播评论/.test(source), "page should manage commerce-card live comment config");
   assert(/相似度阈值/.test(source), "page should expose similarity threshold");
+});
+
+test("automation helper scripts cover submit deploy and USB apk install", () => {
+  const quickSubmitPath = path.join(repoRootDir, "scripts/quick-submit.ps1");
+  const deployPath = path.join(repoRootDir, "scripts/deploy-web-fast.ps1");
+  const installPath = path.join(repoRootDir, "scripts/install-apk-usb.ps1");
+
+  assert(fs.existsSync(quickSubmitPath), "quick-submit.ps1 should exist");
+  assert(fs.existsSync(deployPath), "deploy-web-fast.ps1 should exist");
+  assert(fs.existsSync(installPath), "install-apk-usb.ps1 should exist");
+
+  const quickSubmitSource = fs.readFileSync(quickSubmitPath, "utf8");
+  const deploySource = fs.readFileSync(deployPath, "utf8");
+  const installSource = fs.readFileSync(installPath, "utf8");
+
+  assert(/git commit/.test(quickSubmitSource), "quick submit should commit staged work");
+  assert(/git push/.test(quickSubmitSource), "quick submit should push selected remotes");
+  assert(/origin/.test(quickSubmitSource) && /tomato/.test(quickSubmitSource), "quick submit should default to both project remotes");
+  assert(/git diff --check/.test(quickSubmitSource), "quick submit should run whitespace conflict checks");
+  assert(/GIT_SSH_COMMAND/.test(quickSubmitSource), "quick submit should keep SSH configuration explicit");
+
+  assert(/paramiko/.test(deploySource), "server deploy should use SSH automation");
+  assert(/account-data-platform/.test(deploySource), "server deploy should target account-data-platform");
+  assert(/docker compose/.test(deploySource), "server deploy should rebuild and restart compose services");
+  assert(/build web/.test(deploySource), "server deploy should rebuild only the web service");
+  assert(/up -d --no-deps web/.test(deploySource), "server deploy should restart only the web service");
+  assert(/\/health/.test(deploySource) && /\/ready/.test(deploySource), "server deploy should verify health endpoints");
+
+  assert(/adb devices/.test(installSource), "USB install should enumerate attached devices");
+  assert(/adb uninstall/.test(installSource), "USB install should uninstall the existing package first");
+  assert(/adb install/.test(installSource), "USB install should attempt direct adb install");
+  assert(/INSTALL_FAILED_USER_RESTRICTED/.test(installSource), "USB install should detect MIUI user restriction");
+  assert(/sdcard\/Download/.test(installSource), "USB install should push APK for manual installer fallback");
+  assert(/am start/.test(installSource), "USB install should launch the system package installer when restricted");
 });

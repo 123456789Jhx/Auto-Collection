@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Skeleton, message } from "antd";
-import { PauseOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined, SyncOutlined } from "@ant-design/icons";
+import { PauseOutlined, PlayCircleOutlined, SettingOutlined, StopOutlined, SyncOutlined } from "@ant-design/icons";
 import { useMemo, useState } from "react";
 import { createMobileCommand, getDeviceDailyProgress, getDeviceProgressHistory, getOverview } from "../lib/api-client";
 import { deviceDisplayName, deviceSubTitle, sceneText, statusText } from "../lib/display-maps";
+import { DeviceLiveCommentConfigModal, type ConfigurableDevice } from "./DeviceLiveCommentConfigModal";
 
 type DeviceProgress = {
   id: string;
@@ -262,6 +263,8 @@ export function DashboardPage() {
   const [messageApi, contextHolder] = message.useMessage();
   const [selectedDeviceCode, setSelectedDeviceCode] = useState("");
   const [detailOpen, setDetailOpen] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [configDevice, setConfigDevice] = useState<ConfigurableDevice | null>(null);
   const query = useQuery({ queryKey: ["overview"], queryFn: getOverview, refetchInterval: 15000 });
   const data = query.data ?? {};
   const devices = useMemo(() => (Array.isArray(data.deviceProgress) ? data.deviceProgress : []) as DeviceProgress[], [data.deviceProgress]);
@@ -308,6 +311,11 @@ export function DashboardPage() {
   function sendCommand(deviceCode: string | undefined, commandType: CommandType) {
     if (!deviceCode) return;
     commandMutation.mutate({ deviceId: deviceCode, commandType });
+  }
+
+  function openDashboardConfig(device: DeviceProgress) {
+    setConfigDevice(device);
+    setConfigOpen(true);
   }
 
   return (
@@ -415,7 +423,7 @@ export function DashboardPage() {
                       <button className="ops-mini-btn primary" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "START")}><PlayCircleOutlined />启动</button>
                       <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "PAUSE")}><PauseOutlined />暂停</button>
                       <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "RESUME")}><SyncOutlined />恢复</button>
-                      <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "REFRESH_CONFIG")}><ReloadOutlined />配置</button>
+                      <button className="ops-mini-btn" type="button" onClick={() => openDashboardConfig(item)}><SettingOutlined />配置</button>
                       <button className="ops-mini-btn danger" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "STOP")}><StopOutlined />停止</button>
                     </div>
                   </div>
@@ -494,6 +502,12 @@ export function DashboardPage() {
           </div>
         </aside>
       ) : null}
+      <DeviceLiveCommentConfigModal
+        open={configOpen}
+        device={configDevice}
+        onClose={() => setConfigOpen(false)}
+        onSaved={() => messageApi.success("配置已保存，后台已向手机下发刷新配置指令")}
+      />
     </div>
   );
 }
