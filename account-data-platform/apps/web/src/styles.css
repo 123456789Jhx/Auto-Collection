@@ -1086,7 +1086,7 @@ body {
 
 .config-device-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
   gap: 12px;
   margin-bottom: 14px;
 }
@@ -1113,6 +1113,179 @@ body {
   color: var(--ops-text);
   font-size: 24px;
   line-height: 1;
+}
+
+.config-template-bar,
+.config-device-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  border: 1px solid var(--ops-line-soft);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: #fff;
+  box-shadow: var(--ops-shadow);
+}
+
+.config-template-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  flex: 1;
+}
+
+.config-template-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 260px;
+}
+
+.config-template-title .anticon {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.config-template-title strong,
+.config-device-toolbar strong {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 15px;
+}
+
+.config-template-title span,
+.config-device-toolbar span {
+  display: block;
+  color: var(--ops-muted);
+  font-size: 12px;
+}
+
+.config-template-select {
+  width: min(420px, 100%);
+}
+
+.config-template-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.config-device-toolbar .ant-input-affix-wrapper {
+  width: min(360px, 100%);
+}
+
+.config-device-form-list {
+  display: grid;
+  gap: 14px;
+}
+
+.config-phone-form-panel {
+  overflow: hidden;
+  border: 1px solid var(--ops-line-soft);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--ops-shadow);
+}
+
+.config-phone-form-panel.dirty {
+  border-color: #facc15;
+}
+
+.config-phone-form-head {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--ops-line-soft);
+  background: #fbfdff;
+}
+
+.config-phone-check,
+.config-phone-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.config-phone-check h2 {
+  margin: 0 0 3px;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.config-phone-check p {
+  margin: 0;
+  color: var(--ops-muted);
+  font-size: 12px;
+}
+
+.config-phone-head-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.config-phone-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 10px;
+  padding: 14px 16px 0;
+}
+
+.config-phone-meta > div {
+  min-height: 58px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.config-phone-meta span {
+  display: block;
+  color: var(--ops-muted);
+  font-size: 12px;
+}
+
+.config-phone-meta strong {
+  display: block;
+  min-width: 0;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.config-phone-form-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 14px 16px 16px;
+}
+
+.config-phone-form-body .config-form-section {
+  min-width: 0;
+}
+
+.config-phone-form-body .config-form-grid {
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+}
+
+.config-phone-form-body .config-form-grid.textareas {
+  grid-template-columns: 1fr;
 }
 
 .config-device-layout {
@@ -1247,6 +1420,19 @@ body {
   margin: 0 0 4px;
   font-size: 18px;
   line-height: 1.25;
+}
+
+.config-form-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 4px;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.config-form-header h3 .anticon {
+  color: #2563eb;
 }
 
 .config-form-header p {
@@ -1492,6 +1678,16 @@ body {
   margin-bottom: 12px;
 }
 
+@media (max-width: 1280px) {
+  .config-phone-form-body {
+    grid-template-columns: 1fr;
+  }
+
+  .config-phone-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 720px) {
   .app-shell {
     display: block;
@@ -1584,10 +1780,44 @@ body {
 
   .config-device-summary,
   .config-device-layout,
+  .config-template-bar,
+  .config-template-main,
+  .config-device-toolbar,
+  .config-phone-form-head,
+  .config-phone-meta,
   .config-device-meta,
   .config-form-grid,
+  .config-phone-form-body .config-form-grid,
   .config-form-grid.textareas {
     grid-template-columns: 1fr;
+  }
+
+  .config-template-bar,
+  .config-template-main,
+  .config-device-toolbar,
+  .config-phone-form-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .config-template-title {
+    min-width: 0;
+  }
+
+  .config-template-select,
+  .config-device-toolbar .ant-input-affix-wrapper {
+    width: 100%;
+  }
+
+  .config-template-actions,
+  .config-phone-head-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .config-template-actions .ant-btn,
+  .config-phone-head-actions .ant-btn {
+    flex: 1 1 140px;
   }
 
   .config-device-list {
