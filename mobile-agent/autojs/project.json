@@ -16,6 +16,16 @@
   "scripts": {},
   "optimization": {
     "removeOpenCv": true,
+    "removeMediaInfo": true,
+    "removeBarcodeScanner": true,
+    "removePngQuant": true,
+    "removeTerminalNative": true,
+    "removeOpenCc": true,
+    "removeJiebaAssets": true,
+    "removePinyinData": true,
+    "removeAndroidDevicesDb": true,
+    "excludeTests": true,
+    "enableMinify": false,
     "unusedResources": true
   }
 }

@@ -5,6 +5,7 @@ param(
   [string]$KeystorePath = "D:\DevTools\Android\Keystores\agri-video-collector-dev.jks",
   [string]$OutputDir = "dist\apk",
   [string[]]$NativeAbis = @("arm64-v8a"),
+  [switch]$EnableMinify,
   [switch]$SkipBuild
 )
 
@@ -36,6 +37,30 @@ $appName = if ($sourceConfig.name) { [string]$sourceConfig.name } else { "AgriVi
 $packageName = if ($sourceConfig.packageName) { [string]$sourceConfig.packageName } else { "com.agri.video.collector" }
 $versionName = [string]$sourceConfig.versionName
 $versionCode = [int]$sourceConfig.versionCode
+$optimizationConfig = $sourceConfig.optimization
+
+function Get-ConfigBoolean([object]$Value, [string]$Name, [bool]$DefaultValue) {
+  if ($null -eq $Value) {
+    return $DefaultValue
+  }
+  $property = $Value.PSObject.Properties[$Name]
+  if ($null -eq $property -or $null -eq $property.Value) {
+    return $DefaultValue
+  }
+  return [System.Convert]::ToBoolean($property.Value)
+}
+
+$excludeTests = Get-ConfigBoolean -Value $optimizationConfig -Name "excludeTests" -DefaultValue $true
+$removeOpenCv = Get-ConfigBoolean -Value $optimizationConfig -Name "removeOpenCv" -DefaultValue $false
+$removeMediaInfo = Get-ConfigBoolean -Value $optimizationConfig -Name "removeMediaInfo" -DefaultValue $false
+$removeBarcodeScanner = Get-ConfigBoolean -Value $optimizationConfig -Name "removeBarcodeScanner" -DefaultValue $false
+$removePngQuant = Get-ConfigBoolean -Value $optimizationConfig -Name "removePngQuant" -DefaultValue $false
+$removeTerminalNative = Get-ConfigBoolean -Value $optimizationConfig -Name "removeTerminalNative" -DefaultValue $false
+$removeOpenCc = Get-ConfigBoolean -Value $optimizationConfig -Name "removeOpenCc" -DefaultValue $false
+$removeJiebaAssets = Get-ConfigBoolean -Value $optimizationConfig -Name "removeJiebaAssets" -DefaultValue $false
+$removePinyinData = Get-ConfigBoolean -Value $optimizationConfig -Name "removePinyinData" -DefaultValue $false
+$removeAndroidDevicesDb = Get-ConfigBoolean -Value $optimizationConfig -Name "removeAndroidDevicesDb" -DefaultValue $false
+$enableMinify = $EnableMinify.IsPresent -or (Get-ConfigBoolean -Value $optimizationConfig -Name "enableMinify" -DefaultValue $false)
 
 function Assert-LastCommandSucceeded([string]$message) {
   if ($LASTEXITCODE -ne 0) {
@@ -48,7 +73,7 @@ function Write-Utf8NoBom([string]$Path, [string]$Value) {
   [System.IO.File]::WriteAllText($Path, $Value, $encoding)
 }
 
-function Add-NativeLibrariesToApk([string]$ApkPath, [string]$NativeLibRoot, [string[]]$Abis) {
+function Add-NativeLibrariesToApk([string]$ApkPath, [string]$NativeLibRoot, [string[]]$Abis, [string[]]$ExcludedNames) {
   if (-not (Test-Path $NativeLibRoot)) {
     Write-Host "Native lib root not found, skip injection: $NativeLibRoot"
     return
@@ -58,14 +83,22 @@ function Add-NativeLibrariesToApk([string]$ApkPath, [string]$NativeLibRoot, [str
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   $apkArchive = [System.IO.Compression.ZipFile]::Open($ApkPath, [System.IO.Compression.ZipArchiveMode]::Update)
   try {
-    $nativeFiles = foreach ($abi in $Abis) {
+    $allNativeFiles = @(foreach ($abi in $Abis) {
       $abiRoot = Join-Path $NativeLibRoot $abi
       if (Test-Path $abiRoot) {
         Get-ChildItem -LiteralPath $abiRoot -Recurse -Filter "*.so" -File
       } else {
         Write-Host "Native ABI not found, skip: $abiRoot"
       }
+    })
+    $excludedNameSet = @{}
+    foreach ($name in @($ExcludedNames)) {
+      if ($name) {
+        $excludedNameSet[$name] = $true
+      }
     }
+    $nativeFiles = @($allNativeFiles | Where-Object { -not $excludedNameSet.ContainsKey($_.Name) })
+    $skippedNativeFiles = @($allNativeFiles | Where-Object { $excludedNameSet.ContainsKey($_.Name) })
     foreach ($nativeFile in $nativeFiles) {
       $relativePath = $nativeFile.FullName.Substring($NativeLibRoot.Length).TrimStart("\", "/")
       $entryName = ("lib\" + $relativePath).Replace("\", "/")
@@ -84,6 +117,88 @@ function Add-NativeLibrariesToApk([string]$ApkPath, [string]$NativeLibRoot, [str
     Write-Host "  Source: $NativeLibRoot"
     Write-Host "  ABIs: $($Abis -join ', ')"
     Write-Host "  Count: $($nativeFiles.Count)"
+    if ($skippedNativeFiles.Count -gt 0) {
+      $skippedSize = ($skippedNativeFiles | Measure-Object -Property Length -Sum).Sum
+      Write-Host "Native libraries skipped by optimization:"
+      Write-Host "  Count: $($skippedNativeFiles.Count)"
+      Write-Host "  SizeMB: $([math]::Round($skippedSize / 1MB, 2))"
+      Write-Host "  Names: $((($skippedNativeFiles | Select-Object -ExpandProperty Name -Unique) -join ', '))"
+    }
+  } finally {
+    $apkArchive.Dispose()
+  }
+}
+
+function Test-ApkEntryShouldRemove([string]$EntryName, [string[]]$ExactNames, [string[]]$Prefixes) {
+  foreach ($name in @($ExactNames)) {
+    if ($EntryName -eq $name) {
+      return $true
+    }
+  }
+  foreach ($prefix in @($Prefixes)) {
+    if ($EntryName.StartsWith($prefix, [System.StringComparison]::Ordinal)) {
+      return $true
+    }
+  }
+  return $false
+}
+
+function Remove-ApkEntries([string]$ApkPath, [string[]]$ExactNames, [string[]]$Prefixes) {
+  $exactCount = @($ExactNames).Count
+  $prefixCount = @($Prefixes).Count
+  if (($exactCount + $prefixCount) -eq 0) {
+    return
+  }
+  Add-Type -AssemblyName System.IO.Compression
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $apkArchive = [System.IO.Compression.ZipFile]::Open($ApkPath, [System.IO.Compression.ZipArchiveMode]::Update)
+  try {
+    $entries = @($apkArchive.Entries | Where-Object { Test-ApkEntryShouldRemove -EntryName $_.FullName -ExactNames $ExactNames -Prefixes $Prefixes })
+    if ($entries.Count -eq 0) {
+      Write-Host "No APK entries matched optimization removal rules."
+      return
+    }
+    $compressedBytes = ($entries | Measure-Object -Property CompressedLength -Sum).Sum
+    $rawBytes = ($entries | Measure-Object -Property Length -Sum).Sum
+    foreach ($entry in $entries) {
+      $entry.Delete()
+    }
+    Write-Host "APK assets removed by optimization:"
+    Write-Host "  Count: $($entries.Count)"
+    Write-Host "  CompressedMB: $([math]::Round($compressedBytes / 1MB, 2))"
+    Write-Host "  RawMB: $([math]::Round($rawBytes / 1MB, 2))"
+  } finally {
+    $apkArchive.Dispose()
+  }
+}
+
+function Write-ApkSizeBreakdown([string]$ApkPath) {
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $apkArchive = [System.IO.Compression.ZipFile]::OpenRead($ApkPath)
+  try {
+    $entries = $apkArchive.Entries | ForEach-Object {
+      $top = ($_.FullName -split "/")[0]
+      [pscustomobject]@{
+        Top = $top
+        Compressed = $_.CompressedLength
+        Size = $_.Length
+      }
+    }
+    Write-Host "APK size breakdown:"
+    Write-Host "  FileMB: $([math]::Round((Get-Item -LiteralPath $ApkPath).Length / 1MB, 2))"
+    $entries |
+      Group-Object Top |
+      ForEach-Object {
+        [pscustomobject]@{
+          Group = $_.Name
+          Count = $_.Count
+          CompressedMB = [math]::Round((($_.Group | Measure-Object -Property Compressed -Sum).Sum) / 1MB, 2)
+          RawMB = [math]::Round((($_.Group | Measure-Object -Property Size -Sum).Sum) / 1MB, 2)
+        }
+      } |
+      Sort-Object CompressedMB -Descending |
+      Select-Object -First 10 |
+      Format-Table -AutoSize
   } finally {
     $apkArchive.Dispose()
   }
@@ -446,6 +561,13 @@ $gradleText = [regex]::Replace(
   '(?m)^(\s*)excludes \+= "\*"\s*$',
   '${1}// Native libraries are required by the embedded AutoJs6 runtime.'
 )
+$releaseMinifyValue = if ($enableMinify) { "true" } else { "false" }
+$gradleText = [regex]::Replace(
+  $gradleText,
+  '(?s)(release\s*\{.*?isMinifyEnabled\s*=\s*)(true|false)',
+  '${1}' + $releaseMinifyValue,
+  1
+)
 Set-Content -Path $gradleBuildPath -Value $gradleText -Encoding UTF8
 
 New-Item -ItemType Directory -Force -Path $targetProject | Out-Null
@@ -453,6 +575,9 @@ New-Item -ItemType Directory -Force -Path $targetProject | Out-Null
 Get-ChildItem -LiteralPath $targetProject -Force | Remove-Item -Recurse -Force
 
 $excludedDirs = @("datasource", "build", ".git", ".idea", "node_modules")
+if ($excludeTests) {
+  $excludedDirs += "tests"
+}
 Get-ChildItem -LiteralPath $projectSource -Force | ForEach-Object {
   if ($excludedDirs -contains $_.Name) {
     return
@@ -563,7 +688,53 @@ $alignedDest = Join-Path $outputPath ($appName + "-" + $versionName + "-inrt-ali
 $dest = Join-Path $outputPath ($appName + "-" + $versionName + "-inrt.apk")
 Copy-Item -LiteralPath $apk.FullName -Destination $unsignedDest -Force
 $nativeLibRoot = Join-Path $AutoJs6Root "app\build\intermediates\merged_native_libs\inrtRelease\mergeInrtReleaseNativeLibs\out\lib"
-Add-NativeLibrariesToApk -ApkPath $unsignedDest -NativeLibRoot $nativeLibRoot -Abis $NativeAbis
+$excludedNativeNames = @()
+if ($removeOpenCv) {
+  $excludedNativeNames += "libopencv_java4.so"
+}
+if ($removeMediaInfo) {
+  $excludedNativeNames += "libmediainfo.so"
+}
+if ($removeBarcodeScanner) {
+  $excludedNativeNames += "libbarhopper_v3.so"
+}
+if ($removePngQuant) {
+  $excludedNativeNames += "libpngquant_bridge.so"
+}
+if ($removeTerminalNative) {
+  $excludedNativeNames += "libjackpal-termexec2.so"
+  $excludedNativeNames += "libjackpal-androidterm5.so"
+}
+if ($removeOpenCc) {
+  $excludedNativeNames += "libChineseConverter.so"
+}
+Add-NativeLibrariesToApk -ApkPath $unsignedDest -NativeLibRoot $nativeLibRoot -Abis $NativeAbis -ExcludedNames $excludedNativeNames
+
+$removeExactEntries = @()
+$removeEntryPrefixes = @()
+if ($excludeTests) {
+  $removeEntryPrefixes += "assets/project/tests/"
+}
+if ($removeBarcodeScanner) {
+  $removeEntryPrefixes += "assets/mlkit_barcode_models/"
+  $removeExactEntries += "barcode-scanning-common.properties"
+  $removeExactEntries += "barcode-scanning.properties"
+  $removeExactEntries += "play-services-mlkit-barcode-scanning.properties"
+}
+if ($removeOpenCc) {
+  $removeEntryPrefixes += "assets/openccdata/"
+}
+if ($removeJiebaAssets) {
+  $removeEntryPrefixes += "assets/dict-chinese-"
+  $removeExactEntries += "assets/prob_emit.txt"
+}
+if ($removePinyinData) {
+  $removeEntryPrefixes += "pinyindb/"
+}
+if ($removeAndroidDevicesDb) {
+  $removeExactEntries += "assets/android-devices.db"
+}
+Remove-ApkEntries -ApkPath $unsignedDest -ExactNames $removeExactEntries -Prefixes $removeEntryPrefixes
 
 $keystoreDir = Split-Path $KeystorePath
 New-Item -ItemType Directory -Force -Path $keystoreDir | Out-Null
@@ -609,3 +780,4 @@ Remove-Item -LiteralPath "$dest.idsig" -Force -ErrorAction SilentlyContinue
 Write-Host "APK packaged:"
 Write-Host "  APK: $dest"
 Write-Host "  SHA256: $sha256"
+Write-ApkSizeBreakdown -ApkPath $dest

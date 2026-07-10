@@ -22,6 +22,19 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
   throw "Version is required and project.json versionName is empty."
 }
 
+function Get-ConfigBoolean([object]$Value, [string]$Name, [bool]$DefaultValue) {
+  if ($null -eq $Value) {
+    return $DefaultValue
+  }
+  $property = $Value.PSObject.Properties[$Name]
+  if ($null -eq $property -or $null -eq $property.Value) {
+    return $DefaultValue
+  }
+  return [System.Convert]::ToBoolean($property.Value)
+}
+
+$excludeTests = Get-ConfigBoolean -Value $projectConfig.optimization -Name "excludeTests" -DefaultValue $true
+
 $zipPath = Join-Path $distDir ("AgriVideoCollector-autojs-" + $Version + ".zip")
 $shaPath = $zipPath + ".sha256"
 $manifestPath = Join-Path $distDir ("AgriVideoCollector-autojs-" + $Version + ".json")
@@ -39,6 +52,9 @@ $excludeNames = @(
   "node_modules",
   "datasource"
 )
+if ($excludeTests) {
+  $excludeNames += "tests"
+}
 
 Get-ChildItem -Path $sourceDir -Force | ForEach-Object {
   if ($excludeNames -contains $_.Name) {
