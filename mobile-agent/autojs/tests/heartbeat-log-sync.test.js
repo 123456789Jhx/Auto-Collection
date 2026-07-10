@@ -79,6 +79,22 @@ function testHeartbeatAutoUploadsCurrentLogWithThrottle() {
   assert.strictEqual(fixture.uploadedLogs[0], "current.log");
 }
 
+function testCommerceCardImmediateHeartbeatUsesLiveSceneType() {
+  var fixture = createContext();
+  fixture.context.counters.currentPhase = "commerce_card_live_comment";
+  fixture.context.taskScheduler.getActiveTaskType = function () {
+    return "commerce_card_live_comment";
+  };
+  var service = createHeartbeatService(fixture.context);
+
+  service.reportImmediateHeartbeat("commerce_card_live_comment", "running", "商品卡直播第 1/3 轮");
+
+  assert.strictEqual(fixture.uploadedHeartbeats.length, 1);
+  assert.strictEqual(fixture.uploadedHeartbeats[0].sceneType, "live");
+  assert.strictEqual(fixture.uploadedHeartbeats[0].currentTaskType, "commerce_card_live_comment");
+}
+
 testHeartbeatAutoUploadsCurrentLogWithThrottle();
+testCommerceCardImmediateHeartbeatUsesLiveSceneType();
 
 console.log("heartbeat-log-sync tests passed");

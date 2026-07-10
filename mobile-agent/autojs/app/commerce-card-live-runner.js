@@ -354,6 +354,101 @@ function createCommerceCardLiveRunner(context) {
     });
   }
 
+  function pickTargetLiveKeyword(targetRoom, fallbackKeyword) {
+    targetRoom = targetRoom || {};
+    var searchKeywords = normalizeList(targetRoom.searchKeywords, []);
+    if (searchKeywords.length) {
+      return searchKeywords[0];
+    }
+    var targetName = String(targetRoom.targetName || "").replace(/\s+/g, " ").trim();
+    if (targetName) {
+      return targetName;
+    }
+    var matchKeywords = normalizeList(targetRoom.matchKeywords, []);
+    if (matchKeywords.length) {
+      return matchKeywords[0];
+    }
+    return String(fallbackKeyword || "").replace(/\s+/g, " ").trim();
+  }
+
+  function normalizeTargetLiveResult(result, fallback) {
+    result = result || {};
+    fallback = fallback || {};
+    return {
+      success: true,
+      reason: result.reason || "target_live_room_found",
+      source: result.source || "target_live_search",
+      keyword: result.keyword || fallback.keyword || "",
+      roomName: result.roomName || result.targetName || "",
+      anchorName: result.anchorName || "",
+      matchedKeywords: result.matchedKeywords || result.targetKeywords || fallback.matchedKeywords || [],
+      textSample: result.textSample || fallback.textSample || "",
+      browseResult: fallback.browseResult || {}
+    };
+  }
+
+  function browseCardsThenOpenTargetLive(searchKeyword, matchKeywords, liveSignals, cfg, scanMinutes) {
+    var targetRoom = cfg.targetRoom || {};
+    var cardCount = Math.max(1, pickNumber(cfg.cardCount, pickNumber(cfg.browseCardCount, 4)));
+    var browseResult = douyin.browseCommerceCards({
+      searchKeyword: searchKeyword,
+      matchKeywords: matchKeywords,
+      liveSignals: liveSignals,
+      targetRoom: targetRoom,
+      scanMinutes: scanMinutes,
+      cardCount: cardCount,
+      shouldStop: shouldStop
+    }) || {};
+    if (!browseResult.success) {
+      return browseResult;
+    }
+    if (shouldStop()) {
+      return {
+        success: false,
+        reason: counters.lastStopReason || "manual_stop",
+        browseResult: browseResult
+      };
+    }
+    var targetKeyword = pickTargetLiveKeyword(targetRoom, searchKeyword);
+    report("INFO", "commerce card browsing finished, start target live search", {
+      phase: "commerce_card_target_live_search",
+      searchKeyword: searchKeyword,
+      targetKeyword: targetKeyword,
+      browsedCount: browseResult.browsedCount || 0,
+      targetRoomName: targetRoom.targetName || ""
+    });
+    if (!douyin.openTargetLiveRoomFromSearch) {
+      return {
+        success: false,
+        reason: "target_live_adapter_missing",
+        browseResult: browseResult
+      };
+    }
+    var entered = douyin.openTargetLiveRoomFromSearch({
+      keyword: targetKeyword,
+      targetRoom: targetRoom,
+      shouldStop: shouldStop
+    });
+    var targetResult = douyin.getLastTargetLiveSearchResult ? douyin.getLastTargetLiveSearchResult() || {} : {};
+    if (!entered) {
+      return {
+        success: false,
+        reason: targetResult.reason || "target_live_room_not_found",
+        keyword: targetKeyword,
+        matchedKeywords: targetResult.matchedKeywords || targetResult.targetKeywords || [],
+        textSample: targetResult.textSample || browseResult.textSample || "",
+        browseResult: browseResult,
+        targetResult: targetResult
+      };
+    }
+    return normalizeTargetLiveResult(targetResult, {
+      keyword: targetKeyword,
+      matchedKeywords: matchKeywords,
+      textSample: browseResult.textSample || "",
+      browseResult: browseResult
+    });
+  }
+
   function runCommerceCardLiveCommentTask(options) {
     options = options || {};
     var cfg = taskConfig();
@@ -385,7 +480,7 @@ function createCommerceCardLiveRunner(context) {
       maxRounds: maxRounds
     });
 
-    if (!douyin.openMatchingCommerceLiveFromCards) {
+    if (!douyin.browseCommerceCards && !douyin.openMatchingCommerceLiveFromCards) {
       return finishFailure("commerce_live_adapter_missing", "commerce_card_live_start", "");
     }
     if (shouldStop()) {
@@ -413,14 +508,19 @@ function createCommerceCardLiveRunner(context) {
         scanMinutes: scanMinutes
       });
 
-      var searchResult = douyin.openMatchingCommerceLiveFromCards({
-        searchKeyword: searchKeyword,
-        matchKeywords: matchKeywords,
-        liveSignals: liveSignals,
-        targetRoom: cfg.targetRoom,
-        scanMinutes: scanMinutes,
-        shouldStop: shouldStop
-      }) || {};
+      var searchResult;
+      if (douyin.browseCommerceCards && douyin.openTargetLiveRoomFromSearch) {
+        searchResult = browseCardsThenOpenTargetLive(searchKeyword, matchKeywords, liveSignals, cfg, scanMinutes);
+      } else {
+        searchResult = douyin.openMatchingCommerceLiveFromCards({
+          searchKeyword: searchKeyword,
+          matchKeywords: matchKeywords,
+          liveSignals: liveSignals,
+          targetRoom: cfg.targetRoom,
+          scanMinutes: scanMinutes,
+          shouldStop: shouldStop
+        }) || {};
+      }
 
       if (shouldStop()) {
         return finishFailure(counters.lastStopReason || "manual_stop", "commerce_card_scan", readVisibleText());

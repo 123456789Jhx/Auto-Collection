@@ -1462,6 +1462,111 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     };
   }
 
+  function browseCommerceCards(options) {
+    options = options || {};
+    var startedAt = Date.now();
+    var searchKeyword = String(options.searchKeyword || "").replace(/\s+/g, " ").trim();
+    var matchKeywords = options.matchKeywords || [];
+    var liveSignals = options.liveSignals || [];
+    var targetRoom = options.targetRoom || {};
+    var scanMinutes = Math.max(1, Number(options.scanMinutes || 15));
+    var cardCount = Math.max(1, Number(options.cardCount || 4));
+    if (!searchKeyword) {
+      return {
+        success: false,
+        reason: "commerce_search_keyword_empty"
+      };
+    }
+    function isInterrupted(source) {
+      if (!options.shouldStop || !options.shouldStop()) {
+        return false;
+      }
+      logger.warn("commerce card browsing interrupted by control command", {
+        source: source || "",
+        searchKeyword: searchKeyword
+      });
+      return true;
+    }
+    if (!openCommerceCardSearch(searchKeyword)) {
+      return {
+        success: false,
+        reason: lastSearchFailureReason || "commerce_search_failed",
+        elapsedMs: Date.now() - startedAt
+      };
+    }
+    var endAt = Date.now() + scanMinutes * 60 * 1000;
+    var attempt = 0;
+    var browsedCount = 0;
+    var lastTextSample = "";
+    while (Date.now() < endAt && browsedCount < cardCount) {
+      attempt += 1;
+      if (isInterrupted("commerce_browse_attempt_" + attempt)) {
+        return {
+          success: false,
+          reason: "manual_pause",
+          elapsedMs: Date.now() - startedAt,
+          attempt: attempt,
+          browsedCount: browsedCount
+        };
+      }
+      var visibleText = extractVisibleText();
+      lastTextSample = visibleText.slice(0, 220);
+      var keywordMatched = hasTargetTextMatch(visibleText, matchKeywords, targetRoom);
+      logger.info("commerce card browsing page", {
+        attempt: attempt,
+        browsedCount: browsedCount,
+        targetCount: cardCount,
+        keywordMatched: keywordMatched,
+        textSample: visibleText.slice(0, 180)
+      });
+      if (keywordMatched && clickCommerceKeywordCard(matchKeywords)) {
+        browsedCount += 1;
+        var detailText = extractVisibleText();
+        lastTextSample = detailText.slice(0, 220);
+        logger.info("commerce card detail browsed", {
+          attempt: attempt,
+          browsedCount: browsedCount,
+          targetCount: cardCount,
+          hasLiveSignal: hasAnyTextKeyword(detailText, liveSignals),
+          textSample: detailText.slice(0, 180)
+        });
+        if (hasAnyTextKeyword(detailText, liveSignals) && openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals, targetRoom)) {
+          autojsUtils.sleepRandom(1800, 2600);
+          if (isLiveRoomVisible()) {
+            exitLiveRoom();
+          } else {
+            back();
+            autojsUtils.sleepRandom(700, 1100);
+          }
+        } else {
+          back();
+          autojsUtils.sleepRandom(700, 1100);
+        }
+      }
+      if (isInterrupted("commerce_browse_before_swipe_" + attempt)) {
+        return {
+          success: false,
+          reason: "manual_pause",
+          elapsedMs: Date.now() - startedAt,
+          attempt: attempt,
+          browsedCount: browsedCount
+        };
+      }
+      if (browsedCount < cardCount) {
+        swipeSearchResultsUp();
+      }
+    }
+    return {
+      success: browsedCount > 0,
+      reason: browsedCount > 0 ? "commerce_cards_browsed" : "commerce_card_not_found",
+      elapsedMs: Date.now() - startedAt,
+      attempts: attempt,
+      browsedCount: browsedCount,
+      matchedKeywords: matchKeywords,
+      textSample: lastTextSample
+    };
+  }
+
   function setTargetLiveSearchResult(reason, extra) {
     lastTargetLiveSearchResult = {
       reason: reason || "",
@@ -3919,6 +4024,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     openLiveSearch: openLiveSearch,
     enterMall: enterMall,
     openCommerceCardSearch: openCommerceCardSearch,
+    browseCommerceCards: browseCommerceCards,
     openMatchingCommerceLiveFromCards: openMatchingCommerceLiveFromCards,
     openTargetLiveRoomFromSearch: openTargetLiveRoomFromSearch,
     getLastTargetLiveSearchResult: getLastTargetLiveSearchResult,

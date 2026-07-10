@@ -20,6 +20,14 @@ function createHeartbeatService(context) {
     return context.taskScheduler && context.taskScheduler.getActiveTaskType ? context.taskScheduler.getActiveTaskType() : "";
   }
 
+  function normalizeHeartbeatSceneType(sceneType) {
+    var value = String(sceneType || "");
+    if (value === "commerce_card_live_comment" || value === "live_comment") {
+      return "live";
+    }
+    return value === "video" || value === "live" ? value : "";
+  }
+
   function accountRefreshIntervalMs() {
     return Math.max(10 * 60 * 1000, Number(config.runtime.douyinAccountNameRefreshMinutes || 360) * 60 * 1000);
   }
@@ -121,18 +129,19 @@ function createHeartbeatService(context) {
       return;
     }
     heartbeat.lastAt = now;
+    var uploadSceneType = normalizeHeartbeatSceneType(sceneType);
     var elapsedMinutes = Math.round((now - startMs) / 60000);
     var remainingMinutes = Math.max(0, Math.round((endAt - now) / 60000));
-    if (sceneType === "video") {
+    if (uploadSceneType === "video") {
       counters.videoElapsedMinutes = elapsedMinutes;
       counters.videoRemainingMinutes = remainingMinutes;
     }
-    if (sceneType === "live") {
+    if (uploadSceneType === "live") {
       counters.liveElapsedMinutes = elapsedMinutes;
       counters.liveRemainingMinutes = remainingMinutes;
     }
     var payload = {
-      sceneType: sceneType,
+      sceneType: uploadSceneType,
       elapsedMinutes: elapsedMinutes,
       remainingMinutes: remainingMinutes,
       expectedEndAt: new Date(endAt).toISOString(),
@@ -166,8 +175,9 @@ function createHeartbeatService(context) {
     var heartbeatStatus = status || (floatyControl.state.paused ? "paused" : "running");
     var isActiveTask = heartbeatStatus === "running";
     var startedAt = isActiveTask && counters.phaseStartedAt ? new Date(counters.phaseStartedAt).getTime() : 0;
+    var activeSceneType = isActiveTask ? normalizeHeartbeatSceneType(sceneType || counters.currentPhase || "") : "";
     var payload = {
-      sceneType: isActiveTask ? sceneType || counters.currentPhase || "" : "",
+      sceneType: activeSceneType,
       elapsedMinutes: isActiveTask && startedAt && !isNaN(startedAt) ? Math.max(0, Math.round((Date.now() - startedAt) / 60000)) : 0,
       remainingMinutes: null,
       expectedEndAt: null,

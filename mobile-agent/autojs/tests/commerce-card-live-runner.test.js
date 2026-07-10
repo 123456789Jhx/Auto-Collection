@@ -218,6 +218,51 @@ function testCommerceCardLiveStopsGracefullyWhenNoMatchInRound() {
   assert.strictEqual(context.counters.lastStopReason, "commerce_live_not_found");
 }
 
+function testCommerceCardLiveBrowsesProductCardsBeforeTargetLiveSearch() {
+  var context = createContext();
+  var callOrder = [];
+  context.config.task.commerceCardLiveComment.maxRounds = 1;
+  context.config.task.commerceCardLiveComment.watchMinutesPerLive = 0;
+  context.config.task.commerceCardLiveComment.searchKeywords = ["orange"];
+  context.config.task.commerceCardLiveComment.matchKeywords = ["orange", "product"];
+  context.config.task.commerceCardLiveComment.targetRoom = {
+    enabled: true,
+    targetName: "target-room",
+    searchKeywords: ["target-live-keyword"],
+    matchKeywords: ["target-room"]
+  };
+  context.douyin.browseCommerceCards = function (options) {
+    callOrder.push({ type: "browse_cards", options: options });
+    return { success: true, reason: "commerce_cards_browsed", browsedCount: 4 };
+  };
+  context.douyin.openTargetLiveRoomFromSearch = function (options) {
+    callOrder.push({ type: "target_live_search", options: options });
+    return true;
+  };
+  context.douyin.getLastTargetLiveSearchResult = function () {
+    return {
+      reason: "room_verified",
+      roomName: "target-room",
+      matchedKeywords: ["target-room"],
+      textSample: "target-room live"
+    };
+  };
+  context.douyin.openMatchingCommerceLiveFromCards = function (options) {
+    callOrder.push({ type: "legacy_matching", options: options });
+    return { success: true, reason: "commerce_live_entry_found", matchedKeywords: ["orange"], textSample: "legacy live" };
+  };
+  var runner = createCommerceCardLiveRunner(context);
+
+  var result = runner.runCommerceCardLiveCommentTask();
+
+  assert.strictEqual(result.success, true);
+  assert.deepStrictEqual(callOrder.map(function (entry) { return entry.type; }), ["browse_cards", "target_live_search"]);
+  assert.strictEqual(callOrder[0].options.searchKeyword, "orange");
+  assert.strictEqual(callOrder[0].options.cardCount, 4);
+  assert.strictEqual(callOrder[1].options.keyword, "target-live-keyword");
+  assert.strictEqual(callOrder[1].options.targetRoom.targetName, "target-room");
+}
+
 function testCommerceCardLiveStopsAfterLaterNoMatchWithoutThirdRound() {
   withFakeClock(function (sleeps) {
     var context = createContext();
@@ -367,13 +412,28 @@ function testCollectorKeepsCommerceLiveSeparateFromOrdinaryLivePhase() {
   assert(commerceBranchIndex < liveBranchIndex, "commerce-card live comment branch should be handled before ordinary live");
 }
 
+function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
+  var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin.js"), "utf8");
+  var start = source.indexOf("function browseCommerceCards(options)");
+  var end = source.indexOf("function setTargetLiveSearchResult", start);
+  var body = source.slice(start, end);
+
+  assert(start >= 0 && end > start, "douyin adapter must expose a product-card browsing phase");
+  assert(body.indexOf("openCommerceCardSearch(searchKeyword)") >= 0, "browse phase must start from mall product-card search");
+  assert(body.indexOf("clickCommerceKeywordCard(matchKeywords)") >= 0, "browse phase must open matching product cards");
+  assert.strictEqual(body.indexOf("openTargetLiveRoomFromSearch"), -1, "target live room search must stay outside the card browsing phase");
+  assert(source.indexOf("browseCommerceCards: browseCommerceCards") >= 0, "douyin adapter must export browseCommerceCards");
+}
+
 testCommerceCardLiveRunsThreeMatchedRounds();
 testCommerceCardLiveStopsGracefullyWhenNoMatchInRound();
+testCommerceCardLiveBrowsesProductCardsBeforeTargetLiveSearch();
 testCommerceCardLiveStopsAfterLaterNoMatchWithoutThirdRound();
 testCommerceCardLiveUsesLiveTargetsBeforeLegacyCommerceConfig();
 testCommerceCardLivePauseStopsBeforeScanning();
 testCommerceCardLiveIsDisabledByDefault();
 testCommerceCardLiveRequiresExplicitSendApproval();
 testCollectorKeepsCommerceLiveSeparateFromOrdinaryLivePhase();
+testDouyinProvidesDedicatedCommerceCardBrowseAdapter();
 
 console.log("commerce-card-live-runner tests passed");
