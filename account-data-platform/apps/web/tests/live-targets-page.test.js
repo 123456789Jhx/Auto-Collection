@@ -48,6 +48,8 @@ test("配置页恢复公共模板原有表单口径", () => {
   assert(/直播聊天机器人配置/.test(tasksSource), "modal title should be restored from public template wording");
   assert(/模板配置会作为所有设备默认值/.test(tasksSource), "alert title should restore default-template wording");
   assert(/设备级配置可以覆盖模板/.test(tasksSource), "alert description should restore device override wording");
+  assert(/Segmented/.test(tasksSource), "config page should switch between templates and live targets");
+  assert(/LiveTargetsPage/.test(tasksSource), "config page should embed live target management without restoring a sidebar route");
 });
 
 test("API client exposes live-targets admin operations", () => {
@@ -58,14 +60,22 @@ test("API client exposes live-targets admin operations", () => {
   assert(/\/admin\/live-targets/.test(apiClientSource), "api client should call /admin/live-targets");
 });
 
-test("直播目标配置页面管理目标名、别名和两类功能配置", () => {
+test("直播目标配置页面管理目标、三阶段组合和默认关闭门禁", () => {
   assert(fs.existsSync(liveTargetsPagePath), "LiveTargetsPage.tsx should exist");
   const source = fs.readFileSync(liveTargetsPagePath, "utf8");
   assert(/目标直播间/.test(source), "page should display target live room wording");
   assert(/直播间别名/.test(source), "page should manage aliases");
   assert(/搜索直播评论/.test(source), "page should manage search live comment config");
-  assert(/商品卡直播评论/.test(source), "page should manage commerce-card live comment config");
+  assert(/商品卡组合任务/.test(source), "page should manage the commerce-card workflow");
   assert(/相似度阈值/.test(source), "page should expose similarity threshold");
+  assert(/商品卡养号/.test(source), "page should expose the product nurture stage");
+  assert(/目标直播评论/.test(source), "page should expose the target comment stage");
+  assert(/直播养号2/.test(source), "page should expose the second live nurture stage");
+  assert(/executeEnabled/.test(source), "page should keep the realtime execute switch explicit");
+  assert(/getCommerceCardFeaturePreview/.test(source), "page should load a server-generated V2 preview");
+  assert(/getFeatureRolloutControls/.test(source), "page should show persisted rollout controls");
+  assert(/activationReady/.test(source), "stage A should keep unsafe activation disabled");
+  assert(/expectedRevision/.test(source), "saves should use optimistic configuration revision checks");
 });
 
 test("automation helper scripts cover submit deploy and USB apk install", () => {

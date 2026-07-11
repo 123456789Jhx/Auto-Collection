@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Collapse, Form, Input, InputNumber, Modal, Select, Skeleton, Space, Switch, message } from "antd";
+import { Alert, Collapse, Form, Input, InputNumber, Modal, Segmented, Select, Skeleton, Space, Switch, message } from "antd";
 import { useState } from "react";
 import { getTasks, updateTask } from "../lib/api-client";
 import { defaultLiveCommentBotConfig, parseLiveCommentConfig, parseP3ExtensionsConfig, stringifyLiveCommentConfig, stringifyP3ExtensionsConfig } from "../lib/live-comment-config";
+import { LiveTargetsPage } from "./LiveTargetsPage";
 
 type TaskRow = {
   id?: string;
@@ -121,6 +122,7 @@ function buildBotConfig(values: ConfigForm) {
 export function TasksPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [form] = Form.useForm<ConfigForm>();
   const [editingTask, setEditingTask] = useState<TaskRow | null>(null);
+  const [configView, setConfigView] = useState<"templates" | "liveTargets">("templates");
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ["tasks"], queryFn: getTasks });
   const mutation = useMutation({
@@ -191,6 +193,21 @@ export function TasksPage({ embedded = false }: { embedded?: boolean } = {}) {
   const botConfigCount = tasks.filter((item) => item.liveCommentBotConfig).length;
   const p3ConfigCount = tasks.filter((item) => item.p3ExtensionsConfig).length;
 
+  if (configView === "liveTargets") {
+    return (
+      <div className="configuration-view-shell">
+        <div className="config-view-toolbar">
+          <Segmented
+            value={configView}
+            onChange={(value) => setConfigView(value as "templates" | "liveTargets")}
+            options={[{ value: "templates", label: "公共模板" }, { value: "liveTargets", label: "直播目标" }]}
+          />
+        </div>
+        <LiveTargetsPage embedded />
+      </div>
+    );
+  }
+
   return (
     <>
       <div className={`ops-page task-templates-page ${embedded ? "embedded-ops-page" : ""}`}>
@@ -200,6 +217,11 @@ export function TasksPage({ embedded = false }: { embedded?: boolean } = {}) {
             <p>维护公共任务模板、直播评论机器人话术和高级 JSON；设备单独覆盖在设备运行页处理。</p>
           </div>
           <div className="ops-toolbar">
+            <Segmented
+              value={configView}
+              onChange={(value) => setConfigView(value as "templates" | "liveTargets")}
+              options={[{ value: "templates", label: "公共模板" }, { value: "liveTargets", label: "直播目标" }]}
+            />
             <button className="ops-btn" type="button" onClick={() => void query.refetch()}>刷新</button>
             {selectedTask ? <button className="ops-btn primary" type="button" onClick={() => openConfig(selectedTask)}>配置模板</button> : null}
           </div>

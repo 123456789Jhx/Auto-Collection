@@ -1,8 +1,54 @@
-import { PlusOutlined, ReloadOutlined, SaveOutlined } from "@ant-design/icons";
+import {
+  CheckCircleOutlined,
+  LockOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  SaveOutlined,
+  StopOutlined
+} from "@ant-design/icons";
+import {
+  defaultCommerceCardWorkflowRuntimeConfig,
+  type CommerceCardFeaturePreview,
+  type CommerceCardWorkflowRuntimeConfig,
+  type CommerceCardWorkflowStage,
+  type FeatureRolloutControl,
+  type FeatureRolloutControlUpdate,
+  type FeatureRolloutKey
+} from "@pkg/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Form, Input, InputNumber, Select, Space, Switch, Tabs, Tag, message } from "antd";
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Descriptions,
+  Divider,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Skeleton,
+  Space,
+  Switch,
+  Tabs,
+  Tag,
+  message
+} from "antd";
 import { useEffect, useMemo, useState } from "react";
-import { getDevices, getLiveTargets, saveDeviceLiveTargetBindings, saveLiveTarget, saveLiveTargetFeatureConfig, type LiveTarget, type LiveTargetAlias, type LiveTargetFeatureConfig, type LiveTargetFeatureType } from "../lib/api-client";
+import {
+  ApiError,
+  getCommerceCardFeaturePreview,
+  getDevices,
+  getFeatureRolloutControls,
+  getLiveTargets,
+  saveDeviceLiveTargetBindings,
+  saveLiveTarget,
+  saveLiveTargetFeatureConfig,
+  updateFeatureRolloutControl,
+  type LiveTarget,
+  type LiveTargetAlias,
+  type LiveTargetFeatureConfig,
+  type LiveTargetFeatureType
+} from "../lib/api-client";
 import { deviceDisplayName, deviceSubTitle } from "../lib/display-maps";
 
 type DeviceRow = {
@@ -28,11 +74,23 @@ type FeatureFormValues = {
   forbiddenKeywordsText?: string;
   productKeywordsText?: string;
   liveSignalsText?: string;
-  scanMinutesPerRound?: number;
-  watchMinutesPerLive?: number;
-  maxRounds?: number;
+  enabledStages?: CommerceCardWorkflowStage[];
+  executeEnabled?: boolean;
+  recommendationSignalsText?: string;
+  productCardDwellSeconds?: number;
+  productNurtureRoundMinutes?: number;
+  productNurtureMaxRounds?: number;
+  targetLiveMaxRoomsPerRefresh?: number;
+  targetCommentSearchMaxActiveMinutes?: number;
   maxCommentsPerRoom?: number;
   commentPoolText?: string;
+  liveNurtureKeywordsText?: string;
+  liveNurtureRefreshAfterRooms?: number;
+  liveNurtureWatchMinMinutes?: number;
+  liveNurtureWatchMaxMinutes?: number;
+  liveNurtureTotalMinMinutes?: number;
+  liveNurtureTotalMaxMinutes?: number;
+  taskMaxActiveMinutes?: number;
 };
 
 type BindingFormValues = {
@@ -41,17 +99,43 @@ type BindingFormValues = {
   deviceCodes: string[];
 };
 
+type RolloutFormValues = {
+  enabled: boolean;
+  minAppVersion: string | null;
+  requiredCapabilities: FeatureRolloutControlUpdate["requiredCapabilities"];
+  capabilityTtlSeconds: number;
+  deviceCodes: string[];
+  reason: string;
+};
+
 type LiveTargetTabKey = "live_comment" | "commerce_card_live_comment" | "bindings";
+
+const stageOptions: Array<{ value: CommerceCardWorkflowStage; label: string }> = [
+  { value: "product_nurture", label: "商品卡养号" },
+  { value: "target_comment", label: "目标直播评论" },
+  { value: "live_nurture", label: "直播养号2" }
+];
+
+const capabilityOptions = [
+  { value: "workflow_v2", label: "组合流程 V2" },
+  { value: "checkpoint_v2", label: "检查点 V2" },
+  { value: "pause_resume", label: "原任务暂停恢复" },
+  { value: "stable_room_key", label: "稳定直播间标识" },
+  { value: "idempotent_comment", label: "评论幂等" },
+  { value: "short_lived_comment_permit", label: "短时发送许可" }
+];
 
 function toLines(value: unknown) {
   return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean).join("\n") : "";
 }
 
 function parseLines(value?: string) {
-  return (value || "")
-    .split(/[\n,，]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+  return Array.from(new Set(
+    (value || "")
+      .split(/[\n,，]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  ));
 }
 
 function parseAliases(value?: string): LiveTargetAlias[] {
@@ -68,7 +152,41 @@ function aliasesToText(aliases?: LiveTargetAlias[]) {
 }
 
 function featureTitle(featureType: LiveTargetFeatureType) {
-  return featureType === "commerce_card_live_comment" ? "商品卡直播评论" : "搜索直播评论";
+  return featureType === "commerce_card_live_comment" ? "商品卡组合任务" : "搜索直播评论";
+}
+
+function numberValue(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function booleanValue(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function commerceRuntimeValues(runtime: Record<string, unknown>) {
+  const defaults = defaultCommerceCardWorkflowRuntimeConfig;
+  const isV2 = runtime.configVersion === 2;
+  return {
+    enabledStages: isV2 && Array.isArray(runtime.enabledStages)
+      ? runtime.enabledStages.filter((stage): stage is CommerceCardWorkflowStage => stage === "product_nurture" || stage === "target_comment" || stage === "live_nurture")
+      : defaults.enabledStages,
+    executeEnabled: booleanValue(runtime.executeEnabled, false),
+    recommendationSignalsText: toLines(isV2 ? runtime.recommendationSignals : defaults.recommendationSignals),
+    productCardDwellSeconds: numberValue(runtime.productCardDwellSeconds, defaults.productCardDwellSeconds),
+    productNurtureRoundMinutes: numberValue(runtime.productNurtureRoundMinutes ?? runtime.scanMinutesPerRound, defaults.productNurtureRoundMinutes),
+    productNurtureMaxRounds: numberValue(runtime.productNurtureMaxRounds ?? runtime.maxRounds, defaults.productNurtureMaxRounds),
+    targetLiveMaxRoomsPerRefresh: numberValue(runtime.targetLiveMaxRoomsPerRefresh, defaults.targetLiveMaxRoomsPerRefresh),
+    targetCommentSearchMaxActiveMinutes: numberValue(runtime.targetCommentSearchMaxActiveMinutes, defaults.targetCommentSearchMaxActiveMinutes),
+    maxCommentsPerRoom: numberValue(runtime.maxCommentsPerRoom, defaults.maxCommentsPerRoom),
+    commentPoolText: toLines(runtime.commentPool),
+    liveNurtureKeywordsText: toLines(runtime.liveNurtureKeywords),
+    liveNurtureRefreshAfterRooms: numberValue(runtime.liveNurtureRefreshAfterRooms, defaults.liveNurtureRefreshAfterRooms),
+    liveNurtureWatchMinMinutes: numberValue(runtime.liveNurtureWatchMinMinutes, defaults.liveNurtureWatchMinMinutes),
+    liveNurtureWatchMaxMinutes: numberValue(runtime.liveNurtureWatchMaxMinutes, defaults.liveNurtureWatchMaxMinutes),
+    liveNurtureTotalMinMinutes: numberValue(runtime.liveNurtureTotalMinMinutes, defaults.liveNurtureTotalMinMinutes),
+    liveNurtureTotalMaxMinutes: numberValue(runtime.liveNurtureTotalMaxMinutes, defaults.liveNurtureTotalMaxMinutes),
+    taskMaxActiveMinutes: numberValue(runtime.taskMaxActiveMinutes, defaults.taskMaxActiveMinutes)
+  };
 }
 
 function featureConfig(target: LiveTarget | null, featureType: LiveTargetFeatureType): LiveTargetFeatureConfig {
@@ -76,12 +194,12 @@ function featureConfig(target: LiveTarget | null, featureType: LiveTargetFeature
     target?.featureConfigs?.find((item) => item.featureType === featureType) || {
       featureType,
       enabled: true,
-      searchKeywords: [],
+      searchKeywords: featureType === "commerce_card_live_comment" ? ["夏橙"] : [],
       requiredKeywords: [],
       forbiddenKeywords: [],
-      productKeywords: [],
+      productKeywords: featureType === "commerce_card_live_comment" ? ["夏橙"] : [],
       liveSignals: featureType === "commerce_card_live_comment" ? ["直播中", "讲解中", "正在直播"] : [],
-      runtimeConfig: featureType === "commerce_card_live_comment" ? { scanMinutesPerRound: 15, watchMinutesPerLive: 15, maxRounds: 3, maxCommentsPerRoom: 1, commentPool: ["111", "666"] } : {}
+      runtimeConfig: featureType === "commerce_card_live_comment" ? defaultCommerceCardWorkflowRuntimeConfig : {}
     }
   );
 }
@@ -95,26 +213,38 @@ function featureValues(config: LiveTargetFeatureConfig): FeatureFormValues {
     forbiddenKeywordsText: toLines(config.forbiddenKeywords),
     productKeywordsText: toLines(config.productKeywords),
     liveSignalsText: toLines(config.liveSignals),
-    scanMinutesPerRound: Number(runtime.scanMinutesPerRound || 15),
-    watchMinutesPerLive: Number(runtime.watchMinutesPerLive || 15),
-    maxRounds: Number(runtime.maxRounds || 3),
-    maxCommentsPerRoom: Number(runtime.maxCommentsPerRoom || 1),
-    commentPoolText: toLines(runtime.commentPool)
+    ...commerceRuntimeValues(runtime)
   };
 }
 
-function buildFeaturePayload(featureType: LiveTargetFeatureType, values: FeatureFormValues): LiveTargetFeatureConfig {
-  const runtimeConfig =
-    featureType === "commerce_card_live_comment"
-      ? {
-          scanMinutesPerRound: Number(values.scanMinutesPerRound || 15),
-          watchMinutesPerLive: Number(values.watchMinutesPerLive || 15),
-          maxRounds: Number(values.maxRounds || 3),
-          maxCommentsPerRoom: Number(values.maxCommentsPerRoom || 1),
-          commentPool: parseLines(values.commentPoolText)
-        }
-      : {};
+function buildCommerceRuntime(values: FeatureFormValues): CommerceCardWorkflowRuntimeConfig {
+  return {
+    configVersion: 2,
+    enabledStages: values.enabledStages?.length ? values.enabledStages : ["product_nurture"],
+    executeEnabled: values.executeEnabled === true,
+    recommendationSignals: parseLines(values.recommendationSignalsText),
+    productCardDwellSeconds: Number(values.productCardDwellSeconds),
+    productNurtureRoundMinutes: Number(values.productNurtureRoundMinutes),
+    productNurtureMaxRounds: Number(values.productNurtureMaxRounds),
+    targetLiveMaxRoomsPerRefresh: Number(values.targetLiveMaxRoomsPerRefresh),
+    targetCommentSearchMaxActiveMinutes: Number(values.targetCommentSearchMaxActiveMinutes),
+    maxCommentsPerRoom: Number(values.maxCommentsPerRoom),
+    commentPool: parseLines(values.commentPoolText),
+    liveNurtureKeywords: parseLines(values.liveNurtureKeywordsText),
+    liveNurtureRefreshAfterRooms: Number(values.liveNurtureRefreshAfterRooms),
+    liveNurtureWatchMinMinutes: Number(values.liveNurtureWatchMinMinutes),
+    liveNurtureWatchMaxMinutes: Number(values.liveNurtureWatchMaxMinutes),
+    liveNurtureTotalMinMinutes: Number(values.liveNurtureTotalMinMinutes),
+    liveNurtureTotalMaxMinutes: Number(values.liveNurtureTotalMaxMinutes),
+    taskMaxActiveMinutes: Number(values.taskMaxActiveMinutes)
+  };
+}
 
+function buildFeaturePayload(
+  featureType: LiveTargetFeatureType,
+  values: FeatureFormValues,
+  currentConfig: LiveTargetFeatureConfig
+): LiveTargetFeatureConfig {
   return {
     featureType,
     enabled: values.enabled !== false,
@@ -123,7 +253,8 @@ function buildFeaturePayload(featureType: LiveTargetFeatureType, values: Feature
     forbiddenKeywords: parseLines(values.forbiddenKeywordsText),
     productKeywords: parseLines(values.productKeywordsText),
     liveSignals: parseLines(values.liveSignalsText),
-    runtimeConfig
+    runtimeConfig: featureType === "commerce_card_live_comment" ? buildCommerceRuntime(values) : {},
+    expectedRevision: currentConfig.revision ?? 0
   };
 }
 
@@ -138,6 +269,58 @@ function targetInitialValues(target: LiveTarget | null): TargetFormValues {
   };
 }
 
+function expectedRevisions(target: LiveTarget | null) {
+  const result: Partial<Record<LiveTargetFeatureType, number>> = {};
+  for (const item of target?.featureConfigs ?? []) {
+    if (item.revision) result[item.featureType] = item.revision;
+  }
+  return result;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function firstApiDetail(error: ApiError) {
+  const details = recordValue(error.details);
+  const fieldErrors = recordValue(details?.fieldErrors);
+  if (!fieldErrors) return error.message;
+  for (const value of Object.values(fieldErrors)) {
+    if (Array.isArray(value) && typeof value[0] === "string") return value[0];
+  }
+  return error.message;
+}
+
+function handleFeatureError(
+  error: Error,
+  form: ReturnType<typeof Form.useForm<FeatureFormValues>>[0],
+  reload: () => void
+) {
+  if (!(error instanceof ApiError)) {
+    message.error(error.message || "功能配置保存失败");
+    return;
+  }
+  if (error.code === "CONFIG_REVISION_CONFLICT" || error.code === "CONFIG_REVISION_REQUIRED") {
+    message.warning(error.message);
+    reload();
+    return;
+  }
+  const details = recordValue(error.details);
+  const fieldErrors = recordValue(details?.fieldErrors);
+  const fieldMap: Record<string, keyof FeatureFormValues> = {
+    searchKeywords: "searchKeywordsText",
+    productKeywords: "productKeywordsText",
+    runtimeConfig: "enabledStages"
+  };
+  if (fieldErrors) {
+    const fields = Object.entries(fieldErrors)
+      .filter(([key, value]) => fieldMap[key] && Array.isArray(value))
+      .map(([key, value]) => ({ name: fieldMap[key], errors: (value as unknown[]).map(String) }));
+    if (fields.length > 0) form.setFields(fields);
+  }
+  message.error(firstApiDetail(error));
+}
+
 export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: boolean; activeTab?: LiveTargetTabKey } = {}) {
   const [targetForm] = Form.useForm<TargetFormValues>();
   const [liveForm] = Form.useForm<FeatureFormValues>();
@@ -145,83 +328,120 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
   const [bindingForm] = Form.useForm<BindingFormValues>();
   const [selectedId, setSelectedId] = useState<string>("");
   const [creating, setCreating] = useState(false);
-  const [tabKey, setTabKey] = useState<LiveTargetTabKey>(activeTab || "live_comment");
+  const [tabKey, setTabKey] = useState<LiveTargetTabKey>(activeTab || "commerce_card_live_comment");
   const queryClient = useQueryClient();
   const targetQuery = useQuery({ queryKey: ["liveTargets"], queryFn: () => getLiveTargets("douyin") });
   const deviceQuery = useQuery({ queryKey: ["devices"], queryFn: getDevices });
+  const rolloutQuery = useQuery({ queryKey: ["featureRolloutControls"], queryFn: getFeatureRolloutControls });
   const targets = targetQuery.data || [];
   const devices = (deviceQuery.data || []) as DeviceRow[];
   const selectedTarget = useMemo(() => (creating ? null : targets.find((item) => item.id === selectedId) || null), [targets, selectedId, creating]);
   const deviceCodeById = useMemo(() => new Map(devices.map((device) => [device.id, device.deviceCode])), [devices]);
+  const revisionKey = selectedTarget?.featureConfigs.map((item) => `${item.featureType}:${item.revision ?? 0}:${item.updatedAt ?? ""}`).join("|") ?? "";
+  const commerceConfig = featureConfig(selectedTarget, "commerce_card_live_comment");
+  const previewQuery = useQuery({
+    queryKey: ["commerceCardFeaturePreview", selectedTarget?.id, commerceConfig.revision],
+    queryFn: () => getCommerceCardFeaturePreview(selectedTarget?.id || ""),
+    enabled: Boolean(selectedTarget?.id && selectedTarget.featureConfigs.some((item) => item.featureType === "commerce_card_live_comment")),
+    retry: false
+  });
 
   useEffect(() => {
     if (activeTab) setTabKey(activeTab);
   }, [activeTab]);
 
   useEffect(() => {
-    if (!creating && !selectedId && targets[0]?.id) {
-      setSelectedId(targets[0].id);
-    }
+    if (!creating && !selectedId && targets[0]?.id) setSelectedId(targets[0].id);
   }, [creating, selectedId, targets]);
 
   useEffect(() => {
     if (!selectedTarget?.id) return;
-    setSelectedId(selectedTarget.id);
     targetForm.setFieldsValue(targetInitialValues(selectedTarget));
     liveForm.setFieldsValue(featureValues(featureConfig(selectedTarget, "live_comment")));
     commerceForm.setFieldsValue(featureValues(featureConfig(selectedTarget, "commerce_card_live_comment")));
     const bindings = selectedTarget.bindings || [];
     bindingForm.setFieldsValue({
       featureType: "commerce_card_live_comment",
-      defaultEnabled: bindings.some((item) => !item.deviceId && item.enabled !== false),
-      deviceCodes: bindings.map((item) => (item.deviceId ? deviceCodeById.get(item.deviceId) : "")).filter(Boolean) as string[]
+      defaultEnabled: bindings.some((item) => item.featureType === "commerce_card_live_comment" && !item.deviceId && item.enabled !== false),
+      deviceCodes: bindings
+        .filter((item) => item.featureType === "commerce_card_live_comment")
+        .map((item) => (item.deviceId ? deviceCodeById.get(item.deviceId) : ""))
+        .filter(Boolean) as string[]
     });
-  }, [selectedTarget?.id, targets.length, devices.length]);
+  }, [selectedTarget?.id, selectedTarget?.updatedAt, revisionKey, devices.length]);
 
   const targetMutation = useMutation({
-    mutationFn: (values: TargetFormValues) =>
-      saveLiveTarget({
-        id: selectedTarget?.id,
-        targetCode: values.targetCode,
-        targetName: values.targetName,
-        platform: "douyin",
-        similarityThreshold: Number(values.similarityThreshold || 90) / 100,
-        enabled: values.enabled !== false,
-        remark: values.remark || null,
-        aliases: parseAliases(values.aliasesText)
-      }),
+    mutationFn: (values: TargetFormValues) => saveLiveTarget({
+      id: selectedTarget?.id,
+      targetCode: values.targetCode,
+      targetName: values.targetName,
+      platform: "douyin",
+      similarityThreshold: Number(values.similarityThreshold || 90) / 100,
+      enabled: values.enabled !== false,
+      remark: values.remark || null,
+      aliases: parseAliases(values.aliasesText),
+      expectedRevisions: expectedRevisions(selectedTarget)
+    }),
     onSuccess: async (result) => {
       message.success("目标直播间已保存");
       setCreating(false);
       setSelectedId(result.id || "");
       await queryClient.invalidateQueries({ queryKey: ["liveTargets"] });
+      await queryClient.invalidateQueries({ queryKey: ["commerceCardFeaturePreview"] });
     },
-    onError: (error: Error) => message.error(error.message || "目标直播间保存失败")
+    onError: (error: Error) => {
+      message.error(error.message || "目标直播间保存失败");
+      if (error instanceof ApiError && error.code.startsWith("CONFIG_REVISION")) void targetQuery.refetch();
+    }
   });
 
   const featureMutation = useMutation({
-    mutationFn: (payload: { targetId: string; featureType: LiveTargetFeatureType; values: FeatureFormValues }) =>
-      saveLiveTargetFeatureConfig(payload.targetId, buildFeaturePayload(payload.featureType, payload.values)),
+    mutationFn: (payload: { targetId: string; featureType: LiveTargetFeatureType; values: FeatureFormValues }) => {
+      const current = featureConfig(selectedTarget, payload.featureType);
+      return saveLiveTargetFeatureConfig(payload.targetId, buildFeaturePayload(payload.featureType, payload.values, current));
+    },
     onSuccess: async () => {
       message.success("功能配置已保存");
       await queryClient.invalidateQueries({ queryKey: ["liveTargets"] });
+      await queryClient.invalidateQueries({ queryKey: ["commerceCardFeaturePreview"] });
     },
-    onError: (error: Error) => message.error(error.message || "功能配置保存失败")
+    onError: (error: Error, variables) => handleFeatureError(
+      error,
+      variables.featureType === "commerce_card_live_comment" ? commerceForm : liveForm,
+      () => void targetQuery.refetch()
+    )
   });
 
   const bindingMutation = useMutation({
-    mutationFn: (values: BindingFormValues) =>
-      saveDeviceLiveTargetBindings({
-        targetId: selectedTarget?.id || "",
-        featureType: values.featureType,
-        deviceCodes: values.deviceCodes || [],
-        defaultEnabled: values.defaultEnabled
-      }),
+    mutationFn: (values: BindingFormValues) => saveDeviceLiveTargetBindings({
+      targetId: selectedTarget?.id || "",
+      featureType: values.featureType,
+      deviceCodes: values.deviceCodes || [],
+      defaultEnabled: values.defaultEnabled,
+      expectedRevision: featureConfig(selectedTarget, values.featureType).revision
+    }),
     onSuccess: async () => {
       message.success("设备绑定已保存");
       await queryClient.invalidateQueries({ queryKey: ["liveTargets"] });
+      await queryClient.invalidateQueries({ queryKey: ["commerceCardFeaturePreview"] });
     },
-    onError: (error: Error) => message.error(error.message || "设备绑定保存失败")
+    onError: (error: Error) => {
+      message.error(error.message || "设备绑定保存失败");
+      if (error instanceof ApiError && error.code.startsWith("CONFIG_REVISION")) void targetQuery.refetch();
+    }
+  });
+
+  const rolloutMutation = useMutation({
+    mutationFn: (input: { featureKey: FeatureRolloutKey; payload: FeatureRolloutControlUpdate }) => updateFeatureRolloutControl(input.featureKey, input.payload),
+    onSuccess: async () => {
+      message.success("运行门禁配置已保存");
+      await queryClient.invalidateQueries({ queryKey: ["featureRolloutControls"] });
+      await queryClient.invalidateQueries({ queryKey: ["commerceCardFeaturePreview"] });
+    },
+    onError: (error: Error) => {
+      message.error(error.message || "运行门禁保存失败");
+      if (error instanceof ApiError && error.code === "FEATURE_CONTROL_REVISION_CONFLICT") void rolloutQuery.refetch();
+    }
   });
 
   function createTarget() {
@@ -241,24 +461,32 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
     featureMutation.mutate({ targetId: selectedTarget.id, featureType, values });
   }
 
+  if (targetQuery.isLoading) return <Skeleton active />;
+
   return (
     <div className={`ops-page live-targets-page ${embedded ? "embedded-ops-page" : ""}`}>
       <div className="ops-topbar">
         <div>
           <h1>直播目标配置</h1>
-          <p>配置关键词搜索、目标直播间名称匹配、直播间别名、设备绑定和商品卡直播评论参数。</p>
+          <p>维护目标身份、组合任务阶段、设备范围和运行门禁。</p>
         </div>
         <div className="ops-toolbar">
-          <Button icon={<ReloadOutlined />} onClick={() => targetQuery.refetch()}>
-            刷新
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={createTarget}>
-            新增目标
-          </Button>
+          <Button icon={<ReloadOutlined />} onClick={() => void Promise.all([targetQuery.refetch(), rolloutQuery.refetch()])}>刷新</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={createTarget}>新增目标</Button>
         </div>
       </div>
 
-      <div className="ops-workbench wide-side">
+      {targetQuery.isError ? <Alert type="error" showIcon message="直播目标加载失败" description={targetQuery.error.message} /> : null}
+
+      <RolloutControlsPanel
+        controls={rolloutQuery.data || []}
+        devices={devices}
+        loading={rolloutMutation.isPending}
+        error={rolloutQuery.isError ? rolloutQuery.error.message : null}
+        onSave={(featureKey, payload) => rolloutMutation.mutate({ featureKey, payload })}
+      />
+
+      <div className="ops-workbench wide-side live-target-workbench">
         <section className="ops-panel">
           <div className="ops-panel-head">
             <span>目标直播间</span>
@@ -266,50 +494,29 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
           </div>
           <div className="ops-table-wrap">
             <table className="ops-table">
-              <thead>
-                <tr>
-                  <th>直播间名称</th>
-                  <th>相似度阈值</th>
-                  <th>功能</th>
-                  <th>状态</th>
-                </tr>
-              </thead>
+              <thead><tr><th>直播间</th><th>匹配阈值</th><th>功能</th><th>状态</th></tr></thead>
               <tbody>
                 {targets.map((target) => (
                   <tr
                     key={target.id || target.targetCode}
                     className={target.id === selectedTarget?.id ? "selected" : ""}
-                    onClick={() => {
-                      setCreating(false);
-                      setSelectedId(target.id || "");
-                    }}
+                    onClick={() => { setCreating(false); setSelectedId(target.id || ""); }}
                   >
-                    <td>
-                      <div className="ops-title">{target.targetName}</div>
-                      <div className="ops-small">{target.targetCode}</div>
-                    </td>
+                    <td><div className="ops-title">{target.targetName}</div><div className="ops-small">{target.targetCode}</div></td>
                     <td>{Math.round(Number(target.similarityThreshold || 0.9) * 100)}%</td>
                     <td>
                       <Space wrap>
                         {target.featureConfigs?.map((item) => (
-                          <Tag key={item.featureType} color={item.enabled ? "blue" : "default"}>
-                            {featureTitle(item.featureType)}
+                          <Tag key={item.featureType} color={item.configValidationError ? "red" : item.enabled ? "blue" : "default"}>
+                            {featureTitle(item.featureType)}{item.storedWorkflowVersion === 2 ? " V2" : ""}
                           </Tag>
                         ))}
                       </Space>
                     </td>
-                    <td>
-                      <Tag color={target.enabled ? "green" : "default"}>{target.enabled ? "启用" : "停用"}</Tag>
-                    </td>
+                    <td><Tag color={target.enabled ? "green" : "default"}>{target.enabled ? "启用" : "停用"}</Tag></td>
                   </tr>
                 ))}
-                {targets.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="ops-empty">
-                      暂无目标直播间
-                    </td>
-                  </tr>
-                ) : null}
+                {targets.length === 0 ? <tr><td colSpan={4} className="ops-empty">暂无目标直播间</td></tr> : null}
               </tbody>
             </table>
           </div>
@@ -318,35 +525,30 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
         <section className="ops-panel">
           <div className="ops-panel-head">
             <span>{selectedTarget?.targetName || "新增目标直播间"}</span>
-            <span className="ops-panel-note">搜索词和目标名分离配置</span>
+            <span className="ops-panel-note">目标身份与执行参数分离保存</span>
           </div>
           <div className="ops-panel-body">
             <Form<TargetFormValues> form={targetForm} layout="vertical" initialValues={targetInitialValues(selectedTarget)} onFinish={(values) => targetMutation.mutate(values)}>
-              <Form.Item label="目标直播间编码" name="targetCode" rules={[{ required: true, message: "请输入目标编码" }]}>
-                <Input placeholder="zigui_xiacheng" />
-              </Form.Item>
-              <Form.Item label="目标直播间名称" name="targetName" rules={[{ required: true, message: "请输入目标直播间名称" }]}>
-                <Input placeholder="秭归夏橙直播间" />
-              </Form.Item>
-              <Form.Item label="直播间别名" name="aliasesText">
-                <Input.TextArea rows={3} placeholder="一行一个别名，例如：秭归夏橙" />
-              </Form.Item>
-              <Space align="start" size={16}>
+              <div className="workflow-field-grid two-columns">
+                <Form.Item label="目标直播间编码" name="targetCode" rules={[{ required: true, message: "请输入目标编码" }]}>
+                  <Input placeholder="业务编码" />
+                </Form.Item>
+                <Form.Item label="目标直播间名称" name="targetName" rules={[{ required: true, message: "请输入目标直播间名称" }]}>
+                  <Input placeholder="直播间标准名称" />
+                </Form.Item>
+              </div>
+              <Form.Item label="直播间别名" name="aliasesText"><Input.TextArea rows={3} placeholder="一行一个直播间名或主播名" /></Form.Item>
+              <div className="workflow-field-grid compact-columns">
                 <Form.Item label="相似度阈值" name="similarityThreshold" rules={[{ required: true, message: "请输入阈值" }]}>
-                  <InputNumber min={50} max={100} addonAfter="%" />
+                  <InputNumber min={50} max={100} addonAfter="%" style={{ width: "100%" }} />
                 </Form.Item>
-                <Form.Item label="启用目标" name="enabled" valuePropName="checked">
-                  <Switch />
-                </Form.Item>
-              </Space>
-              <Form.Item label="备注" name="remark">
-                <Input.TextArea rows={2} />
-              </Form.Item>
-              <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={targetMutation.isPending}>
-                保存目标直播间
-              </Button>
+                <Form.Item label="启用目标" name="enabled" valuePropName="checked"><Switch /></Form.Item>
+              </div>
+              <Form.Item label="备注" name="remark"><Input.TextArea rows={2} /></Form.Item>
+              <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={targetMutation.isPending}>保存目标直播间</Button>
             </Form>
 
+            <Divider />
             <Tabs
               className="live-target-tabs"
               activeKey={tabKey}
@@ -355,15 +557,16 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
                 {
                   key: "live_comment",
                   label: "搜索直播评论",
-                  children: (
-                    <FeatureForm form={liveForm} featureType="live_comment" loading={featureMutation.isPending} onSave={(values) => saveFeature("live_comment", values)} />
-                  )
+                  children: <FeatureForm form={liveForm} featureType="live_comment" loading={featureMutation.isPending} onSave={(values) => saveFeature("live_comment", values)} />
                 },
                 {
                   key: "commerce_card_live_comment",
-                  label: "商品卡直播评论",
+                  label: "商品卡组合任务",
                   children: (
-                    <FeatureForm form={commerceForm} featureType="commerce_card_live_comment" loading={featureMutation.isPending} onSave={(values) => saveFeature("commerce_card_live_comment", values)} />
+                    <>
+                      <FeatureForm form={commerceForm} featureType="commerce_card_live_comment" loading={featureMutation.isPending} onSave={(values) => saveFeature("commerce_card_live_comment", values)} />
+                      <CommercePreview preview={previewQuery.data} loading={previewQuery.isLoading} error={previewQuery.isError ? previewQuery.error.message : null} />
+                    </>
                   )
                 },
                 {
@@ -371,34 +574,17 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
                   label: "设备绑定",
                   children: (
                     <Form<BindingFormValues> form={bindingForm} layout="vertical" initialValues={{ featureType: "commerce_card_live_comment", defaultEnabled: false, deviceCodes: [] }} onFinish={(values) => bindingMutation.mutate(values)}>
-                      <Alert type="info" showIcon message="未绑定任何设备时，目标默认对全部设备可用；绑定后仅下发到选中的设备。" style={{ marginBottom: 12 }} />
-                      <Form.Item label="绑定功能" name="featureType">
-                        <Select
-                          options={[
-                            { value: "live_comment", label: "搜索直播评论" },
-                            { value: "commerce_card_live_comment", label: "商品卡直播评论" }
-                          ]}
-                        />
-                      </Form.Item>
-                      <Form.Item label="默认下发给全部设备" name="defaultEnabled" valuePropName="checked">
-                        <Switch />
-                      </Form.Item>
+                      <Alert type="info" showIcon message="未指定设备时仅作为公共候选；指定后只对所选设备可用。" style={{ marginBottom: 12 }} />
+                      <div className="workflow-field-grid two-columns">
+                        <Form.Item label="绑定功能" name="featureType">
+                          <Select options={[{ value: "live_comment", label: "搜索直播评论" }, { value: "commerce_card_live_comment", label: "商品卡组合任务" }]} />
+                        </Form.Item>
+                        <Form.Item label="公共候选" name="defaultEnabled" valuePropName="checked"><Switch /></Form.Item>
+                      </div>
                       <Form.Item label="指定设备" name="deviceCodes">
-                        <Select
-                          mode="multiple"
-                          allowClear
-                          placeholder="选择设备"
-                          options={devices
-                            .filter((device) => device.deviceCode)
-                            .map((device) => ({
-                              value: device.deviceCode!,
-                              label: `${deviceDisplayName(device)} / ${deviceSubTitle(device)}`
-                            }))}
-                        />
+                        <Select mode="multiple" allowClear placeholder="选择设备" options={devices.filter((device) => device.deviceCode).map((device) => ({ value: device.deviceCode!, label: `${deviceDisplayName(device)} / ${deviceSubTitle(device)}` }))} />
                       </Form.Item>
-                      <Button type="primary" htmlType="submit" icon={<SaveOutlined />} disabled={!selectedTarget?.id} loading={bindingMutation.isPending}>
-                        保存设备绑定
-                      </Button>
+                      <Button type="primary" htmlType="submit" icon={<SaveOutlined />} disabled={!selectedTarget?.id} loading={bindingMutation.isPending}>保存设备绑定</Button>
                     </Form>
                   )
                 }
@@ -422,50 +608,196 @@ function FeatureForm({
   loading: boolean;
   onSave: (values: FeatureFormValues) => void;
 }) {
+  const enabledStages = Form.useWatch("enabledStages", form) || [];
+  const commerce = featureType === "commerce_card_live_comment";
+  const productEnabled = enabledStages.includes("product_nurture");
+  const commentEnabled = enabledStages.includes("target_comment");
+  const liveNurtureEnabled = enabledStages.includes("live_nurture");
+
   return (
     <Form<FeatureFormValues> form={form} layout="vertical" onFinish={onSave}>
-      <Form.Item label="启用功能" name="enabled" valuePropName="checked">
-        <Switch />
-      </Form.Item>
-      <Form.Item label="搜索关键词" name="searchKeywordsText" rules={[{ required: true, message: "请输入搜索关键词" }]}>
-        <Input.TextArea rows={3} placeholder="一行一个搜索关键词，例如：夏橙" />
-      </Form.Item>
-      <Form.Item label="目标必须包含关键词" name="requiredKeywordsText">
-        <Input.TextArea rows={2} placeholder="可选，一行一个关键词" />
-      </Form.Item>
-      <Form.Item label="排除关键词" name="forbiddenKeywordsText">
-        <Input.TextArea rows={2} placeholder="例如：回放、录播" />
-      </Form.Item>
-      {featureType === "commerce_card_live_comment" ? (
+      <Form.Item label="启用功能" name="enabled" valuePropName="checked"><Switch /></Form.Item>
+      <div className="workflow-field-grid two-columns">
+        <Form.Item label={commerce ? "商城搜索关键词" : "直播搜索关键词"} name="searchKeywordsText" rules={commerce && productEnabled ? [{ required: true, message: "请输入商城搜索关键词" }] : []}>
+          <Input.TextArea rows={3} placeholder="一行一个关键词" />
+        </Form.Item>
+        <Form.Item label="目标必须包含关键词" name="requiredKeywordsText"><Input.TextArea rows={3} placeholder="可选" /></Form.Item>
+        <Form.Item label="排除关键词" name="forbiddenKeywordsText"><Input.TextArea rows={3} placeholder="例如：回放、录播" /></Form.Item>
+        {commerce ? <Form.Item label="商品卡匹配关键词" name="productKeywordsText" rules={productEnabled ? [{ required: true, message: "请输入商品卡匹配关键词" }] : []}><Input.TextArea rows={3} placeholder="一行一个商品词" /></Form.Item> : null}
+      </div>
+
+      {commerce ? (
         <>
-          <Form.Item label="商品卡匹配关键词" name="productKeywordsText" rules={[{ required: true, message: "请输入商品卡匹配关键词" }]}>
-            <Input.TextArea rows={2} placeholder="例如：秭归、夏橙" />
+          <Divider orientation="left">阶段组合</Divider>
+          <Form.Item label="执行阶段" name="enabledStages" rules={[{ required: true, message: "至少选择一个阶段" }]}>
+            <Checkbox.Group options={stageOptions} className="workflow-stage-options" />
           </Form.Item>
-          <Form.Item label="直播信号关键词" name="liveSignalsText">
-            <Input.TextArea rows={2} placeholder="例如：直播中、讲解中、正在直播" />
-          </Form.Item>
-          <Space align="start" wrap>
-            <Form.Item label="单轮扫描分钟" name="scanMinutesPerRound">
-              <InputNumber min={1} max={60} />
-            </Form.Item>
-            <Form.Item label="进房观看分钟" name="watchMinutesPerLive">
-              <InputNumber min={0} max={120} />
-            </Form.Item>
-            <Form.Item label="循环轮次" name="maxRounds">
-              <InputNumber min={1} max={20} />
-            </Form.Item>
-            <Form.Item label="单房评论数" name="maxCommentsPerRoom">
-              <InputNumber min={0} max={5} />
-            </Form.Item>
-          </Space>
-          <Form.Item label="评论内容池" name="commentPoolText">
-            <Input.TextArea rows={3} placeholder="一行一个评论内容" />
-          </Form.Item>
+
+          {productEnabled ? (
+            <section className="workflow-stage-section">
+              <h3>商品卡养号</h3>
+              <Form.Item label="推荐区识别词" name="recommendationSignalsText" rules={[{ required: true, message: "请输入推荐区识别词" }]}><Input.TextArea rows={2} /></Form.Item>
+              <div className="workflow-field-grid four-columns">
+                <Form.Item label="商品详情秒数" name="productCardDwellSeconds"><InputNumber min={60} max={180} style={{ width: "100%" }} /></Form.Item>
+                <Form.Item label="单轮分钟" name="productNurtureRoundMinutes"><InputNumber min={5} max={30} style={{ width: "100%" }} /></Form.Item>
+                <Form.Item label="最大轮次" name="productNurtureMaxRounds"><InputNumber min={1} max={6} style={{ width: "100%" }} /></Form.Item>
+                <Form.Item label="每次候选上限" name="targetLiveMaxRoomsPerRefresh"><InputNumber min={20} max={30} style={{ width: "100%" }} /></Form.Item>
+              </div>
+            </section>
+          ) : null}
+
+          {commentEnabled ? (
+            <section className="workflow-stage-section">
+              <h3>目标直播评论</h3>
+              <div className="workflow-field-grid three-columns">
+                <Form.Item label="主动查找上限分钟" name="targetCommentSearchMaxActiveMinutes"><InputNumber min={5} max={120} style={{ width: "100%" }} /></Form.Item>
+                <Form.Item label="单房评论上限" name="maxCommentsPerRoom"><InputNumber min={0} max={5} style={{ width: "100%" }} /></Form.Item>
+                <Form.Item label="实时发送开关" name="executeEnabled" valuePropName="checked"><Switch checkedChildren="允许" unCheckedChildren="禁止" /></Form.Item>
+              </div>
+              <Form.Item label="评论内容" name="commentPoolText" dependencies={["maxCommentsPerRoom"]} rules={[({ getFieldValue }) => ({
+                validator: async (_, value: string | undefined) => {
+                  const limit = Number(getFieldValue("maxCommentsPerRoom") || 0);
+                  if (limit > 0 && parseLines(value).length < limit) throw new Error("评论内容数量不能少于单房评论上限");
+                }
+              })]}><Input.TextArea rows={4} placeholder="一行一条，无默认发送话术" /></Form.Item>
+              <Alert type="warning" showIcon message="阶段 A 安全基线会强制阻断真实评论，当前配置不会触发发送。" />
+            </section>
+          ) : null}
+
+          {liveNurtureEnabled ? (
+            <section className="workflow-stage-section">
+              <h3>直播养号2</h3>
+              <Form.Item label="直播标题关键词" name="liveNurtureKeywordsText" rules={[{ required: true, message: "请输入直播标题关键词" }]}><Input.TextArea rows={2} /></Form.Item>
+              <div className="workflow-field-grid five-columns">
+                <Form.Item label="刷新候选数" name="liveNurtureRefreshAfterRooms"><InputNumber min={5} max={20} style={{ width: "100%" }} /></Form.Item>
+                <Form.Item label="单房最短分钟" name="liveNurtureWatchMinMinutes"><InputNumber min={1} max={30} style={{ width: "100%" }} /></Form.Item>
+                <Form.Item label="单房最长分钟" name="liveNurtureWatchMaxMinutes"><InputNumber min={1} max={60} style={{ width: "100%" }} /></Form.Item>
+                <Form.Item label="累计最短分钟" name="liveNurtureTotalMinMinutes"><InputNumber min={10} max={180} style={{ width: "100%" }} /></Form.Item>
+                <Form.Item label="累计最长分钟" name="liveNurtureTotalMaxMinutes"><InputNumber min={10} max={240} style={{ width: "100%" }} /></Form.Item>
+              </div>
+            </section>
+          ) : null}
+
+          <div className="workflow-field-grid two-columns workflow-final-fields">
+            <Form.Item label="任务主动执行上限分钟" name="taskMaxActiveMinutes"><InputNumber min={30} max={360} style={{ width: "100%" }} /></Form.Item>
+            <Form.Item label="第一版直播信号（只读诊断）" name="liveSignalsText"><Input disabled /></Form.Item>
+          </div>
         </>
       ) : null}
-      <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={loading}>
-        保存{featureTitle(featureType)}
-      </Button>
+
+      <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={loading}>保存{featureTitle(featureType)}</Button>
     </Form>
+  );
+}
+
+function RolloutControlsPanel({
+  controls,
+  devices,
+  loading,
+  error,
+  onSave
+}: {
+  controls: FeatureRolloutControl[];
+  devices: DeviceRow[];
+  loading: boolean;
+  error: string | null;
+  onSave: (featureKey: FeatureRolloutKey, payload: FeatureRolloutControlUpdate) => void;
+}) {
+  return (
+    <section className="ops-panel rollout-controls-panel">
+      <div className="ops-panel-head"><span>运行门禁</span><span className="ops-panel-note">阶段 A 配置准备</span></div>
+      <div className="ops-panel-body">
+        {error ? <Alert type="error" showIcon message="运行门禁加载失败" description={error} /> : null}
+        {controls.length === 0 && !error ? <div className="ops-empty">运行门禁尚未初始化</div> : null}
+        {controls.map((control, index) => (
+          <div key={`${control.featureKey}:${control.revision}`}>
+            {index > 0 ? <Divider /> : null}
+            <RolloutControlForm control={control} devices={devices} loading={loading} onSave={onSave} />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RolloutControlForm({
+  control,
+  devices,
+  loading,
+  onSave
+}: {
+  control: FeatureRolloutControl;
+  devices: DeviceRow[];
+  loading: boolean;
+  onSave: (featureKey: FeatureRolloutKey, payload: FeatureRolloutControlUpdate) => void;
+}) {
+  const [form] = Form.useForm<RolloutFormValues>();
+  const title = control.featureKey === "commerce_card_workflow_v2" ? "组合流程 V2" : "真实评论";
+  return (
+    <Form<RolloutFormValues>
+      form={form}
+      layout="vertical"
+      initialValues={{
+        enabled: control.enabled,
+        minAppVersion: control.minAppVersion,
+        requiredCapabilities: control.requiredCapabilities,
+        capabilityTtlSeconds: control.capabilityTtlSeconds,
+        deviceCodes: control.deviceCodes,
+        reason: ""
+      }}
+      onFinish={(values) => onSave(control.featureKey, {
+        enabled: values.enabled,
+        expectedRevision: control.revision,
+        minAppVersion: values.minAppVersion?.trim() || null,
+        requiredCapabilities: values.requiredCapabilities || [],
+        capabilityTtlSeconds: values.capabilityTtlSeconds,
+        deviceCodes: values.deviceCodes || [],
+        reason: values.reason
+      })}
+      className="rollout-control-form"
+    >
+      <div className="rollout-control-heading">
+        <div>
+          <strong>{title}</strong>
+          <span>{control.updatedBy} · {new Date(control.updatedAt).toLocaleString()}</span>
+        </div>
+        <Tag icon={control.enabled ? <CheckCircleOutlined /> : <StopOutlined />} color={control.enabled ? "green" : "default"}>{control.enabled ? "已开启" : "已关闭"}</Tag>
+      </div>
+      <div className="workflow-field-grid rollout-columns">
+        <Form.Item label="启用" name="enabled" valuePropName="checked"><Switch disabled={!control.activationReady && !control.enabled} /></Form.Item>
+        <Form.Item label="最低 App 版本" name="minAppVersion"><Input placeholder="未设置" /></Form.Item>
+        <Form.Item label="能力有效秒数" name="capabilityTtlSeconds"><InputNumber min={60} max={86400} style={{ width: "100%" }} /></Form.Item>
+        <Form.Item label="灰度设备" name="deviceCodes"><Select mode="multiple" allowClear options={devices.filter((device) => device.deviceCode).map((device) => ({ value: device.deviceCode!, label: deviceDisplayName(device) }))} /></Form.Item>
+      </div>
+      <Form.Item label="必需能力" name="requiredCapabilities"><Select mode="multiple" options={capabilityOptions} /></Form.Item>
+      <div className="rollout-save-row">
+        <Form.Item label="变更原因" name="reason" rules={[{ required: true, min: 3, message: "请填写变更原因" }]}><Input maxLength={500} /></Form.Item>
+        <Button htmlType="submit" icon={<LockOutlined />} loading={loading}>保存门禁配置</Button>
+      </div>
+      {!control.activationReady ? <Alert type="info" showIcon message="安全基线尚未完成，当前只能维护门禁参数，不能开启。" description={control.reason || undefined} /> : null}
+    </Form>
+  );
+}
+
+function CommercePreview({ preview, loading, error }: { preview?: CommerceCardFeaturePreview; loading: boolean; error: string | null }) {
+  if (loading) return <Skeleton active paragraph={{ rows: 3 }} />;
+  if (!preview) return <Alert type={error ? "warning" : "info"} showIcon message={error || "保存商品卡组合任务后生成 V2 预览"} />;
+  return (
+    <div className="commerce-preview-band">
+      <div className="commerce-preview-heading"><strong>配置预览</strong><Tag color="blue">V2</Tag><Tag>{preview.rollout.enabled ? "门禁开启" : "门禁关闭"}</Tag></div>
+      <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }}>
+        <Descriptions.Item label="配置来源">直播目标中心</Descriptions.Item>
+        <Descriptions.Item label="配置版本">第 {preview.revision} 版</Descriptions.Item>
+        <Descriptions.Item label="执行审批">未开放</Descriptions.Item>
+        <Descriptions.Item label="预计主动时长">{preview.duration.minimumMinutes}-{preview.duration.maximumMinutes} 分钟</Descriptions.Item>
+        <Descriptions.Item label="任务上限">{preview.duration.taskLimitMinutes} 分钟</Descriptions.Item>
+        <Descriptions.Item label="当前可执行">否</Descriptions.Item>
+      </Descriptions>
+      <details className="commerce-preview-details">
+        <summary>配置快照与校验哈希</summary>
+        <div className="ops-small">SHA-256: {preview.configHash}</div>
+        <pre className="ops-json-box">{JSON.stringify(preview.payload, null, 2)}</pre>
+      </details>
+    </div>
   );
 }

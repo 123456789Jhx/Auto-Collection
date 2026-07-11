@@ -1,5 +1,5 @@
-import { createAgentVersionSchema, createMobileCommandSchema, createTaskAssignmentSchema, updateDeviceSchema, updateDeviceTaskConfigSchema, updateTaskSchema } from "@pkg/types";
-import { Hono } from "hono";
+import { createAgentVersionSchema, createMobileCommandSchema, createTaskAssignmentSchema, estimateCommerceCardWorkflowDuration, featureRolloutControlUpdateSchema, featureRolloutKeySchema, updateDeviceSchema, updateDeviceTaskConfigSchema, updateTaskSchema } from "@pkg/types";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { validationError } from "../lib/validation";
 import { adminAuth, type AdminVariables } from "../middleware/admin-auth";
@@ -8,8 +8,10 @@ import { createCommand, getCommands } from "../services/command.service";
 import { clearDeviceToken, deleteDeviceRecord, getDeviceDailyProgress, getDeviceProgressHistory, getDeviceTaskConfig, getDevices, getLiveCommentActions, getLiveCommentDeviceSummary, getLogDates, getLogDeviceSummary, getLogFileDates, getLogFileDetail, getLogFiles, getLogs, getOverview, getRecordDates, getRecordDeviceSummary, getRecords, getTasks, rotateDeviceToken, updateDevice, updateDeviceTaskConfig, updateTaskConfig } from "../services/admin.service";
 import { getAgentVersions, publishAgentVersion } from "../services/agent-version.service";
 import { createTaskAssignmentFromAdmin, getTaskAssignments } from "../services/task-orchestrator.service";
-import { deleteLiveTarget, listLiveTargetDetails, replaceLiveTargetDeviceBindings, upsertLiveTarget, upsertLiveTargetFeatureConfig } from "../repositories/live-target.repository";
-import { liveTargetFeatureConfigSchema, liveTargetFeatureTypeSchema, liveTargetPayloadSchema } from "../services/live-target-config.service";
+import { deleteLiveTarget, getCommerceCardFeaturePreviewData, listLiveTargetDetails, replaceLiveTargetDeviceBindings, upsertLiveTarget, upsertLiveTargetFeatureConfig } from "../repositories/live-target.repository";
+import { FeatureAllowlistDeviceNotFoundError, FeatureControlRevisionConflictError } from "../repositories/feature-rollout.repository";
+import { FeatureActivationNotReadyError, FeatureRolloutRejectedError, getFeatureRolloutControl, listFeatureRolloutControls, updateFeatureRolloutControl } from "../services/feature-rollout-control.service";
+import { ConfigRevisionConflictError, ConfigRevisionRequiredError, liveTargetFeatureConfigSchema, liveTargetFeatureTypeSchema, liveTargetPayloadSchema } from "../services/live-target-config.service";
 
 const adminLoginSchema = z.object({
   username: z.string().trim().min(1),
@@ -20,8 +22,22 @@ const liveTargetDeviceBindingsSchema = z.object({
   targetId: z.string().uuid(),
   featureType: liveTargetFeatureTypeSchema,
   deviceCodes: z.array(z.string().trim().min(1).max(64)).max(200).default([]),
-  defaultEnabled: z.boolean().default(false)
+  defaultEnabled: z.boolean().default(false),
+  expectedRevision: z.number().int().positive().optional()
 });
+
+function liveTargetMutationError(c: Context<{ Variables: AdminVariables }>, error: unknown) {
+  if (error instanceof ConfigRevisionConflictError || error instanceof ConfigRevisionRequiredError) {
+    return c.json({
+      error: {
+        code: error.message,
+        message: error instanceof ConfigRevisionRequiredError ? "保存前必须重新加载当前配置版本" : "配置已被其他管理员修改，请重新加载",
+        details: { currentRevision: error.currentRevision }
+      }
+    }, 409);
+  }
+  throw error;
+}
 
 export const adminRoutes = new Hono<{ Variables: AdminVariables }>();
 
@@ -83,6 +99,32 @@ adminRoutes.patch("/tasks/:id", async (c) => {
   }
   return c.json(await updateTaskConfig(c.req.param("id"), parsed.data));
 });
+adminRoutes.get("/feature-rollout-controls", async (c) => c.json(await listFeatureRolloutControls()));
+adminRoutes.patch("/feature-rollout-controls/:key", async (c) => {
+  const featureKey = featureRolloutKeySchema.safeParse(c.req.param("key"));
+  const payload = featureRolloutControlUpdateSchema.safeParse(await c.req.json());
+  if (!featureKey.success) {
+    return validationError(c, featureKey.error);
+  }
+  if (!payload.success) {
+    return validationError(c, payload.error);
+  }
+  try {
+    const result = await updateFeatureRolloutControl(featureKey.data, payload.data, c.get("admin").username);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof FeatureControlRevisionConflictError) {
+      return c.json({ error: { code: error.message, message: "运行门禁已被其他管理员修改，请重新加载", details: { currentRevision: error.currentRevision } } }, 409);
+    }
+    if (error instanceof FeatureAllowlistDeviceNotFoundError) {
+      return c.json({ error: { code: error.message, message: "灰度名单包含不存在的设备", details: { deviceCodes: error.deviceCodes } } }, 400);
+    }
+    if (error instanceof FeatureActivationNotReadyError) {
+      return c.json({ error: { code: error.message, message: "当前仍处于配置准备阶段，不能开启运行门禁", details: { featureKey: error.featureKey } } }, 409);
+    }
+    throw error;
+  }
+});
 adminRoutes.get("/live-targets", async (c) => c.json(await listLiveTargetDetails(c.req.query("platform") ?? "douyin")));
 adminRoutes.post("/live-targets", async (c) => {
   const parsed = liveTargetPayloadSchema.safeParse(await c.req.json());
@@ -100,11 +142,15 @@ adminRoutes.patch("/live-targets/:id", async (c) => {
   if (!parsed.success) {
     return validationError(c, parsed.error);
   }
-  const result = await upsertLiveTarget(parsed.data);
-  if (!result) {
-    return c.json({ error: { code: "LIVE_TARGET_NOT_FOUND", message: "直播目标不存在", details: {} } }, 404);
+  try {
+    const result = await upsertLiveTarget(parsed.data);
+    if (!result) {
+      return c.json({ error: { code: "LIVE_TARGET_NOT_FOUND", message: "直播目标不存在", details: {} } }, 404);
+    }
+    return c.json(result);
+  } catch (error) {
+    return liveTargetMutationError(c, error);
   }
-  return c.json(result);
 });
 adminRoutes.delete("/live-targets/:id", async (c) => {
   const result = await deleteLiveTarget(c.req.param("id"));
@@ -118,22 +164,52 @@ adminRoutes.post("/live-targets/:id/feature-configs", async (c) => {
   if (!parsed.success) {
     return validationError(c, parsed.error);
   }
-  const result = await upsertLiveTargetFeatureConfig(c.req.param("id"), parsed.data);
-  if (!result) {
-    return c.json({ error: { code: "LIVE_TARGET_NOT_FOUND", message: "直播目标不存在", details: {} } }, 404);
+  try {
+    const result = await upsertLiveTargetFeatureConfig(c.req.param("id"), parsed.data);
+    if (!result) {
+      return c.json({ error: { code: "LIVE_TARGET_NOT_FOUND", message: "直播目标不存在", details: {} } }, 404);
+    }
+    return c.json(result);
+  } catch (error) {
+    return liveTargetMutationError(c, error);
   }
-  return c.json(result);
+});
+adminRoutes.get("/live-targets/:id/feature-configs/commerce-card/preview", async (c) => {
+  const [preview, rollout] = await Promise.all([
+    getCommerceCardFeaturePreviewData(c.req.param("id")),
+    getFeatureRolloutControl("commerce_card_workflow_v2")
+  ]);
+  if (!preview) {
+    return c.json({ error: { code: "COMMERCE_CARD_FEATURE_NOT_FOUND", message: "商品卡组合任务配置不存在", details: {} } }, 404);
+  }
+  if (!rollout) {
+    return c.json({ error: { code: "FEATURE_ROLLOUT_CONTROL_NOT_FOUND", message: "V2 运行门禁尚未初始化", details: {} } }, 503);
+  }
+  return c.json({
+    source: "target_center_v2" as const,
+    workflowVersion: 2 as const,
+    revision: preview.revision,
+    configHash: preview.configHash,
+    duration: estimateCommerceCardWorkflowDuration(preview.runtimeConfig),
+    rollout,
+    manualExecutionApproved: false as const,
+    payload: preview.payload
+  });
 });
 adminRoutes.post("/live-target-device-bindings", async (c) => {
   const parsed = liveTargetDeviceBindingsSchema.safeParse(await c.req.json());
   if (!parsed.success) {
     return validationError(c, parsed.error);
   }
-  const result = await replaceLiveTargetDeviceBindings(parsed.data);
-  if (!result) {
-    return c.json({ error: { code: "LIVE_TARGET_NOT_FOUND", message: "直播目标不存在", details: {} } }, 404);
+  try {
+    const result = await replaceLiveTargetDeviceBindings(parsed.data);
+    if (!result) {
+      return c.json({ error: { code: "LIVE_TARGET_NOT_FOUND", message: "直播目标不存在", details: {} } }, 404);
+    }
+    return c.json(result);
+  } catch (error) {
+    return liveTargetMutationError(c, error);
   }
-  return c.json(result);
 });
 adminRoutes.get("/mobile-commands", async (c) => c.json(await getCommands()));
 adminRoutes.get("/task-assignments", async (c) => c.json(await getTaskAssignments()));
@@ -142,7 +218,14 @@ adminRoutes.post("/task-assignments", async (c) => {
   if (!parsed.success) {
     return validationError(c, parsed.error);
   }
-  return c.json(await createTaskAssignmentFromAdmin(parsed.data), 201);
+  try {
+    return c.json(await createTaskAssignmentFromAdmin(parsed.data), 201);
+  } catch (error) {
+    if (error instanceof FeatureRolloutRejectedError) {
+      return c.json({ error: { code: error.message, message: "当前设备不满足商品卡 V2 启动条件", details: { reasons: error.reasons } } }, 409);
+    }
+    throw error;
+  }
 });
 adminRoutes.get("/agent-versions", async (c) => c.json(await getAgentVersions()));
 adminRoutes.post("/agent-versions", async (c) => {

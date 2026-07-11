@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { updateDeviceTaskConfigSchema } from "@pkg/types";
-import { buildDeviceLiveTargetsFromTaskConfig, buildMobileLiveTargetConfig, liveTargetFeatureConfigSchema, liveTargetPayloadSchema } from "./live-target-config.service";
+import { defaultCommerceCardWorkflowRuntimeConfig, updateDeviceTaskConfigSchema } from "@pkg/types";
+import { buildDeviceLiveTargetsFromTaskConfig, buildLiveTargetConfigHash, buildMobileLiveTargetConfig, liveTargetFeatureConfigSchema, liveTargetPayloadSchema, mergeMobileLiveTargetConfigs, normalizeCommerceCardWorkflowRuntimeConfig } from "./live-target-config.service";
 
 describe("live target config service", () => {
   test("validates a live target with aliases and a 90 percent threshold", () => {
@@ -113,6 +113,8 @@ describe("live target config service", () => {
     expect(targets[1].searchKeywords).toEqual(["夏橙商品卡"]);
     expect(targets[1].productKeywords).toEqual(["秭归", "夏橙"]);
     expect(targets[1].runtimeConfig).toMatchObject({ scanMinutesPerRound: 15, watchMinutesPerLive: 15, maxRounds: 3 });
+    expect(targets[1].runtimeConfig).toMatchObject({ configVersion: 1 });
+    expect(targets[1].configSource).toBe("device_v1");
   });
 
   test("accepts commerce-card targetRoom in device task config payload", () => {
@@ -133,5 +135,119 @@ describe("live target config service", () => {
     });
 
     expect(parsed.success).toBe(true);
+  });
+
+  test("normalizes legacy commerce-card fields into the safe V2 default stage", () => {
+    const runtime = normalizeCommerceCardWorkflowRuntimeConfig({
+      scanMinutesPerRound: 20,
+      maxRounds: 2,
+      watchMinutesPerLive: 30,
+      commentPool: ["第一条", "第一条", "第二条"]
+    });
+
+    expect(runtime.configVersion).toBe(2);
+    expect(runtime.enabledStages).toEqual(["product_nurture"]);
+    expect(runtime.productNurtureRoundMinutes).toBe(20);
+    expect(runtime.productNurtureMaxRounds).toBe(2);
+    expect(runtime.commentPool).toEqual(["第一条", "第二条"]);
+    expect("watchMinutesPerLive" in runtime).toBe(false);
+  });
+
+  test("rejects unsafe stage combinations and incomplete comment pools", () => {
+    const missingProductStage = liveTargetFeatureConfigSchema.safeParse({
+      featureType: "commerce_card_live_comment",
+      searchKeywords: ["柑橘"],
+      productKeywords: ["柑橘"],
+      runtimeConfig: {
+        ...defaultCommerceCardWorkflowRuntimeConfig,
+        enabledStages: ["live_nurture"],
+        liveNurtureKeywords: ["柑橘"]
+      }
+    });
+    const insufficientComments = liveTargetFeatureConfigSchema.safeParse({
+      featureType: "commerce_card_live_comment",
+      searchKeywords: ["柑橘"],
+      productKeywords: ["柑橘"],
+      runtimeConfig: {
+        ...defaultCommerceCardWorkflowRuntimeConfig,
+        enabledStages: ["target_comment"],
+        maxCommentsPerRoom: 2,
+        commentPool: ["仅一条"]
+      }
+    });
+
+    expect(missingProductStage.success).toBe(false);
+    expect(insufficientComments.success).toBe(false);
+  });
+
+  test("keeps realtime executeEnabled outside the canonical business hash", () => {
+    const hashInput = {
+      target: {
+        id: "11111111-1111-4111-8111-111111111111",
+        targetCode: "citrus_target",
+        targetName: "柑橘直播间",
+        platform: "douyin",
+        similarityThreshold: 0.9,
+        enabled: true
+      },
+      aliases: [{ aliasText: "柑橘助农", aliasType: "room_name", weight: 100, enabled: true }],
+      featureConfig: {
+        featureType: "commerce_card_live_comment",
+        searchKeywords: ["柑橘"],
+        requiredKeywords: [],
+        forbiddenKeywords: ["回放"],
+        productKeywords: ["柑橘"],
+        liveSignals: ["直播中"],
+        runtimeConfig: { ...defaultCommerceCardWorkflowRuntimeConfig, executeEnabled: false },
+        enabled: true
+      },
+      bindings: [{ deviceId: null, priority: 1, enabled: true }]
+    };
+    const disabledHash = buildLiveTargetConfigHash(hashInput);
+    const enabledHash = buildLiveTargetConfigHash({
+      ...hashInput,
+      featureConfig: {
+        ...hashInput.featureConfig,
+        runtimeConfig: { ...hashInput.featureConfig.runtimeConfig, executeEnabled: true }
+      }
+    });
+    const changedBusinessHash = buildLiveTargetConfigHash({
+      ...hashInput,
+      featureConfig: {
+        ...hashInput.featureConfig,
+        runtimeConfig: { ...hashInput.featureConfig.runtimeConfig, productCardDwellSeconds: 150 }
+      }
+    });
+
+    expect(enabledHash).toBe(disabledHash);
+    expect(changedBusinessHash).not.toBe(disabledHash);
+  });
+
+  test("keeps V2 previews non-executable and lets device V1 override public V1", () => {
+    const v2 = buildMobileLiveTargetConfig({
+      target: { targetCode: "public_v2", targetName: "公共 V2 目标" },
+      featureConfig: {
+        featureType: "commerce_card_live_comment",
+        searchKeywords: ["柑橘"],
+        productKeywords: ["柑橘"],
+        runtimeConfig: defaultCommerceCardWorkflowRuntimeConfig
+      }
+    });
+    const device = buildDeviceLiveTargetsFromTaskConfig({
+      deviceCode: "device_001",
+      p3ExtensionsConfig: {
+        commerceCardLiveComment: {
+          enabled: true,
+          searchKeywords: ["设备柑橘"],
+          matchKeywords: ["柑橘"]
+        }
+      }
+    });
+    const merged = mergeMobileLiveTargetConfigs(device, [{ ...v2, workflowVersion: 1, configSource: "target_center_v1", executionEligible: true }]);
+
+    expect(v2.workflowVersion).toBe(2);
+    expect(v2.executionEligible).toBe(false);
+    expect(merged.filter((item) => item.featureType === "commerce_card_live_comment")).toHaveLength(1);
+    expect(merged[0].configSource).toBe("device_v1");
   });
 });

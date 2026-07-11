@@ -19,13 +19,29 @@ CREATE TABLE IF NOT EXISTS "device_log_files" (
   "deleted_at" timestamp with time zone
 );
 
-ALTER TABLE "device_log_files"
-ADD CONSTRAINT "device_log_files_device_id_collector_devices_id_fk"
-FOREIGN KEY ("device_id") REFERENCES "collector_devices"("id") ON DELETE no action ON UPDATE no action;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'device_log_files_device_id_collector_devices_id_fk'
+  ) THEN
+    ALTER TABLE "device_log_files"
+    ADD CONSTRAINT "device_log_files_device_id_collector_devices_id_fk"
+    FOREIGN KEY ("device_id") REFERENCES "collector_devices"("id") ON DELETE no action ON UPDATE no action;
+  END IF;
+END $$;
 
-ALTER TABLE "device_log_files"
-ADD CONSTRAINT "device_log_files_task_id_collection_tasks_id_fk"
-FOREIGN KEY ("task_id") REFERENCES "collection_tasks"("id") ON DELETE no action ON UPDATE no action;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'device_log_files_task_id_collection_tasks_id_fk'
+  ) THEN
+    ALTER TABLE "device_log_files"
+    ADD CONSTRAINT "device_log_files_task_id_collection_tasks_id_fk"
+    FOREIGN KEY ("task_id") REFERENCES "collection_tasks"("id") ON DELETE no action ON UPDATE no action;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS "idx_device_log_files_tenant_device_date"
 ON "device_log_files" USING btree ("tenant_id","device_id","log_date");

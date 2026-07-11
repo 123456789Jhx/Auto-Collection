@@ -3280,3 +3280,240 @@ body {
     width: 100%;
   }
 }
+/* 商品卡组合任务配置 */
+.configuration-view-shell {
+  min-width: 0;
+}
+
+.config-view-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.rollout-controls-panel {
+  margin-bottom: 16px;
+}
+
+.rollout-control-form + .rollout-control-form {
+  margin-top: 16px;
+}
+
+.rollout-control-heading,
+.commerce-preview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.rollout-control-heading > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.rollout-control-heading span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.workflow-field-grid {
+  display: grid;
+  gap: 12px 16px;
+  align-items: start;
+}
+
+.workflow-field-grid.two-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.workflow-field-grid.compact-columns {
+  grid-template-columns: minmax(180px, 260px) minmax(120px, 1fr);
+}
+
+.workflow-field-grid.three-columns {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.workflow-field-grid.four-columns {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.workflow-field-grid.five-columns {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.workflow-field-grid.rollout-columns {
+  grid-template-columns: 100px minmax(150px, 0.7fr) minmax(150px, 0.7fr) minmax(220px, 1.6fr);
+}
+
+.workflow-field-grid > .ant-form-item {
+  min-width: 0;
+}
+
+.workflow-stage-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+
+.workflow-stage-options .ant-checkbox-wrapper {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.workflow-stage-section {
+  padding: 16px 0 4px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.workflow-stage-section h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.workflow-final-fields {
+  margin-top: 16px;
+}
+
+.rollout-save-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.rollout-save-row .ant-btn {
+  margin-bottom: 24px;
+}
+
+.commerce-preview-band {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.commerce-preview-heading {
+  justify-content: flex-start;
+}
+
+.commerce-preview-details {
+  margin-top: 12px;
+}
+
+.commerce-preview-details summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.commerce-preview-details .ops-small {
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1100px) {
+  .workflow-field-grid.four-columns,
+  .workflow-field-grid.five-columns,
+  .workflow-field-grid.rollout-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .app-shell {
+    display: flex;
+    flex-direction: column !important;
+  }
+
+  .app-shell .ant-layout-sider.sidebar {
+    display: block;
+    flex: 0 0 auto !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+  }
+
+  .app-shell > .ant-layout {
+    flex: 0 0 auto !important;
+    width: 100% !important;
+    min-width: 0;
+  }
+
+  .brand {
+    height: 48px;
+    padding: 0 14px;
+    font-size: 15px;
+  }
+
+  .sidebar .ant-menu-dark {
+    display: flex;
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    padding: 6px 8px;
+  }
+
+  .sidebar .ant-menu-dark .ant-menu-item {
+    flex: 0 0 auto;
+    width: auto;
+    height: 38px;
+    margin: 0;
+    padding-inline: 12px !important;
+  }
+
+  .topbar,
+  .content,
+  .configuration-view-shell,
+  .rollout-controls-panel,
+  .live-target-workbench > .ops-panel {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .config-view-toolbar {
+    justify-content: stretch;
+  }
+
+  .config-view-toolbar .ant-segmented {
+    width: 100%;
+  }
+
+  .workflow-field-grid.two-columns,
+  .workflow-field-grid.compact-columns,
+  .workflow-field-grid.three-columns,
+  .workflow-field-grid.four-columns,
+  .workflow-field-grid.five-columns,
+  .workflow-field-grid.rollout-columns,
+  .rollout-save-row,
+  .workflow-stage-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rollout-save-row .ant-btn {
+    width: 100%;
+    margin-bottom: 0;
+  }
+
+  .rollout-control-heading {
+    align-items: flex-start;
+  }
+
+  .rollout-control-heading > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+}

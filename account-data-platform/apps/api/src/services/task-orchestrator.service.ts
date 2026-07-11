@@ -9,6 +9,7 @@ import {
   updateTaskAssignment
 } from "../repositories/task-assignment.repository";
 import { createCommand } from "./command.service";
+import { assertCommerceCardWorkflowV2Allowed } from "./feature-rollout-control.service";
 
 const commandByAssignmentCommand: Record<CreateTaskAssignmentPayload["commandType"], "START" | "RESUME" | "PAUSE" | "STOP"> = {
   START: "START",
@@ -34,6 +35,16 @@ function assignmentStatusFromCommand(commandType: string) {
   return "ISSUED";
 }
 
+function requestedWorkflowVersion(payload: Record<string, unknown> | undefined) {
+  if (!payload) return 1;
+  const direct = Number(payload.workflowVersion ?? payload.configVersion);
+  if (Number.isFinite(direct)) return direct;
+  const effectiveWorkflow = payload.effectiveWorkflow;
+  if (!effectiveWorkflow || typeof effectiveWorkflow !== "object" || Array.isArray(effectiveWorkflow)) return 1;
+  const nested = Number((effectiveWorkflow as Record<string, unknown>).workflowVersion);
+  return Number.isFinite(nested) ? nested : 1;
+}
+
 export async function createTaskAssignmentFromAdmin(payload: CreateTaskAssignmentPayload) {
   const [device, task] = await Promise.all([
     findDeviceByCode(payload.deviceId),
@@ -41,6 +52,14 @@ export async function createTaskAssignmentFromAdmin(payload: CreateTaskAssignmen
   ]);
   if (!device) {
     throw new Error("DEVICE_UNREGISTERED");
+  }
+
+  if (
+    payload.taskType === "commerce_card_live_comment" &&
+    (payload.commandType === "START" || payload.commandType === "RESUME") &&
+    requestedWorkflowVersion(payload.payload) >= 2
+  ) {
+    await assertCommerceCardWorkflowV2Allowed(device.deviceCode);
   }
 
   await expireActiveAssignmentsByDevice(device.id, "superseded_by_new_assignment");

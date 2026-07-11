@@ -1,4 +1,5 @@
 import { collectorDevices } from "@pkg/db/schema";
+import type { CommerceCardAgentCapabilities } from "@pkg/types";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { config } from "../config";
 import { db } from "./db";
@@ -43,6 +44,24 @@ export async function updateDeviceRuntimeMetadata(deviceId: string, values: {
     .where(eq(collectorDevices.id, existing.id))
     .returning();
   return updated ?? null;
+}
+
+export async function updateDeviceCapabilities(deviceId: string, capabilities: CommerceCardAgentCapabilities) {
+  const [device] = await db
+    .update(collectorDevices)
+    .set({
+      capabilitiesJson: capabilities,
+      capabilitiesReportedAt: new Date(),
+      updatedAt: new Date(),
+      updatedBy: "mobile_agent"
+    })
+    .where(and(
+      eq(collectorDevices.tenantId, config.tenantId),
+      eq(collectorDevices.id, deviceId),
+      isNull(collectorDevices.deletedAt)
+    ))
+    .returning();
+  return device ?? null;
 }
 
 export async function resolveDeviceByToken(values: {

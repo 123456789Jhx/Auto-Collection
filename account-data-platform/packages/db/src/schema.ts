@@ -39,6 +39,8 @@ export const collectorDevices = pgTable(
     updateStatus: varchar("update_status", { length: 32 }),
     lastCommandAt: timestamp("last_command_at", { withTimezone: true }),
     lastErrorMessage: varchar("last_error_message", { length: 500 }),
+    capabilitiesJson: jsonb("capabilities_json").$type<Record<string, unknown>>(),
+    capabilitiesReportedAt: timestamp("capabilities_reported_at", { withTimezone: true }),
     status: varchar("status", { length: 32 }).notNull().default("online"),
     lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
     ...auditColumns
@@ -324,6 +326,8 @@ export const liveTargetFeatureConfigs = pgTable(
     productKeywords: jsonb("product_keywords").$type<string[]>().notNull().default([]),
     liveSignals: jsonb("live_signals").$type<string[]>().notNull().default([]),
     runtimeConfigJson: jsonb("runtime_config_json").$type<Record<string, unknown>>().notNull().default({}),
+    revision: integer("revision").notNull().default(1),
+    configHash: varchar("config_hash", { length: 64 }),
     enabled: boolean("enabled").notNull().default(true),
     ...auditColumns
   },
@@ -349,6 +353,67 @@ export const liveTargetDeviceBindings = pgTable(
     index("idx_live_target_device_bindings_tenant_target").on(table.tenantId, table.targetId),
     uniqueIndex("uniq_live_target_device_bindings_tenant_device_target_feature")
       .on(table.tenantId, table.deviceId, table.targetId, table.featureType)
+      .where(sql`${table.deletedAt} is null`)
+  ]
+);
+
+export const featureRolloutControls = pgTable(
+  "feature_rollout_controls",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    featureKey: varchar("feature_key", { length: 100 }).notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    revision: integer("revision").notNull().default(1),
+    minAppVersion: varchar("min_app_version", { length: 64 }),
+    requiredCapabilitiesJson: jsonb("required_capabilities_json").$type<string[]>().notNull().default([]),
+    capabilityTtlSeconds: integer("capability_ttl_seconds").notNull().default(600),
+    reason: varchar("reason", { length: 500 }),
+    ...auditColumns
+  },
+  (table) => [
+    uniqueIndex("uniq_feature_rollout_controls_tenant_feature")
+      .on(table.tenantId, table.featureKey)
+      .where(sql`${table.deletedAt} is null`)
+  ]
+);
+
+export const featureRolloutControlEvents = pgTable(
+  "feature_rollout_control_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    controlId: uuid("control_id").notNull().references(() => featureRolloutControls.id),
+    featureKey: varchar("feature_key", { length: 100 }).notNull(),
+    fromRevision: integer("from_revision").notNull(),
+    toRevision: integer("to_revision").notNull(),
+    beforeJson: jsonb("before_json").$type<Record<string, unknown>>().notNull(),
+    afterJson: jsonb("after_json").$type<Record<string, unknown>>().notNull(),
+    reason: varchar("reason", { length: 500 }).notNull(),
+    actor: varchar("actor", { length: 64 }).notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_feature_rollout_control_events_tenant_feature_occurred")
+      .on(table.tenantId, table.featureKey, table.occurredAt),
+    uniqueIndex("uniq_feature_rollout_control_events_tenant_control_revision")
+      .on(table.tenantId, table.controlId, table.toRevision)
+  ]
+);
+
+export const featureRolloutDeviceAllowlist = pgTable(
+  "feature_rollout_device_allowlist",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    featureKey: varchar("feature_key", { length: 100 }).notNull(),
+    deviceId: uuid("device_id").notNull().references(() => collectorDevices.id),
+    enabled: boolean("enabled").notNull().default(true),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_feature_rollout_device_allowlist_tenant_feature").on(table.tenantId, table.featureKey),
+    index("idx_feature_rollout_device_allowlist_tenant_device").on(table.tenantId, table.deviceId),
+    uniqueIndex("uniq_feature_rollout_device_allowlist_tenant_feature_device")
+      .on(table.tenantId, table.featureKey, table.deviceId)
       .where(sql`${table.deletedAt} is null`)
   ]
 );
@@ -413,7 +478,8 @@ export const collectorDevicesRelations = relations(collectorDevices, ({ many }) 
   liveCommentActions: many(liveCommentActions),
   updateEvents: many(agentUpdateEvents),
   taskConfigs: many(deviceTaskConfigs),
-  liveTargetBindings: many(liveTargetDeviceBindings)
+  liveTargetBindings: many(liveTargetDeviceBindings),
+  featureRolloutAllowlist: many(featureRolloutDeviceAllowlist)
 }));
 
 export const collectionTasksRelations = relations(collectionTasks, ({ many }) => ({

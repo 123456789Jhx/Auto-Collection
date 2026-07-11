@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { commerceCardAgentCapabilitiesSchema } from "../domain/commerce-card-workflow";
 import { deviceStatusSchema, runtimeLogLevelSchema, sceneTypeSchema } from "../domain/common";
 
 export const mobileTaskConfigSchema = z.object({
@@ -67,6 +68,7 @@ export const mobileHeartbeatSchema = z.object({
   capturedCount: z.number().int().optional(),
   lastMessage: z.string().optional(),
   douyinAccountName: z.preprocess((value) => value === "" || value === null ? undefined : value, z.string().trim().min(1).max(100).optional()),
+  capabilities: commerceCardAgentCapabilitiesSchema.optional(),
   expectedEndAt: z.string().nullable().optional(),
   rawPayload: z.record(z.unknown()).optional(),
   reportedAt: z.string().optional()

@@ -1,3 +1,11 @@
+import type {
+  CommerceCardFeaturePreview,
+  FeatureRolloutControl,
+  FeatureRolloutControlUpdate,
+  FeatureRolloutKey,
+  LiveTargetFeatureType
+} from "@pkg/types";
+
 const apiBaseUrl =
   (import.meta.env.PROD ? import.meta.env.VITE_API_BASE_URL_PROD : import.meta.env.VITE_API_BASE_URL_DEV) ??
   import.meta.env.VITE_API_BASE_URL ??
@@ -54,15 +62,33 @@ async function handleResponse<T>(response: Response): Promise<T> {
     }
 
     let message = `API request failed: ${response.status}`;
+    let code = "API_REQUEST_FAILED";
+    let details: unknown = {};
     try {
-      const body = (await response.json()) as { error?: { message?: string } };
+      const body = (await response.json()) as { error?: { code?: string; message?: string; details?: unknown } };
       message = body.error?.message || message;
+      code = body.error?.code || code;
+      details = body.error?.details ?? details;
     } catch {
       // Keep the HTTP status fallback when the response is not JSON.
     }
-    throw new Error(message);
+    throw new ApiError(message, response.status, code, details);
   }
   return response.json() as Promise<T>;
+}
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly details: unknown;
+
+  constructor(message: string, status: number, code: string, details: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
 }
 
 async function request<T>(path: string, params?: QueryParams): Promise<T> {
@@ -188,7 +214,7 @@ export function getTasks() {
   return request<unknown[]>("/admin/tasks");
 }
 
-export type LiveTargetFeatureType = "live_comment" | "commerce_card_live_comment";
+export type { LiveTargetFeatureType };
 
 export type LiveTargetAlias = {
   id?: string;
@@ -208,6 +234,12 @@ export type LiveTargetFeatureConfig = {
   liveSignals?: string[];
   runtimeConfig?: Record<string, unknown>;
   enabled: boolean;
+  expectedRevision?: number;
+  revision?: number;
+  configHash?: string | null;
+  storedWorkflowVersion?: 1 | 2;
+  configValidationError?: string | null;
+  updatedAt?: string;
 };
 
 export type LiveTarget = {
@@ -227,6 +259,7 @@ export type LiveTarget = {
     priority: number;
     enabled: boolean;
   }>;
+  updatedAt?: string;
 };
 
 export function getLiveTargets(platform = "douyin") {
@@ -242,6 +275,7 @@ export function saveLiveTarget(payload: {
   enabled?: boolean;
   remark?: string | null;
   aliases?: LiveTargetAlias[];
+  expectedRevisions?: Partial<Record<LiveTargetFeatureType, number>>;
 }) {
   if (payload.id) {
     return patch<LiveTarget>(`/admin/live-targets/${encodeURIComponent(payload.id)}`, payload);
@@ -262,8 +296,21 @@ export function saveDeviceLiveTargetBindings(payload: {
   featureType: LiveTargetFeatureType;
   deviceCodes: string[];
   defaultEnabled?: boolean;
+  expectedRevision?: number;
 }) {
   return mutate<LiveTarget>("/admin/live-target-device-bindings", payload);
+}
+
+export function getCommerceCardFeaturePreview(targetId: string) {
+  return request<CommerceCardFeaturePreview>(`/admin/live-targets/${encodeURIComponent(targetId)}/feature-configs/commerce-card/preview`);
+}
+
+export function getFeatureRolloutControls() {
+  return request<FeatureRolloutControl[]>("/admin/feature-rollout-controls");
+}
+
+export function updateFeatureRolloutControl(featureKey: FeatureRolloutKey, payload: FeatureRolloutControlUpdate) {
+  return patch<FeatureRolloutControl>(`/admin/feature-rollout-controls/${encodeURIComponent(featureKey)}`, payload);
 }
 
 export function getTaskAssignments() {

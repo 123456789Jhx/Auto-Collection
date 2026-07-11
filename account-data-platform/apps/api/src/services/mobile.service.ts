@@ -7,8 +7,8 @@ import { createLiveCommentAction } from "../repositories/live-comment.repository
 import { listMobileLiveTargetsForDevice } from "../repositories/live-target.repository";
 import { createCollectionRecord } from "../repositories/record.repository";
 import { findCurrentTask, findDeviceTaskConfig, findTaskByCode, resolveTaskConfig } from "../repositories/task.repository";
-import { findDeviceByCode, findDeviceByToken, registerDeviceByToken, resolveDeviceByToken } from "../repositories/device.repository";
-import { buildDeviceLiveTargetsFromTaskConfig } from "./live-target-config.service";
+import { findDeviceByCode, findDeviceByToken, registerDeviceByToken, resolveDeviceByToken, updateDeviceCapabilities } from "../repositories/device.repository";
+import { buildDeviceLiveTargetsFromTaskConfig, mergeMobileLiveTargetConfigs } from "./live-target-config.service";
 import type { MobileCollectionRecordPayload, MobileHeartbeatPayload, MobileLiveCommentActionPayload, MobileLogFilePayload, MobileRuntimeLogPayload } from "@pkg/types";
 
 function normalizeDouyinAccountName(value: unknown) {
@@ -119,7 +119,7 @@ export async function getCurrentTask(deviceId: string, platform: string, clientI
     liveCommentBotConfig: taskConfig.liveCommentBotConfig,
     p3ExtensionsConfig: taskConfig.p3ExtensionsConfig
   });
-  const liveTargets = [...deviceLiveTargets, ...publicLiveTargets];
+  const liveTargets = mergeMobileLiveTargetConfigs(deviceLiveTargets, publicLiveTargets);
   const liveCommentConfig = (taskConfig.liveCommentConfig ?? {}) as Record<string, unknown>;
   const followedAccounts = buildFollowedAccounts(result.followedConfigs ?? [], liveCommentConfig);
   const leaderAccountNames = followedAccounts.flatMap((account) => [account.accountName, ...(account.aliasNames || [])]).filter(Boolean);
@@ -198,6 +198,10 @@ export async function saveHeartbeat(payload: MobileHeartbeatPayload, clientIp?: 
     findTaskByCode(payload.taskId),
     resolveMobileDevice({ deviceId: payload.deviceId, deviceToken, appVersion: payload.appVersion, clientIp })
   ]);
+  if (payload.capabilities) {
+    await updateDeviceCapabilities(device.id, payload.capabilities);
+    rawPayload.capabilities = payload.capabilities;
+  }
   return createHeartbeat({
     tenantId: config.tenantId,
     taskId: task?.id,
