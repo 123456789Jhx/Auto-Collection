@@ -236,6 +236,9 @@ export const mobileCommands = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     taskId: uuid("task_id").references(() => collectionTasks.id),
     deviceId: uuid("device_id").references(() => collectorDevices.id),
+    assignmentId: uuid("assignment_id"),
+    commandSequence: integer("command_sequence"),
+    idempotencyKey: varchar("idempotency_key", { length: 160 }),
     commandType: varchar("command_type", { length: 32 }).notNull(),
     status: varchar("status", { length: 32 }).notNull().default("PENDING"),
     payloadJson: jsonb("payload_json").$type<Record<string, unknown>>(),
@@ -248,7 +251,10 @@ export const mobileCommands = pgTable(
   },
   (table) => [
     index("idx_mobile_commands_tenant_device_status").on(table.tenantId, table.deviceId, table.status),
-    index("idx_mobile_commands_tenant_created_at").on(table.tenantId, table.createdAt)
+    index("idx_mobile_commands_tenant_created_at").on(table.tenantId, table.createdAt),
+    index("idx_mobile_commands_tenant_assignment").on(table.tenantId, table.assignmentId),
+    uniqueIndex("uniq_mobile_commands_tenant_assignment_sequence").on(table.tenantId, table.assignmentId, table.commandSequence).where(sql`${table.assignmentId} is not null and ${table.commandSequence} is not null and ${table.deletedAt} is null`),
+    uniqueIndex("uniq_mobile_commands_tenant_idempotency_key").on(table.tenantId, table.idempotencyKey).where(sql`${table.idempotencyKey} is not null and ${table.deletedAt} is null`)
   ]
 );
 
@@ -259,7 +265,24 @@ export const deviceTaskAssignments = pgTable(
     deviceId: uuid("device_id").notNull().references(() => collectorDevices.id),
     taskId: uuid("task_id").references(() => collectionTasks.id),
     commandId: uuid("command_id").references(() => mobileCommands.id),
+    startCommandId: uuid("start_command_id").references(() => mobileCommands.id),
     taskType: varchar("task_type", { length: 32 }).notNull(),
+    selectedTargetId: uuid("selected_target_id").references(() => liveTargets.id),
+    targetCode: varchar("target_code", { length: 64 }),
+    configRevision: integer("config_revision"),
+    configHash: varchar("config_hash", { length: 64 }),
+    configSnapshot: jsonb("config_snapshot").$type<Record<string, unknown>>(),
+    snapshotHash: varchar("snapshot_hash", { length: 64 }),
+    executionApprovalId: uuid("execution_approval_id"),
+    expectedAccountId: varchar("expected_account_id", { length: 100 }),
+    expectedAccountName: varchar("expected_account_name", { length: 100 }),
+    currentStage: varchar("current_stage", { length: 64 }),
+    progressJson: jsonb("progress_json").$type<Record<string, unknown>>(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    lastEventSeq: integer("last_event_seq").notNull().default(0),
+    stateVersion: integer("state_version").notNull().default(1),
+    blockReason: varchar("block_reason", { length: 200 }),
+    terminalReason: varchar("terminal_reason", { length: 200 }),
     targetContext: varchar("target_context", { length: 64 }),
     status: varchar("status", { length: 32 }).notNull().default("PENDING"),
     priority: integer("priority").notNull().default(100),
@@ -275,7 +298,39 @@ export const deviceTaskAssignments = pgTable(
   (table) => [
     index("idx_device_task_assignments_tenant_device_created_at").on(table.tenantId, table.deviceId, table.createdAt),
     index("idx_device_task_assignments_tenant_status").on(table.tenantId, table.status),
-    index("idx_device_task_assignments_tenant_command").on(table.tenantId, table.commandId)
+    index("idx_device_task_assignments_tenant_command").on(table.tenantId, table.commandId),
+    index("idx_device_task_assignments_tenant_target").on(table.tenantId, table.selectedTargetId),
+    index("idx_device_task_assignments_tenant_snapshot").on(table.tenantId, table.snapshotHash),
+    uniqueIndex("uniq_device_task_assignments_one_active_per_device").on(table.tenantId, table.deviceId).where(sql`${table.deletedAt} is null and ${table.status} not in ('STOPPED','SUPERSEDED','CANCELLED','FAILED','COMPLETED','EXPIRED')`)
+  ]
+);
+
+export const deviceTaskAssignmentEvents = pgTable(
+  "device_task_assignment_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    assignmentId: uuid("assignment_id").notNull().references(() => deviceTaskAssignments.id),
+    sequence: integer("sequence").notNull(),
+    deviceId: uuid("device_id").notNull().references(() => collectorDevices.id),
+    targetId: uuid("target_id").references(() => liveTargets.id),
+    featureType: varchar("feature_type", { length: 64 }).notNull(),
+    stage: varchar("stage", { length: 64 }),
+    eventType: varchar("event_type", { length: 100 }).notNull(),
+    fromState: varchar("from_state", { length: 32 }),
+    toState: varchar("to_state", { length: 32 }),
+    status: varchar("status", { length: 32 }).notNull(),
+    reasonCode: varchar("reason_code", { length: 100 }),
+    idempotencyKey: varchar("idempotency_key", { length: 200 }).notNull(),
+    evidenceJson: jsonb("evidence_json").$type<Record<string, unknown>>().notNull().default({}),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    actor: varchar("actor", { length: 32 }).notNull().default("system"),
+    ...auditColumns
+  },
+  (table) => [
+    uniqueIndex("uniq_device_task_assignment_events_tenant_assignment_seq").on(table.tenantId, table.assignmentId, table.sequence),
+    uniqueIndex("uniq_device_task_assignment_events_tenant_idempotency").on(table.tenantId, table.idempotencyKey).where(sql`${table.deletedAt} is null`),
+    index("idx_device_task_assignment_events_tenant_device_occurred").on(table.tenantId, table.deviceId, table.occurredAt),
+    index("idx_device_task_assignment_events_tenant_assignment").on(table.tenantId, table.assignmentId)
   ]
 );
 

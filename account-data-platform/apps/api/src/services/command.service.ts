@@ -9,7 +9,7 @@ import {
 } from "../repositories/command.repository";
 import { findDeviceByCode, markDeviceCommandIssued, resolveDeviceByToken } from "../repositories/device.repository";
 import { findTaskByCode } from "../repositories/task.repository";
-import { updateTaskAssignmentByCommandId } from "../repositories/task-assignment.repository";
+import { updateTaskAssignmentByCommand } from "../repositories/task-assignment.repository";
 import { supersededCommandTypesFor } from "./command-policy";
 
 function addSeconds(seconds: number) {
@@ -34,8 +34,15 @@ export async function createCommand(payload: CreateMobileCommandPayload) {
     tenantId: config.tenantId,
     deviceId: device.id,
     taskId: task?.id,
+    assignmentId: payload.assignmentId,
+    commandSequence: payload.commandSequence,
+    idempotencyKey: payload.idempotencyKey,
     commandType: payload.commandType,
-    payloadJson: payload.payload,
+    payloadJson: {
+      ...(payload.payload ?? {}),
+      ...(payload.assignmentId ? { assignmentId: payload.assignmentId } : {}),
+      ...(payload.commandSequence ? { commandSequence: payload.commandSequence } : {})
+    },
     status: "PENDING",
     issuedAt: new Date(),
     expiresAt: addSeconds(payload.expiresInSeconds),
@@ -87,12 +94,22 @@ export async function acknowledgeCommand(commandId: string, payload: MobileComma
   if (!command) {
     throw new Error("COMMAND_NOT_FOUND");
   }
-  const assignmentStatus = payload.status === "DONE" ? "ACKED" : (payload.status === "FAILED" ? "FAILED" : "SUPERSEDED");
-  await updateTaskAssignmentByCommandId(commandId, {
+  const terminalAt = command.acknowledgedAt ?? new Date();
+  const assignmentStatus = resolveAssignmentStatusFromCommandAck(command.commandType, payload.status);
+  await updateTaskAssignmentByCommand(command, {
     status: assignmentStatus,
-    acknowledgedAt: command.acknowledgedAt ?? new Date(),
-    completedAt: payload.status === "FAILED" || payload.status === "IGNORED" ? command.acknowledgedAt ?? new Date() : undefined,
+    acknowledgedAt: terminalAt,
+    completedAt: assignmentStatus === "STOPPED" || assignmentStatus === "FAILED" || assignmentStatus === "SUPERSEDED" ? terminalAt : undefined,
     updatedBy: "mobile_agent"
   });
   return command;
+}
+
+function resolveAssignmentStatusFromCommandAck(commandType: string, status: MobileCommandAckPayload["status"]) {
+  if (status === "FAILED") return "FAILED";
+  if (status === "IGNORED") return "SUPERSEDED";
+  if (commandType === "STOP") return "STOPPED";
+  if (commandType === "PAUSE") return "PAUSED";
+  if (commandType === "RESUME") return "ACKED";
+  return "ACKED";
 }

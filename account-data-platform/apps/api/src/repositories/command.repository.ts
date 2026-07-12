@@ -67,6 +67,8 @@ export async function findPendingCommandsByDeviceCode(deviceCode: string, limit 
   return db
     .select({
       id: mobileCommands.id,
+      assignmentId: mobileCommands.assignmentId,
+      commandSequence: mobileCommands.commandSequence,
       commandType: mobileCommands.commandType,
       payloadJson: mobileCommands.payloadJson,
       status: mobileCommands.status,

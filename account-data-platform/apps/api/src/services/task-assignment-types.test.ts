@@ -13,6 +13,18 @@ describe("task assignment types", () => {
     expect(parsed.success).toBe(true);
   });
 
+  test("控制命令可以携带既有 assignment 继续同一运行实例", () => {
+    const parsed = createTaskAssignmentSchema.safeParse({
+      deviceId: "device-001",
+      taskType: "commerce_card_live_comment",
+      assignmentId: "11111111-1111-4111-8111-111111111111",
+      commandType: "PAUSE",
+      reason: "manual_pause"
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
   test("心跳接受结构化商品卡能力上报", () => {
     const parsed = mobileHeartbeatSchema.safeParse({
       taskId: "task-001",

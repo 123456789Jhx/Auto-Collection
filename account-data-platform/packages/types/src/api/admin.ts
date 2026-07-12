@@ -193,6 +193,9 @@ export type UpdateDevicePayload = z.infer<typeof updateDeviceSchema>;
 export const createMobileCommandSchema = z.object({
   deviceId: z.string().min(1),
   taskId: z.string().optional(),
+  assignmentId: z.string().uuid().optional(),
+  commandSequence: z.number().int().positive().optional(),
+  idempotencyKey: z.string().trim().min(1).max(160).optional(),
   commandType: z.enum(["START", "PAUSE", "RESUME", "STOP", "REFRESH_CONFIG", "STATUS", "RESTART_APP", "RESTART_AGENT", "CHECK_UPDATE", "UPDATE_AGENT", "UPLOAD_LOG"]),
   payload: z.record(z.unknown()).optional(),
   expiresInSeconds: z.number().int().min(60).max(86400).default(3600)
@@ -206,6 +209,7 @@ export const createTaskAssignmentSchema = z.object({
   deviceId: z.string().min(1),
   taskType: taskAssignmentTypeSchema,
   commandType: z.enum(["START", "RESUME", "PAUSE", "STOP"]).default("START"),
+  assignmentId: z.string().uuid().optional(),
   reason: z.string().trim().max(200).optional(),
   priority: z.number().int().min(1).max(1000).default(100),
   source: z.string().trim().min(1).max(64).default("manual"),
