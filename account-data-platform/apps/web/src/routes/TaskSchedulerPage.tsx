@@ -76,11 +76,11 @@ type Notice = {
 } | null;
 
 function commerceStartModeTitle(mode: CommerceStartMode) {
-  return mode === "product_nurture" ? "启动商品卡养号 V2" : "启动目标直播间评论 V2";
+  return mode === "product_nurture" ? "启动商品卡养号 V2" : "启动目标直播间评论（商品卡片养号） V2";
 }
 
 function commerceStartModeReason(mode: CommerceStartMode) {
-  return mode === "product_nurture" ? "手动启动商品卡养号 V2" : "手动启动目标直播间评论 V2";
+  return mode === "product_nurture" ? "手动启动商品卡养号 V2" : "手动启动目标直播间评论（商品卡片养号） V2";
 }
 
 function formatDateTime(value?: string | null) {
@@ -798,7 +798,7 @@ export function TaskSchedulerPage() {
                           <button className="scheduler-action-btn live" type="button" title={startBlocked ? startBlockedMessage(assignment?.status) : "启动直播任务"} disabled={mutation.isPending || startBlocked} onClick={() => assignTask(row, "live")}><PlaySquareOutlined />直播</button>
                           <button className="scheduler-action-btn comment" type="button" title={startBlocked ? startBlockedMessage(assignment?.status) : "启动搜索直播评论任务"} disabled={mutation.isPending || startBlocked} onClick={() => assignTask(row, "live_comment")}><CommentOutlined />搜直播评论</button>
                           <button className="scheduler-action-btn commerce" type="button" title={startBlocked ? startBlockedMessage(assignment?.status) : "启动商品卡养号"} disabled={mutation.isPending || startBlocked} onClick={() => assignTask(row, "commerce_card_live_comment", "START", undefined, { commerceStartMode: "product_nurture" })}><ShopOutlined />商品卡养号</button>
-                          <button className="scheduler-action-btn commerce" type="button" title={startBlocked ? startBlockedMessage(assignment?.status) : "启动目标直播间评论"} disabled={mutation.isPending || startBlocked} onClick={() => assignTask(row, "commerce_card_live_comment", "START", undefined, { commerceStartMode: "target_comment" })}><CommentOutlined />目标直播间评论</button>
+                          <button className="scheduler-action-btn commerce" type="button" title={startBlocked ? startBlockedMessage(assignment?.status) : "启动目标直播间评论（商品卡片养号）"} disabled={mutation.isPending || startBlocked} onClick={() => assignTask(row, "commerce_card_live_comment", "START", undefined, { commerceStartMode: "target_comment" })}><CommentOutlined />目标直播间评论（商品卡片养号）</button>
                           <button className="scheduler-action-btn pause" type="button" disabled={mutation.isPending || !canPause} onClick={() => assignTask(row, taskTypeForControl(row), "PAUSE")}><PauseCircleOutlined />暂停</button>
                           <button className="scheduler-action-btn resume" type="button" disabled={mutation.isPending || !canResume} onClick={() => assignTask(row, taskTypeForControl(row), "RESUME")}><PlayCircleOutlined />恢复</button>
                           <button className="scheduler-action-btn stop" type="button" disabled={mutation.isPending || !canStop} onClick={() => assignTask(row, taskTypeForControl(row), "STOP")}><StopOutlined />停止</button>
@@ -942,7 +942,7 @@ export function TaskSchedulerPage() {
               <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending || detailStartBlocked} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "live")}>启动直播</button>
               <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending || detailStartBlocked} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "live_comment")}>启动搜索直播评论</button>
               <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending || detailStartBlocked} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "commerce_card_live_comment", "START", undefined, { commerceStartMode: "product_nurture" })}>启动商品卡养号</button>
-              <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending || detailStartBlocked} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "commerce_card_live_comment", "START", undefined, { commerceStartMode: "target_comment" })}>启动目标直播间评论</button>
+              <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending || detailStartBlocked} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "commerce_card_live_comment", "START", undefined, { commerceStartMode: "target_comment" })}>启动目标直播间评论（商品卡片养号）</button>
               <button className="scheduler-btn pause" type="button" disabled={!selectedDeviceState || mutation.isPending || !detailCanPause} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, taskTypeForControl(selectedDeviceState), "PAUSE")}>暂停</button>
               <button className="scheduler-btn resume" type="button" disabled={!selectedDeviceState || mutation.isPending || !detailCanResume} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, taskTypeForControl(selectedDeviceState), "RESUME")}>恢复</button>
               <button

@@ -38,7 +38,7 @@ test("搜索直播评论和商品卡直播评论是两个独立任务入口", ()
   assert(/commerceStartMode:\s*["']target_comment["']/.test(schedulerSource), "scheduler row actions must expose a target comment start mode");
   assert(/commerceCardStartMode/.test(schedulerSource), "scheduler must send the selected commerce-card start mode to the API");
   assert(/商品卡养号/.test(schedulerSource), "scheduler must show a dedicated product nurture button");
-  assert(/目标直播间评论/.test(schedulerSource), "scheduler must show a dedicated target live comment button");
+  assert(/目标直播间评论（商品卡片养号）/.test(schedulerSource), "scheduler must show a clearly named target live comment button");
   assert(/搜索直播间评论/.test(schedulerSource), "old live_comment label must make the search-room flow explicit");
   assert(/商品卡直播评论/.test(schedulerSource), "new commerce-card flow must have a separate label");
   assert(/commerce_card_live_comment/.test(dashboardSource), "dashboard must recognize commerce-card live comment task status");
