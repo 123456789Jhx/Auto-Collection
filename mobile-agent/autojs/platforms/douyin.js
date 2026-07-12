@@ -1473,6 +1473,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     var scanMinutes = Math.max(1, Number(options.scanMinutes || 15));
     var cardCount = Math.max(1, Number(options.cardCount || 4));
     var dwellSeconds = Math.max(1, Number(options.dwellSeconds || 120));
+    var liveWatchSeconds = Math.max(1, Math.min(dwellSeconds, Number(options.liveWatchSeconds || dwellSeconds)));
     if (!searchKeyword) {
       return {
         success: false,
@@ -1528,7 +1529,15 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         sample = detailText.slice(0, 220);
         if (!openedLive && hasAnyTextKeyword(detailText, liveSignals) && openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals, targetRoom)) {
           openedLive = true;
-          sleepInterruptible(1800, "commerce_detail_live_watch_" + attempt);
+          var liveWatchMs = Math.min(liveWatchSeconds * 1000, Math.max(0, detailEndAt - Date.now()));
+          if (liveWatchMs > 0 && !sleepInterruptible(liveWatchMs, "commerce_detail_live_watch_" + attempt)) {
+            return {
+              success: false,
+              reason: "manual_pause",
+              browsedCount: detailBrowsedCount,
+              textSample: sample
+            };
+          }
           if (isLiveRoomVisible()) {
             exitLiveRoom();
           } else {

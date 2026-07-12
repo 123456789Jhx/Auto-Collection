@@ -668,6 +668,8 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(start >= 0 && end > start, "douyin adapter must expose a product-card browsing phase");
   assert(body.indexOf("openCommerceCardSearch(searchKeyword)") >= 0, "browse phase must start from mall product-card search");
   assert(body.indexOf("clickCommerceKeywordCard(matchKeywords)") >= 0, "browse phase must open matching product cards");
+  assert(body.indexOf("liveWatchSeconds") >= 0, "commerce live card watch duration must be configurable");
+  assert.strictEqual(body.indexOf("sleepInterruptible(1800"), -1, "commerce live cards must not be a fixed short flash-open");
   assert.strictEqual(body.indexOf("openTargetLiveRoomFromSearch"), -1, "target live room search must stay outside the card browsing phase");
   assert(source.indexOf("browseCommerceCards: browseCommerceCards") >= 0, "douyin adapter must export browseCommerceCards");
 }
@@ -694,6 +696,7 @@ function testV2ProductNurtureUsesLiveFeedGateAndReusesRoom() {
   assert.strictEqual(context.comments.length, 1);
   assert.strictEqual(browseCalls.length, 1);
   assert.strictEqual(browseCalls[0].dwellSeconds, 120);
+  assert.strictEqual(browseCalls[0].liveWatchSeconds, 120);
   assert.deepStrictEqual(browseCalls[0].recommendationSignals, ["recommended"]);
   assert.strictEqual(context._v2.liveFeedSearchCalls.length, 1);
   assert.strictEqual(context._v2.liveFeedSearchCalls[0].source, "product_nurture");
@@ -853,6 +856,83 @@ function testV2SubmittingActionBecomesUnknownWithoutResend() {
   assert.strictEqual(context._v2.getAction().actionState, "unknown");
 }
 
+function testV2LiveNurtureCompletesOnlyAfterPlannedWatch() {
+  withFakeClock(function (sleeps) {
+    var context = createV2Context({
+      enabledStages: ["live_nurture"],
+      runtimeConfig: {
+        liveNurtureKeywords: ["orange"],
+        liveNurtureWatchMinMinutes: 1,
+        liveNurtureWatchMaxMinutes: 1,
+        liveNurtureTotalMinMinutes: 1,
+        liveNurtureTotalMaxMinutes: 1
+      }
+    });
+    var enterFeedCount = 0;
+    var openRoomCount = 0;
+    context.douyin.enterLiveFeed = function () {
+      enterFeedCount += 1;
+      return true;
+    };
+    context.douyin.extractFastText = function () {
+      return { combinedText: "orange live room title" };
+    };
+    context.douyin.openLiveRoomFromCurrentScreen = function () {
+      openRoomCount += 1;
+      return true;
+    };
+    var runner = createCommerceCardLiveRunner(context);
+
+    var result = runner.runCommerceCardLiveCommentTask();
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(enterFeedCount, 1);
+    assert.strictEqual(openRoomCount, 1);
+    assert.strictEqual(sum(sleeps), 60 * 1000);
+    assert.strictEqual(context._v2.getCheckpoint().plannedWatchMs, 60 * 1000);
+    assert.strictEqual(context._v2.getCheckpoint().completedWatchMs, 60 * 1000);
+    assert.strictEqual(context._v2.completedAssignments[0].state, "SUCCEEDED");
+  });
+}
+
+function testV2LiveNurtureFailsWhenWatchTargetNotReached() {
+  var context = createV2Context({
+    enabledStages: ["live_nurture"],
+    runtimeConfig: {
+      liveNurtureKeywords: ["orange"],
+      liveNurtureRefreshAfterRooms: 10,
+      liveNurtureWatchMinMinutes: 1,
+      liveNurtureWatchMaxMinutes: 1,
+      liveNurtureTotalMinMinutes: 1,
+      liveNurtureTotalMaxMinutes: 1
+    }
+  });
+  var nextCount = 0;
+  context.douyin.enterLiveFeed = function () {
+    return true;
+  };
+  context.douyin.extractFastText = function () {
+    return { combinedText: "plain live room title" };
+  };
+  context.douyin.openLiveRoomFromCurrentScreen = function () {
+    throw new Error("unmatched live room must not be opened");
+  };
+  context.douyin.nextVideo = function () {
+    nextCount += 1;
+    return true;
+  };
+  var runner = createCommerceCardLiveRunner(context);
+
+  var result = runner.runCommerceCardLiveCommentTask();
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.reason, "live_nurture_watch_incomplete");
+  assert.strictEqual(context._v2.getCheckpoint().completedWatchMs, 0);
+  assert.strictEqual(context._v2.liveFeedRefreshes.length, 10);
+  assert.strictEqual(nextCount, 90);
+  assert.strictEqual(context._v2.completedAssignments[0].state, "FAILED");
+}
+
 function testV2CheckpointRemainsStructuredAfterCompletion() {
   var context = createV2Context();
   var runner = createCommerceCardLiveRunner(context);
@@ -896,6 +976,8 @@ testV2ExpiredPermitDoesNotSend();
 testV2AccountChangeDoesNotSend();
 testV2MissingLivePageDoesNotSend();
 testV2SubmittingActionBecomesUnknownWithoutResend();
+testV2LiveNurtureCompletesOnlyAfterPlannedWatch();
+testV2LiveNurtureFailsWhenWatchTargetNotReached();
 testV2CheckpointRemainsStructuredAfterCompletion();
 testCollectorPreservesV2CheckpointAndCompletesDeferredControl();
 

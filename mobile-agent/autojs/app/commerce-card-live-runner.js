@@ -508,6 +508,11 @@ function createCommerceCardLiveRunner(context) {
     return !isNaN(expiresAtMs) && expiresAtMs - Date.now() > 3000;
   }
 
+  function commerceProductLiveWatchSeconds(cfg) {
+    var dwellSeconds = Math.max(1, pickNumber(cfg && cfg.productCardDwellSeconds, 120));
+    return Math.max(1, Math.min(dwellSeconds, pickNumber(cfg && cfg.productLiveWatchSeconds, dwellSeconds)));
+  }
+
   function isCurrentLiveRoomVisible() {
     try {
       return !!(douyin.isLiveRoomVisible && douyin.isLiveRoomVisible());
@@ -1110,6 +1115,7 @@ function createCommerceCardLiveRunner(context) {
         scanMinutes: cfg.productNurtureRoundMinutes,
         cardCount: Math.max(1, Math.min(20, Math.ceil(cfg.productNurtureRoundMinutes * 60 / cfg.productCardDwellSeconds))),
         dwellSeconds: cfg.productCardDwellSeconds,
+        liveWatchSeconds: commerceProductLiveWatchSeconds(cfg),
         shouldStop: shouldStop
       }) || {};
       if (!result.success) {
@@ -1314,9 +1320,16 @@ function createCommerceCardLiveRunner(context) {
     if (!reportV2Event("stage_live_nurture_started", "started", { stage: "live_nurture" })) {
       return { success: false, reason: counters.lastStopReason };
     }
-    var targetMinutes = randomBetween(cfg.liveNurtureTotalMinMinutes, cfg.liveNurtureTotalMaxMinutes);
-    var targetMs = targetMinutes * 60 * 1000;
-    v2State.plannedWatchMs = targetMs;
+    var targetMs = Number(v2State.plannedWatchMs || 0);
+    if (targetMs <= 0) {
+      var targetMinutes = randomBetween(cfg.liveNurtureTotalMinMinutes, cfg.liveNurtureTotalMaxMinutes);
+      targetMs = targetMinutes * 60 * 1000;
+      v2State.plannedWatchMs = targetMs;
+      v2State.remainingWatchMs = Math.max(0, targetMs - v2State.completedWatchMs);
+      if (!persistV2Checkpoint("live_nurture", { action: "watch_target_planned", plannedWatchMs: targetMs })) {
+        return { success: false, reason: counters.lastStopReason };
+      }
+    }
     v2State.remainingWatchMs = Math.max(0, targetMs - v2State.completedWatchMs);
     if (douyin.isLiveRoomVisible && douyin.isLiveRoomVisible() && douyin.exitLiveRoom) {
       douyin.exitLiveRoom();
@@ -1373,6 +1386,25 @@ function createCommerceCardLiveRunner(context) {
       if (douyin.exitLiveRoom) {
         douyin.exitLiveRoom();
       }
+    }
+    if (v2State.completedWatchMs < targetMs) {
+      persistV2Checkpoint("live_nurture", {
+        roomIndex: roomIndex,
+        action: "watch_incomplete",
+        completedWatchMs: v2State.completedWatchMs,
+        plannedWatchMs: targetMs
+      });
+      reportV2Event("live_nurture_watch_incomplete", "failed", {
+        stage: "live_nurture",
+        reasonCode: "live_nurture_watch_incomplete",
+        evidence: {
+          completedWatchMs: v2State.completedWatchMs,
+          plannedWatchMs: targetMs,
+          roomIndex: roomIndex,
+          liveRefreshCount: v2State.liveRefreshCount
+        }
+      });
+      return { success: false, reason: "live_nurture_watch_incomplete" };
     }
     reportV2Event("stage_live_nurture_completed", "succeeded", {
       stage: "live_nurture",
@@ -1491,6 +1523,8 @@ function createCommerceCardLiveRunner(context) {
       targetRoom: targetRoom,
       scanMinutes: scanMinutes,
       cardCount: cardCount,
+      dwellSeconds: Math.max(1, pickNumber(cfg.productCardDwellSeconds, 120)),
+      liveWatchSeconds: commerceProductLiveWatchSeconds(cfg),
       shouldStop: shouldStop
     }) || {};
     if (!browseResult.success) {
