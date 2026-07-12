@@ -702,8 +702,7 @@ if ($removePngQuant) {
   $excludedNativeNames += "libpngquant_bridge.so"
 }
 if ($removeTerminalNative) {
-  $excludedNativeNames += "libjackpal-termexec2.so"
-  $excludedNativeNames += "libjackpal-androidterm5.so"
+  Write-Host "Terminal native optimization requested but skipped; AutoJs6 Shell requires libjackpal native libraries at startup."
 }
 if ($removeOpenCc) {
   $excludedNativeNames += "libChineseConverter.so"
