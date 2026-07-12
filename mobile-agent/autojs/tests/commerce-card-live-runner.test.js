@@ -701,6 +701,33 @@ function testV2ProductNurtureUsesLiveFeedGateAndReusesRoom() {
   assert.strictEqual(context._v2.completedAssignments[0].state, "SUCCEEDED");
 }
 
+function testV2ProductNurtureOnlyDoesNotSendComment() {
+  var context = createV2Context({
+    enabledStages: ["product_nurture"]
+  });
+  var browseCalls = [];
+  context.douyin.browseCommerceCards = function (options) {
+    browseCalls.push(options);
+    return {
+      success: true,
+      reason: "commerce_cards_browsed",
+      browsedCount: 6,
+      textSample: "product recommended"
+    };
+  };
+  var runner = createCommerceCardLiveRunner(context);
+
+  var result = runner.runCommerceCardLiveCommentTask();
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(context.comments.length, 0);
+  assert.strictEqual(browseCalls.length, 1);
+  assert.strictEqual(context._v2.liveFeedSearchCalls.length, 1);
+  assert.strictEqual(context._v2.liveFeedSearchCalls[0].source, "product_nurture");
+  assert.strictEqual(context.getExitCount(), 1);
+  assert.strictEqual(context._v2.completedAssignments[0].state, "SUCCEEDED");
+}
+
 function testV2ProductNurtureFailsWhenTargetNotFoundAfterRounds() {
   var context = createV2Context({
     enabledStages: ["product_nurture"],
@@ -861,6 +888,7 @@ testCommerceCardLiveRequiresExplicitSendApproval();
 testCollectorKeepsCommerceLiveSeparateFromOrdinaryLivePhase();
 testDouyinProvidesDedicatedCommerceCardBrowseAdapter();
 testV2ProductNurtureUsesLiveFeedGateAndReusesRoom();
+testV2ProductNurtureOnlyDoesNotSendComment();
 testV2ProductNurtureFailsWhenTargetNotFoundAfterRounds();
 testV2TargetCommentMissRefreshesAndFailsClosed();
 testV2StopBeforeSendFailsClosed();

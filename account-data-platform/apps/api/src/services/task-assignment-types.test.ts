@@ -13,6 +13,25 @@ describe("task assignment types", () => {
     expect(parsed.success).toBe(true);
   });
 
+  test("商品卡 V2 启动可以携带阶段启动模式", () => {
+    const parsed = createTaskAssignmentSchema.safeParse({
+      deviceId: "device-001",
+      taskType: "commerce_card_live_comment",
+      commandType: "START",
+      workflowVersion: 2,
+      targetId: "11111111-1111-4111-8111-111111111111",
+      expectedAccountName: "测试账号",
+      payload: {
+        commerceCardStartMode: "product_nurture"
+      }
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.payload?.commerceCardStartMode).toBe("product_nurture");
+    }
+  });
+
   test("控制命令可以携带既有 assignment 继续同一运行实例", () => {
     const parsed = createTaskAssignmentSchema.safeParse({
       deviceId: "device-001",

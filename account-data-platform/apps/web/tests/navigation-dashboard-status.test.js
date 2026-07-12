@@ -34,8 +34,11 @@ test("任务调度提供暂停恢复和任务不一致诊断", () => {
 
 test("搜索直播评论和商品卡直播评论是两个独立任务入口", () => {
   assert(/commerce_card_live_comment/.test(schedulerSource), "scheduler must expose commerce card live comment as an independent task type");
-  assert(/assignTask\(row,\s*["']commerce_card_live_comment["']\)/.test(schedulerSource), "scheduler row actions must dispatch commerce card live comment tasks separately");
-  assert(/selectedDeviceState\s*&&\s*assignTask\(selectedDeviceState,\s*["']commerce_card_live_comment["']\)/.test(schedulerSource), "scheduler detail actions must dispatch commerce card live comment tasks separately");
+  assert(/commerceStartMode:\s*["']product_nurture["']/.test(schedulerSource), "scheduler row actions must expose a product nurture start mode");
+  assert(/commerceStartMode:\s*["']target_comment["']/.test(schedulerSource), "scheduler row actions must expose a target comment start mode");
+  assert(/commerceCardStartMode/.test(schedulerSource), "scheduler must send the selected commerce-card start mode to the API");
+  assert(/商品卡养号/.test(schedulerSource), "scheduler must show a dedicated product nurture button");
+  assert(/目标直播间评论/.test(schedulerSource), "scheduler must show a dedicated target live comment button");
   assert(/搜索直播间评论/.test(schedulerSource), "old live_comment label must make the search-room flow explicit");
   assert(/商品卡直播评论/.test(schedulerSource), "new commerce-card flow must have a separate label");
   assert(/commerce_card_live_comment/.test(dashboardSource), "dashboard must recognize commerce-card live comment task status");

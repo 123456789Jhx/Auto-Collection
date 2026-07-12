@@ -1,6 +1,8 @@
 import {
+  commerceCardWorkflowRuntimeConfigSchema,
   commerceCardWorkflowSnapshotSchema,
   type CommerceCardEffectiveWorkflow,
+  type CommerceCardWorkflowRuntimeConfig,
   type CommerceCardWorkflowSnapshot,
   type CreateTaskAssignmentCommandPayload,
   type CreateTaskAssignmentPayload
@@ -83,6 +85,35 @@ function assertTargetBoundToDevice(
   }
 }
 
+type CommerceCardStartMode = "configured" | "product_nurture" | "target_comment";
+
+function commerceCardStartModeFromPayload(payload?: Record<string, unknown> | null): CommerceCardStartMode {
+  const mode = payload?.commerceCardStartMode;
+  if (mode === "product_nurture" || mode === "target_comment") return mode;
+  return "configured";
+}
+
+function buildRuntimeConfigForStart(
+  runtimeConfig: CommerceCardWorkflowRuntimeConfig,
+  startMode: CommerceCardStartMode
+) {
+  const enabledStages = startMode === "configured"
+    ? runtimeConfig.enabledStages
+    : [startMode];
+  const parsed = commerceCardWorkflowRuntimeConfigSchema.safeParse({
+    ...runtimeConfig,
+    enabledStages,
+    executeEnabled: false
+  });
+  if (!parsed.success) {
+    throw new AssignmentRuntimeError("COMMERCE_CARD_RUNTIME_CONFIG_INVALID", {
+      startMode,
+      issues: parsed.error.flatten()
+    });
+  }
+  return parsed.data;
+}
+
 async function createStartAssignment(
   payload: CreateTaskAssignmentPayload,
   device: NonNullable<Awaited<ReturnType<typeof findDeviceByCode>>>,
@@ -123,10 +154,8 @@ async function createStartAssignment(
       payload.expectedAccountName
     );
     const expectedAccountName = payload.expectedAccountName ?? null;
-    const runtimeConfig = {
-      ...preview.runtimeConfig,
-      executeEnabled: false
-    };
+    const commerceCardStartMode = commerceCardStartModeFromPayload(payload.payload);
+    const runtimeConfig = buildRuntimeConfigForStart(preview.runtimeConfig, commerceCardStartMode);
     const selectedTarget = {
       ...preview.payload,
       runtimeConfig,
@@ -184,6 +213,7 @@ async function createStartAssignment(
     };
     desiredPayload = {
       ...desiredPayload,
+      commerceCardStartMode,
       effectiveWorkflow
     };
     assignmentFields = {

@@ -22,6 +22,7 @@ import { DeviceLiveCommentConfigModal } from "./DeviceLiveCommentConfigModal";
 
 type TaskType = "video" | "live" | "live_comment" | "commerce_card_live_comment";
 type CommandType = "START" | "RESUME" | "PAUSE" | "STOP";
+type CommerceStartMode = "product_nurture" | "target_comment";
 
 type DeviceRow = {
   id?: string;
@@ -73,6 +74,14 @@ type Notice = {
   kind: "success" | "error" | "info";
   text: string;
 } | null;
+
+function commerceStartModeTitle(mode: CommerceStartMode) {
+  return mode === "product_nurture" ? "启动商品卡养号 V2" : "启动目标直播间评论 V2";
+}
+
+function commerceStartModeReason(mode: CommerceStartMode) {
+  return mode === "product_nurture" ? "手动启动商品卡养号 V2" : "手动启动目标直播间评论 V2";
+}
 
 function formatDateTime(value?: string | null) {
   if (!value) return "-";
@@ -327,6 +336,7 @@ export function TaskSchedulerPage() {
   const [notice, setNotice] = useState<Notice>(null);
   const [commerceStartOpen, setCommerceStartOpen] = useState(false);
   const [commerceStartDevice, setCommerceStartDevice] = useState<DeviceTaskState | null>(null);
+  const [commerceStartMode, setCommerceStartMode] = useState<CommerceStartMode>("target_comment");
   const [resolveAction, setResolveAction] = useState<LiveCommentAction | null>(null);
 
   const devicesQuery = useQuery({ queryKey: ["devices"], queryFn: getDevices, refetchInterval: 15000 });
@@ -352,6 +362,7 @@ export function TaskSchedulerPage() {
       expectedAccountName?: string | null;
       reason?: string;
       priority?: number;
+      payload?: Record<string, unknown>;
     }) => values.commandType === "START"
       ? createTaskAssignment({
         ...values,
@@ -524,13 +535,19 @@ export function TaskSchedulerPage() {
     setSelectedAssignmentId(row.assignment?.id);
   }
 
-  function assignTask(row: DeviceTaskState, taskType: TaskType, commandType: CommandType = "START", reason?: string) {
+  function assignTask(
+    row: DeviceTaskState,
+    taskType: TaskType,
+    commandType: CommandType = "START",
+    reason?: string,
+    options?: { commerceStartMode?: CommerceStartMode }
+  ) {
     if (commandType === "START" && isActiveAssignment(row.assignment?.status)) {
       setNotice({ kind: "info", text: startBlockedMessage(row.assignment?.status) });
       return;
     }
     if (taskType === "commerce_card_live_comment" && commandType === "START") {
-      openCommerceStart(row);
+      openCommerceStart(row, options?.commerceStartMode || "target_comment");
       return;
     }
     if (commandType !== "START" && (!row.assignment?.id || !row.assignment.stateVersion)) {
@@ -550,9 +567,10 @@ export function TaskSchedulerPage() {
     });
   }
 
-  function openCommerceStart(row: DeviceTaskState) {
+  function openCommerceStart(row: DeviceTaskState, startMode: CommerceStartMode) {
     selectDevice(row);
     setCommerceStartDevice(row);
+    setCommerceStartMode(startMode);
     commerceStartForm.setFieldsValue({
       targetId: commerceTargets[0]?.id,
       expectedAccountName: row.douyinAccountName || "",
@@ -563,15 +581,21 @@ export function TaskSchedulerPage() {
 
   function submitCommerceStart(values: CommerceStartFormValues) {
     if (!commerceStartDevice) return;
+    const executionApprovalId = commerceStartMode === "target_comment"
+      ? values.executionApprovalId || null
+      : null;
     mutation.mutate({
       deviceId: commerceStartDevice.deviceCode,
       taskType: "commerce_card_live_comment",
       commandType: "START",
       workflowVersion: 2,
       targetId: values.targetId,
-      executionApprovalId: values.executionApprovalId || null,
+      executionApprovalId,
       expectedAccountName: values.expectedAccountName,
-      reason: "手动启动商品卡组合任务 V2",
+      reason: commerceStartModeReason(commerceStartMode),
+      payload: {
+        commerceCardStartMode: commerceStartMode
+      },
       priority: 100
     });
   }
@@ -773,7 +797,8 @@ export function TaskSchedulerPage() {
                           <button className="scheduler-action-btn video" type="button" title={startBlocked ? startBlockedMessage(assignment?.status) : "启动视频任务"} disabled={mutation.isPending || startBlocked} onClick={() => assignTask(row, "video")}><VideoCameraOutlined />视频</button>
                           <button className="scheduler-action-btn live" type="button" title={startBlocked ? startBlockedMessage(assignment?.status) : "启动直播任务"} disabled={mutation.isPending || startBlocked} onClick={() => assignTask(row, "live")}><PlaySquareOutlined />直播</button>
                           <button className="scheduler-action-btn comment" type="button" title={startBlocked ? startBlockedMessage(assignment?.status) : "启动搜索直播评论任务"} disabled={mutation.isPending || startBlocked} onClick={() => assignTask(row, "live_comment")}><CommentOutlined />搜直播评论</button>
-                          <button className="scheduler-action-btn commerce" type="button" title={startBlocked ? startBlockedMessage(assignment?.status) : "启动商品卡组合任务"} disabled={mutation.isPending || startBlocked} onClick={() => assignTask(row, "commerce_card_live_comment")}><ShopOutlined />商品卡评论</button>
+                          <button className="scheduler-action-btn commerce" type="button" title={startBlocked ? startBlockedMessage(assignment?.status) : "启动商品卡养号"} disabled={mutation.isPending || startBlocked} onClick={() => assignTask(row, "commerce_card_live_comment", "START", undefined, { commerceStartMode: "product_nurture" })}><ShopOutlined />商品卡养号</button>
+                          <button className="scheduler-action-btn commerce" type="button" title={startBlocked ? startBlockedMessage(assignment?.status) : "启动目标直播间评论"} disabled={mutation.isPending || startBlocked} onClick={() => assignTask(row, "commerce_card_live_comment", "START", undefined, { commerceStartMode: "target_comment" })}><CommentOutlined />目标直播间评论</button>
                           <button className="scheduler-action-btn pause" type="button" disabled={mutation.isPending || !canPause} onClick={() => assignTask(row, taskTypeForControl(row), "PAUSE")}><PauseCircleOutlined />暂停</button>
                           <button className="scheduler-action-btn resume" type="button" disabled={mutation.isPending || !canResume} onClick={() => assignTask(row, taskTypeForControl(row), "RESUME")}><PlayCircleOutlined />恢复</button>
                           <button className="scheduler-action-btn stop" type="button" disabled={mutation.isPending || !canStop} onClick={() => assignTask(row, taskTypeForControl(row), "STOP")}><StopOutlined />停止</button>
@@ -916,7 +941,8 @@ export function TaskSchedulerPage() {
               <button className="scheduler-btn primary" type="button" disabled={!selectedDeviceState || mutation.isPending || detailStartBlocked} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "video")}>启动视频</button>
               <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending || detailStartBlocked} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "live")}>启动直播</button>
               <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending || detailStartBlocked} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "live_comment")}>启动搜索直播评论</button>
-              <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending || detailStartBlocked} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "commerce_card_live_comment")}>启动商品卡评论</button>
+              <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending || detailStartBlocked} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "commerce_card_live_comment", "START", undefined, { commerceStartMode: "product_nurture" })}>启动商品卡养号</button>
+              <button className="scheduler-btn" type="button" disabled={!selectedDeviceState || mutation.isPending || detailStartBlocked} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, "commerce_card_live_comment", "START", undefined, { commerceStartMode: "target_comment" })}>启动目标直播间评论</button>
               <button className="scheduler-btn pause" type="button" disabled={!selectedDeviceState || mutation.isPending || !detailCanPause} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, taskTypeForControl(selectedDeviceState), "PAUSE")}>暂停</button>
               <button className="scheduler-btn resume" type="button" disabled={!selectedDeviceState || mutation.isPending || !detailCanResume} onClick={() => selectedDeviceState && assignTask(selectedDeviceState, taskTypeForControl(selectedDeviceState), "RESUME")}>恢复</button>
               <button
@@ -984,7 +1010,7 @@ export function TaskSchedulerPage() {
       </Modal>
 
       <Modal
-        title="启动商品卡组合任务 V2"
+        title={commerceStartModeTitle(commerceStartMode)}
         open={commerceStartOpen}
         onCancel={() => setCommerceStartOpen(false)}
         onOk={() => commerceStartForm.submit()}
@@ -1011,21 +1037,23 @@ export function TaskSchedulerPage() {
           <Form.Item name="expectedAccountName" label="本次执行账号" rules={[{ required: true, message: "请填写手机当前登录的抖音账号" }]}>
             <Input maxLength={100} placeholder="必须与手机当前登录账号一致" />
           </Form.Item>
-          <Form.Item name="executionApprovalId" label="真实评论审批">
-            <Select
-              allowClear
-              placeholder="不选择则只执行无评论流程"
-              options={availableApprovals.map((approval) => ({
-                value: approval.id,
-                label: `${approval.expectedAccountName || "指定账号"} · 剩余额度 ${approval.remainingQuota} · ${formatDateTime(approval.expiresAt)}`
-              }))}
-            />
-          </Form.Item>
+          {commerceStartMode === "target_comment" ? (
+            <Form.Item name="executionApprovalId" label="真实评论审批">
+              <Select
+                allowClear
+                placeholder="不选择则只执行无评论流程"
+                options={availableApprovals.map((approval) => ({
+                  value: approval.id,
+                  label: `${approval.expectedAccountName || "指定账号"} · 剩余额度 ${approval.remainingQuota} · ${formatDateTime(approval.expiresAt)}`
+                }))}
+              />
+            </Form.Item>
+          ) : null}
           <Alert
             type="info"
             showIcon
-            message="真实评论仍受全局急停、目标实时开关和短时许可控制"
-            description="未选择有效审批时，手机只执行养号和目标识别，不会点击发送评论。"
+            message={commerceStartMode === "product_nurture" ? "本次只执行商品卡养号阶段" : "真实评论仍受全局急停、目标实时开关和短时许可控制"}
+            description={commerceStartMode === "product_nurture" ? "手机会按目标配置浏览商品卡，并通过目标直播间门禁确认结果，不会点击发送评论。" : "未选择有效审批时，手机只执行目标识别和无评论流程，不会点击发送评论。"}
           />
         </Form>
       </Modal>
