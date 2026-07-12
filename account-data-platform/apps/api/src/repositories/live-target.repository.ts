@@ -306,6 +306,41 @@ export async function findLiveTargetDetail(targetId: string) {
   return details[0] ?? null;
 }
 
+export async function findRunnableCommerceCardLiveTargetForDevice(deviceId: string, platform = "douyin") {
+  const candidates: Array<{ detail: LiveTargetDetail; priority: number }> = [];
+  const details = await listLiveTargetDetails(platform);
+  for (const detail of details) {
+    if (!detail.enabled) {
+      continue;
+    }
+    const featureConfig = detail.featureConfigs.find((item) =>
+      item.featureType === "commerce_card_live_comment" &&
+      item.enabled &&
+      item.storedWorkflowVersion === 2 &&
+      !item.configValidationError
+    );
+    if (!featureConfig) {
+      continue;
+    }
+    const bindings = detail.bindings.filter((binding) =>
+      binding.featureType === "commerce_card_live_comment" && binding.enabled
+    );
+    const matchedBindings = bindings.filter((binding) => !binding.deviceId || binding.deviceId === deviceId);
+    if (bindings.length > 0 && matchedBindings.length === 0) {
+      continue;
+    }
+    candidates.push({
+      detail,
+      priority: matchedBindings.length > 0
+        ? Math.min(...matchedBindings.map((binding) => binding.priority))
+        : 1000
+    });
+  }
+  const [first] = candidates
+    .sort((left, right) => left.priority - right.priority || left.detail.targetName.localeCompare(right.detail.targetName, "zh-CN"));
+  return first?.detail ?? null;
+}
+
 export async function upsertLiveTarget(payload: LiveTargetPayload) {
   const targetId = await db.transaction(async (transaction) => {
     if (payload.id) {

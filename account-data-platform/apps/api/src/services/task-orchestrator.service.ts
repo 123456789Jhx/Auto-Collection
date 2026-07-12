@@ -13,6 +13,7 @@ import { findDeviceByCode, findDeviceById } from "../repositories/device.reposit
 import { hasUnresolvedCommerceCardCommentActions } from "../repositories/commerce-card-execution.repository";
 import {
   findLiveTargetDetail,
+  findRunnableCommerceCardLiveTargetForDevice,
   getCommerceCardFeaturePreviewData
 } from "../repositories/live-target.repository";
 import { findCurrentTask } from "../repositories/task.repository";
@@ -53,7 +54,7 @@ function buildSnapshotHash(input: {
   configHash: string;
   configSnapshot: CommerceCardWorkflowSnapshot;
   executionApprovalId: string | null;
-  expectedAccountId: string;
+  expectedAccountId: string | null;
   expectedAccountName: string | null;
   expiresAt: Date;
 }) {
@@ -102,8 +103,7 @@ function buildRuntimeConfigForStart(
     : [startMode];
   const parsed = commerceCardWorkflowRuntimeConfigSchema.safeParse({
     ...runtimeConfig,
-    enabledStages,
-    executeEnabled: false
+    enabledStages
   });
   if (!parsed.success) {
     throw new AssignmentRuntimeError("COMMERCE_CARD_RUNTIME_CONFIG_INVALID", {
@@ -136,24 +136,30 @@ async function createStartAssignment(
   };
 
   if (payload.workflowVersion === 2) {
-    if (payload.taskType !== "commerce_card_live_comment" || !payload.targetId) {
+    if (payload.taskType !== "commerce_card_live_comment") {
       throw new AssignmentRuntimeError("COMMERCE_CARD_V2_TARGET_REQUIRED");
     }
     await assertCommerceCardWorkflowV2Allowed(device.deviceCode);
+    const runnableTarget = payload.targetId
+      ? null
+      : await findRunnableCommerceCardLiveTargetForDevice(device.id, task.platform);
+    const selectedTargetId = payload.targetId ?? runnableTarget?.id;
+    if (!selectedTargetId) {
+      throw new AssignmentRuntimeError("COMMERCE_CARD_V2_TARGET_NOT_CONFIGURED");
+    }
     const [preview, detail] = await Promise.all([
-      getCommerceCardFeaturePreviewData(payload.targetId),
-      findLiveTargetDetail(payload.targetId)
+      getCommerceCardFeaturePreviewData(selectedTargetId),
+      findLiveTargetDetail(selectedTargetId)
     ]);
     if (!preview || !detail || !preview.payload.targetId) {
       throw new AssignmentRuntimeError("COMMERCE_CARD_FEATURE_NOT_FOUND");
     }
     assertTargetBoundToDevice(detail, device.id);
 
-    const expectedAccountId = commerceCardAccountIdentityKey(
-      payload.expectedAccountId,
-      payload.expectedAccountName
-    );
-    const expectedAccountName = payload.expectedAccountName ?? null;
+    const expectedAccountId = payload.expectedAccountId || payload.expectedAccountName
+      ? commerceCardAccountIdentityKey(payload.expectedAccountId, payload.expectedAccountName)
+      : null;
+    const expectedAccountName = payload.expectedAccountName?.trim() || null;
     const commerceCardStartMode = commerceCardStartModeFromPayload(payload.payload);
     const runtimeConfig = buildRuntimeConfigForStart(preview.runtimeConfig, commerceCardStartMode);
     const selectedTarget = {
@@ -171,9 +177,12 @@ async function createStartAssignment(
     expiresAt = addSeconds(Math.max(payload.expiresInSeconds, minimumExpirySeconds));
     const executionApprovalId = payload.executionApprovalId ?? null;
     if (executionApprovalId) {
+      if (!expectedAccountId) {
+        throw new AssignmentRuntimeError("EXPECTED_ACCOUNT_REQUIRED_FOR_APPROVAL");
+      }
       await assertExecutionApprovalMatches({
         approvalId: executionApprovalId,
-        targetId: payload.targetId,
+        targetId: selectedTargetId,
         deviceId: device.id,
         expectedAccountId,
         configHash: preview.configHash,
@@ -182,7 +191,7 @@ async function createStartAssignment(
     }
     const snapshotHash = buildSnapshotHash({
       assignmentId,
-      targetId: payload.targetId,
+      targetId: selectedTargetId,
       targetCode: preview.payload.targetCode,
       configRevision: preview.revision,
       configHash: preview.configHash,
@@ -218,7 +227,7 @@ async function createStartAssignment(
     };
     assignmentFields = {
       ...assignmentFields,
-      selectedTargetId: payload.targetId,
+      selectedTargetId,
       targetCode: preview.payload.targetCode,
       configRevision: preview.revision,
       configHash: preview.configHash,
@@ -285,7 +294,7 @@ async function createStartAssignment(
       assignmentId,
       sequence: 1,
       deviceId: device.id,
-      targetId: payload.targetId,
+      targetId: assignmentFields.selectedTargetId ?? payload.targetId,
       featureType: payload.taskType,
       stage: assignmentFields.currentStage,
       eventType: "assignment_command_start",
@@ -372,7 +381,7 @@ async function createControlCommand(
       throw new AssignmentRuntimeError("ASSIGNMENT_EXPIRED");
     }
     const snapshot = commerceCardWorkflowSnapshotSchema.safeParse(assignment.configSnapshot);
-    if (!snapshot.success || !assignment.configRevision || !assignment.expectedAccountId) {
+    if (!snapshot.success || !assignment.configRevision) {
       throw new AssignmentRuntimeError("ASSIGNMENT_SNAPSHOT_INVALID");
     }
     const expectedSnapshotHash = buildSnapshotHash({

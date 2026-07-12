@@ -262,13 +262,10 @@ export type TaskAssignmentState = z.infer<typeof taskAssignmentStateSchema>;
 
 export const commerceCardExpectedAccountSchema = z
   .object({
-    accountId: z.string().trim().min(1).max(100).nullable().default(null),
-    accountName: z.string().trim().min(1).max(100).nullable().default(null)
+    accountId: z.string().trim().max(100).nullable().default(null),
+    accountName: z.string().trim().max(100).nullable().default(null)
   })
-  .strict()
-  .refine((value) => Boolean(value.accountId || value.accountName), {
-    message: "必须指定预期抖音账号"
-  });
+  .strict();
 
 export type CommerceCardExpectedAccount = z.infer<typeof commerceCardExpectedAccountSchema>;
 

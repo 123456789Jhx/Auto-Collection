@@ -307,10 +307,10 @@ export async function reserveCommerceCardCommentActionAtomic(input: {
         currentStateVersion: assignment.stateVersion
       });
     }
-    if (!assignment.executionApprovalId || !assignment.selectedTargetId || !assignment.expectedAccountId) {
-      throw new AssignmentRuntimeError("EXECUTION_APPROVAL_REQUIRED");
+    if (!assignment.selectedTargetId) {
+      throw new AssignmentRuntimeError("ASSIGNMENT_SNAPSHOT_INCOMPLETE");
     }
-    if (assignment.expectedAccountId !== input.currentAccountIdentity) {
+    if (assignment.expectedAccountId && assignment.expectedAccountId !== input.currentAccountIdentity) {
       throw new AssignmentRuntimeError("EXPECTED_ACCOUNT_MISMATCH");
     }
     const [existingAction] = await transaction
@@ -336,7 +336,9 @@ export async function reserveCommerceCardCommentActionAtomic(input: {
       }
       if (existingAction.actionState === "planned") {
         await assertCommentRuntimeEnabled(transaction, assignment);
-        await lockConsumedActionApproval(transaction, assignment, existingAction, input.commentPoolHash);
+        if (assignment.executionApprovalId) {
+          await lockConsumedActionApproval(transaction, assignment, existingAction, input.commentPoolHash);
+        }
         const [refreshed] = await transaction
           .update(liveCommentActions)
           .set({
@@ -354,6 +356,9 @@ export async function reserveCommerceCardCommentActionAtomic(input: {
 
     await assertCommentRuntimeEnabled(transaction, assignment);
 
+    const expectedAccountCondition = assignment.expectedAccountId
+      ? eq(liveCommentActions.expectedAccountId, assignment.expectedAccountId)
+      : isNull(liveCommentActions.expectedAccountId);
     const [physicalSlot] = await transaction
       .select({ id: liveCommentActions.id, actionState: liveCommentActions.actionState })
       .from(liveCommentActions)
@@ -361,7 +366,7 @@ export async function reserveCommerceCardCommentActionAtomic(input: {
         eq(liveCommentActions.tenantId, config.tenantId),
         eq(liveCommentActions.assignmentId, assignment.id),
         eq(liveCommentActions.targetId, assignment.selectedTargetId),
-        eq(liveCommentActions.expectedAccountId, assignment.expectedAccountId),
+        expectedAccountCondition,
         eq(liveCommentActions.roomKeyVersion, input.roomKeyVersion),
         eq(liveCommentActions.roomKey, input.roomKey),
         eq(liveCommentActions.commentSlot, input.commentSlot)
@@ -374,85 +379,92 @@ export async function reserveCommerceCardCommentActionAtomic(input: {
       });
     }
 
-    const [approval] = await transaction
-      .select()
-      .from(commerceCardExecutionApprovals)
-      .where(and(
-        eq(commerceCardExecutionApprovals.tenantId, config.tenantId),
-        eq(commerceCardExecutionApprovals.id, assignment.executionApprovalId),
-        isNull(commerceCardExecutionApprovals.deletedAt)
-      ))
-      .limit(1)
-      .for("update");
     const now = new Date();
-    if (
-      !approval ||
-      approval.status !== "ACTIVE" ||
-      approval.validFrom.getTime() > now.getTime() ||
-      approval.expiresAt.getTime() <= now.getTime() ||
-      approval.consumedQuota >= approval.totalQuota
-    ) {
-      throw new AssignmentRuntimeError("EXECUTION_APPROVAL_INACTIVE");
-    }
-    if (
-      approval.targetId !== assignment.selectedTargetId ||
-      approval.deviceId !== assignment.deviceId ||
-      approval.expectedAccountId !== assignment.expectedAccountId ||
-      approval.configHash !== assignment.configHash ||
-      approval.commentPoolHash !== input.commentPoolHash ||
-      input.commentSlot >= approval.maxCommentsPerRoom
-    ) {
-      throw new AssignmentRuntimeError("EXECUTION_APPROVAL_SCOPE_MISMATCH");
-    }
+    let approval: typeof commerceCardExecutionApprovals.$inferSelect | null = null;
+    if (assignment.executionApprovalId) {
+      if (!assignment.expectedAccountId) {
+        throw new AssignmentRuntimeError("EXPECTED_ACCOUNT_REQUIRED_FOR_APPROVAL");
+      }
+      const [approvalRow] = await transaction
+        .select()
+        .from(commerceCardExecutionApprovals)
+        .where(and(
+          eq(commerceCardExecutionApprovals.tenantId, config.tenantId),
+          eq(commerceCardExecutionApprovals.id, assignment.executionApprovalId),
+          isNull(commerceCardExecutionApprovals.deletedAt)
+        ))
+        .limit(1)
+        .for("update");
+      approval = approvalRow ?? null;
+      if (
+        !approval ||
+        approval.status !== "ACTIVE" ||
+        approval.validFrom.getTime() > now.getTime() ||
+        approval.expiresAt.getTime() <= now.getTime() ||
+        approval.consumedQuota >= approval.totalQuota
+      ) {
+        throw new AssignmentRuntimeError("EXECUTION_APPROVAL_INACTIVE");
+      }
+      if (
+        approval.targetId !== assignment.selectedTargetId ||
+        approval.deviceId !== assignment.deviceId ||
+        approval.expectedAccountId !== assignment.expectedAccountId ||
+        approval.configHash !== assignment.configHash ||
+        approval.commentPoolHash !== input.commentPoolHash ||
+        input.commentSlot >= approval.maxCommentsPerRoom
+      ) {
+        throw new AssignmentRuntimeError("EXECUTION_APPROVAL_SCOPE_MISMATCH");
+      }
 
-    await lockQuotaScopes(transaction, assignment.expectedAccountId, assignment.selectedTargetId);
+      await lockQuotaScopes(transaction, assignment.expectedAccountId, assignment.selectedTargetId);
 
-    const [accountDaily] = await transaction
-      .select({ value: sum(commerceCardApprovalConsumptions.amount) })
-      .from(commerceCardApprovalConsumptions)
-      .where(and(
-        eq(commerceCardApprovalConsumptions.tenantId, config.tenantId),
-        eq(commerceCardApprovalConsumptions.expectedAccountId, assignment.expectedAccountId),
-        gte(commerceCardApprovalConsumptions.consumedAt, input.dayStart),
-        isNull(commerceCardApprovalConsumptions.deletedAt)
-      ));
-    const [targetDaily] = await transaction
-      .select({ value: sum(commerceCardApprovalConsumptions.amount) })
-      .from(commerceCardApprovalConsumptions)
-      .where(and(
-        eq(commerceCardApprovalConsumptions.tenantId, config.tenantId),
-        eq(commerceCardApprovalConsumptions.targetId, assignment.selectedTargetId),
-        gte(commerceCardApprovalConsumptions.consumedAt, input.dayStart),
-        isNull(commerceCardApprovalConsumptions.deletedAt)
-      ));
-    const accountCount = Number(accountDaily?.value ?? 0);
-    const targetCount = Number(targetDaily?.value ?? 0);
-    if (accountCount >= approval.accountDailyLimit) {
-      throw new AssignmentRuntimeError("APPROVAL_ACCOUNT_DAILY_LIMIT_REACHED");
-    }
-    if (targetCount >= approval.targetDailyLimit) {
-      throw new AssignmentRuntimeError("APPROVAL_TARGET_DAILY_LIMIT_REACHED");
-    }
+      const [accountDaily] = await transaction
+        .select({ value: sum(commerceCardApprovalConsumptions.amount) })
+        .from(commerceCardApprovalConsumptions)
+        .where(and(
+          eq(commerceCardApprovalConsumptions.tenantId, config.tenantId),
+          eq(commerceCardApprovalConsumptions.expectedAccountId, assignment.expectedAccountId),
+          gte(commerceCardApprovalConsumptions.consumedAt, input.dayStart),
+          isNull(commerceCardApprovalConsumptions.deletedAt)
+        ));
+      const [targetDaily] = await transaction
+        .select({ value: sum(commerceCardApprovalConsumptions.amount) })
+        .from(commerceCardApprovalConsumptions)
+        .where(and(
+          eq(commerceCardApprovalConsumptions.tenantId, config.tenantId),
+          eq(commerceCardApprovalConsumptions.targetId, assignment.selectedTargetId),
+          gte(commerceCardApprovalConsumptions.consumedAt, input.dayStart),
+          isNull(commerceCardApprovalConsumptions.deletedAt)
+        ));
+      const accountCount = Number(accountDaily?.value ?? 0);
+      const targetCount = Number(targetDaily?.value ?? 0);
+      if (accountCount >= approval.accountDailyLimit) {
+        throw new AssignmentRuntimeError("APPROVAL_ACCOUNT_DAILY_LIMIT_REACHED");
+      }
+      if (targetCount >= approval.targetDailyLimit) {
+        throw new AssignmentRuntimeError("APPROVAL_TARGET_DAILY_LIMIT_REACHED");
+      }
 
-    const [latestConsumption] = await transaction
-      .select({ consumedAt: commerceCardApprovalConsumptions.consumedAt })
-      .from(commerceCardApprovalConsumptions)
-      .where(and(
-        eq(commerceCardApprovalConsumptions.tenantId, config.tenantId),
-        eq(commerceCardApprovalConsumptions.expectedAccountId, assignment.expectedAccountId),
-        eq(commerceCardApprovalConsumptions.targetId, assignment.selectedTargetId),
-        isNull(commerceCardApprovalConsumptions.deletedAt)
-      ))
-      .orderBy(desc(commerceCardApprovalConsumptions.consumedAt))
-      .limit(1);
-    if (
-      latestConsumption &&
-      approval.cooldownSeconds > 0 &&
-      now.getTime() - latestConsumption.consumedAt.getTime() < approval.cooldownSeconds * 1000
-    ) {
-      throw new AssignmentRuntimeError("APPROVAL_COOLDOWN_ACTIVE", {
-        availableAt: new Date(latestConsumption.consumedAt.getTime() + approval.cooldownSeconds * 1000).toISOString()
-      });
+      const [latestConsumption] = await transaction
+        .select({ consumedAt: commerceCardApprovalConsumptions.consumedAt })
+        .from(commerceCardApprovalConsumptions)
+        .where(and(
+          eq(commerceCardApprovalConsumptions.tenantId, config.tenantId),
+          eq(commerceCardApprovalConsumptions.expectedAccountId, assignment.expectedAccountId),
+          eq(commerceCardApprovalConsumptions.targetId, assignment.selectedTargetId),
+          isNull(commerceCardApprovalConsumptions.deletedAt)
+        ))
+        .orderBy(desc(commerceCardApprovalConsumptions.consumedAt))
+        .limit(1);
+      if (
+        latestConsumption &&
+        approval.cooldownSeconds > 0 &&
+        now.getTime() - latestConsumption.consumedAt.getTime() < approval.cooldownSeconds * 1000
+      ) {
+        throw new AssignmentRuntimeError("APPROVAL_COOLDOWN_ACTIVE", {
+          availableAt: new Date(latestConsumption.consumedAt.getTime() + approval.cooldownSeconds * 1000).toISOString()
+        });
+      }
     }
 
     const [action] = await transaction
@@ -463,7 +475,7 @@ export async function reserveCommerceCardCommentActionAtomic(input: {
         deviceId: assignment.deviceId,
         assignmentId: assignment.id,
         targetId: assignment.selectedTargetId,
-        approvalId: approval.id,
+        approvalId: approval?.id ?? null,
         stage: assignment.currentStage,
         expectedAccountId: assignment.expectedAccountId,
         expectedAccountName: assignment.expectedAccountName,
@@ -493,30 +505,36 @@ export async function reserveCommerceCardCommentActionAtomic(input: {
         updatedBy: "mobile_agent"
       })
       .returning();
-    await transaction.insert(commerceCardApprovalConsumptions).values({
-      tenantId: config.tenantId,
-      approvalId: approval.id,
-      assignmentId: assignment.id,
-      actionId: action.id,
-      deviceId: assignment.deviceId,
-      targetId: assignment.selectedTargetId,
-      expectedAccountId: assignment.expectedAccountId,
-      amount: 1,
-      consumedAt: now,
-      createdBy: "mobile_agent",
-      updatedBy: "mobile_agent"
-    });
-    const consumedQuota = approval.consumedQuota + 1;
-    await transaction
-      .update(commerceCardExecutionApprovals)
-      .set({
-        consumedQuota,
-        status: consumedQuota >= approval.totalQuota ? "EXHAUSTED" : approval.status,
-        revision: approval.revision + 1,
-        updatedAt: now,
+    if (approval) {
+      const expectedAccountId = assignment.expectedAccountId;
+      if (!expectedAccountId) {
+        throw new AssignmentRuntimeError("EXPECTED_ACCOUNT_REQUIRED_FOR_APPROVAL");
+      }
+      await transaction.insert(commerceCardApprovalConsumptions).values({
+        tenantId: config.tenantId,
+        approvalId: approval.id,
+        assignmentId: assignment.id,
+        actionId: action.id,
+        deviceId: assignment.deviceId,
+        targetId: assignment.selectedTargetId,
+        expectedAccountId,
+        amount: 1,
+        consumedAt: now,
+        createdBy: "mobile_agent",
         updatedBy: "mobile_agent"
-      })
-      .where(eq(commerceCardExecutionApprovals.id, approval.id));
+      });
+      const consumedQuota = approval.consumedQuota + 1;
+      await transaction
+        .update(commerceCardExecutionApprovals)
+        .set({
+          consumedQuota,
+          status: consumedQuota >= approval.totalQuota ? "EXHAUSTED" : approval.status,
+          revision: approval.revision + 1,
+          updatedAt: now,
+          updatedBy: "mobile_agent"
+        })
+        .where(eq(commerceCardExecutionApprovals.id, approval.id));
+    }
     return { assignment, action, idempotent: false, permitIssued: true };
   });
 }
@@ -595,7 +613,9 @@ export async function updateCommerceCardCommentActionAtomic(input: {
     }
     if (input.nextState === "submitting") {
       await assertCommentRuntimeEnabled(transaction, assignment);
-      await lockConsumedActionApproval(transaction, assignment, action);
+      if (assignment.executionApprovalId) {
+        await lockConsumedActionApproval(transaction, assignment, action);
+      }
       if (
         !input.permitTokenHash ||
         input.permitTokenHash !== action.permitTokenHash ||

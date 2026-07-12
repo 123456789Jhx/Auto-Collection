@@ -822,12 +822,6 @@ function createCommerceCardLiveRunner(context) {
   }
 
   function sendV2Comment(workflow, commentText, roomKey, slot, searchResult) {
-    if (!workflow.executionApprovalId) {
-      logCommerceCommentAction("skipped", v2State.cycleIndex, commentText, searchResult, {
-        skipReason: "execution_approval_missing"
-      });
-      return { success: false, skipped: true, failureReason: "execution_approval_missing" };
-    }
     if (!workflow.selectedTarget || !workflow.selectedTarget.targetId || !roomKey) {
       return { success: false, failureReason: "stable_room_key_missing" };
     }

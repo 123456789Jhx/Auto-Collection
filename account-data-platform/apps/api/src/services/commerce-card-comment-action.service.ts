@@ -48,7 +48,7 @@ async function resolveOwnedAssignment(assignmentId: string, deviceCode: string, 
 function expectedCommentIdempotencyKey(input: {
   assignmentId: string;
   targetId: string;
-  expectedAccountId: string;
+  expectedAccountId: string | null;
   roomKeyVersion: number;
   roomKey: string;
   commentSlot: number;
@@ -66,7 +66,7 @@ export async function reserveCommentAction(
   if (!rollout.allowed) {
     throw new AssignmentRuntimeError("REAL_COMMENT_ROLLOUT_REJECTED", { reasons: rollout.reasons });
   }
-  if (!assignment.selectedTargetId || !assignment.expectedAccountId) {
+  if (!assignment.selectedTargetId) {
     throw new AssignmentRuntimeError("ASSIGNMENT_SNAPSHOT_INCOMPLETE");
   }
   const snapshot = commerceCardWorkflowSnapshotSchema.safeParse(assignment.configSnapshot);
@@ -87,7 +87,7 @@ export async function reserveCommentAction(
   const expectedIdempotencyKey = expectedCommentIdempotencyKey({
     assignmentId: assignment.id,
     targetId: assignment.selectedTargetId,
-    expectedAccountId: assignment.expectedAccountId,
+    expectedAccountId: assignment.expectedAccountId ?? null,
     roomKeyVersion: payload.roomKeyVersion,
     roomKey: payload.roomKey,
     commentSlot: payload.commentSlot
@@ -178,4 +178,3 @@ export async function resolveCommentAction(
     payloadHash: buildCanonicalSha256(payload)
   });
 }
-

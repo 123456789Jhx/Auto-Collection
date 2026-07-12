@@ -5,16 +5,12 @@ import { useMemo, useState } from "react";
 import {
   createTaskAssignment,
   createTaskAssignmentCommand,
-  getCommerceCardExecutionApprovals,
   getDevices,
   getLiveCommentActions,
-  getLiveTargets,
   getTaskAssignmentEvents,
   getTaskAssignments,
   resolveLiveCommentAction,
-  type CommerceCardExecutionApproval,
   type LiveCommentAction,
-  type LiveTarget,
   type TaskAssignment
 } from "../lib/api-client";
 import { deviceDisplayName, deviceSubTitle } from "../lib/display-maps";
@@ -48,12 +44,6 @@ type DeviceRow = {
   } | null;
 };
 
-type CommerceStartFormValues = {
-  targetId: string;
-  expectedAccountName: string;
-  executionApprovalId?: string;
-};
-
 type ResolveActionFormValues = {
   resolution: "sent" | "failed";
   evidence: string;
@@ -74,10 +64,6 @@ type Notice = {
   kind: "success" | "error" | "info";
   text: string;
 } | null;
-
-function commerceStartModeTitle(mode: CommerceStartMode) {
-  return mode === "product_nurture" ? "启动商品卡养号 V2" : "启动目标直播间评论（商品卡片养号） V2";
-}
 
 function commerceStartModeReason(mode: CommerceStartMode) {
   return mode === "product_nurture" ? "手动启动商品卡养号 V2" : "手动启动目标直播间评论（商品卡片养号） V2";
@@ -323,9 +309,7 @@ function eventText(value?: string | null) {
 
 export function TaskSchedulerPage() {
   const queryClient = useQueryClient();
-  const [commerceStartForm] = Form.useForm<CommerceStartFormValues>();
   const [resolveActionForm] = Form.useForm<ResolveActionFormValues>();
-  const selectedCommerceTargetId = Form.useWatch("targetId", commerceStartForm);
   const [deviceKeyword, setDeviceKeyword] = useState("");
   const [taskFilter, setTaskFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -334,15 +318,10 @@ export function TaskSchedulerPage() {
   const [configOpen, setConfigOpen] = useState(false);
   const [configDeviceState, setConfigDeviceState] = useState<DeviceTaskState | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
-  const [commerceStartOpen, setCommerceStartOpen] = useState(false);
-  const [commerceStartDevice, setCommerceStartDevice] = useState<DeviceTaskState | null>(null);
-  const [commerceStartMode, setCommerceStartMode] = useState<CommerceStartMode>("target_comment");
   const [resolveAction, setResolveAction] = useState<LiveCommentAction | null>(null);
 
   const devicesQuery = useQuery({ queryKey: ["devices"], queryFn: getDevices, refetchInterval: 15000 });
   const assignmentsQuery = useQuery({ queryKey: ["task-assignments"], queryFn: getTaskAssignments, refetchInterval: 10000 });
-  const liveTargetsQuery = useQuery({ queryKey: ["liveTargets", "scheduler"], queryFn: () => getLiveTargets("douyin") });
-  const approvalsQuery = useQuery({ queryKey: ["commerceCardExecutionApprovals"], queryFn: getCommerceCardExecutionApprovals });
   const assignmentEventsQuery = useQuery({
     queryKey: ["task-assignment-events", selectedAssignmentId],
     queryFn: () => getTaskAssignmentEvents(selectedAssignmentId || ""),
@@ -381,10 +360,9 @@ export function TaskSchedulerPage() {
         reason: values.reason,
         priority: values.priority ?? 100,
         expiresInSeconds: 3600
-      }),
+    }),
     onSuccess: async () => {
       setNotice({ kind: "success", text: "任务已下发，等待手机领取并通过心跳确认。" });
-      setCommerceStartOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["task-assignments"] }),
         queryClient.invalidateQueries({ queryKey: ["devices"] }),
@@ -395,18 +373,6 @@ export function TaskSchedulerPage() {
   });
   const devices = useMemo(() => (devicesQuery.data ?? []) as DeviceRow[], [devicesQuery.data]);
   const assignments = useMemo(() => assignmentsQuery.data ?? [], [assignmentsQuery.data]);
-  const commerceTargets = useMemo(() => (liveTargetsQuery.data ?? []).filter((target: LiveTarget) =>
-    target.enabled && target.featureConfigs.some((feature) =>
-      feature.featureType === "commerce_card_live_comment" && feature.enabled && feature.storedWorkflowVersion === 2
-    )
-  ), [liveTargetsQuery.data]);
-  const approvals = useMemo(() => approvalsQuery.data ?? [], [approvalsQuery.data]);
-  const availableApprovals = useMemo(() => approvals.filter((approval: CommerceCardExecutionApproval) =>
-    approval.effectiveStatus === "ACTIVE" &&
-    approval.remainingQuota > 0 &&
-    approval.targetId === selectedCommerceTargetId &&
-    approval.deviceCode === commerceStartDevice?.deviceCode
-  ), [approvals, commerceStartDevice?.deviceCode, selectedCommerceTargetId]);
   const assignmentEvents = useMemo(
     () => assignmentEventsQuery.data ?? [],
     [assignmentEventsQuery.data]
@@ -522,8 +488,6 @@ export function TaskSchedulerPage() {
     void Promise.all([
       assignmentsQuery.refetch(),
       devicesQuery.refetch(),
-      liveTargetsQuery.refetch(),
-      approvalsQuery.refetch(),
       detailAssignment?.workflowVersion === 2 && detailAssignment.taskType === "commerce_card_live_comment"
         ? commentActionsQuery.refetch()
         : Promise.resolve()
@@ -547,7 +511,19 @@ export function TaskSchedulerPage() {
       return;
     }
     if (taskType === "commerce_card_live_comment" && commandType === "START") {
-      openCommerceStart(row, options?.commerceStartMode || "target_comment");
+      const commerceStartMode = options?.commerceStartMode || "target_comment";
+      selectDevice(row);
+      mutation.mutate({
+        deviceId: row.deviceCode,
+        taskType,
+        commandType: "START",
+        workflowVersion: 2,
+        reason: commerceStartModeReason(commerceStartMode),
+        payload: {
+          commerceCardStartMode: commerceStartMode
+        },
+        priority: 100
+      });
       return;
     }
     if (commandType !== "START" && (!row.assignment?.id || !row.assignment.stateVersion)) {
@@ -564,39 +540,6 @@ export function TaskSchedulerPage() {
       workflowVersion: row.assignment?.workflowVersion === 2 ? 2 : 1,
       reason: reason || quickReason(taskType, commandType),
       priority: commandType === "STOP" ? 1000 : 100
-    });
-  }
-
-  function openCommerceStart(row: DeviceTaskState, startMode: CommerceStartMode) {
-    selectDevice(row);
-    setCommerceStartDevice(row);
-    setCommerceStartMode(startMode);
-    commerceStartForm.setFieldsValue({
-      targetId: commerceTargets[0]?.id,
-      expectedAccountName: row.douyinAccountName || "",
-      executionApprovalId: undefined
-    });
-    setCommerceStartOpen(true);
-  }
-
-  function submitCommerceStart(values: CommerceStartFormValues) {
-    if (!commerceStartDevice) return;
-    const executionApprovalId = commerceStartMode === "target_comment"
-      ? values.executionApprovalId || null
-      : null;
-    mutation.mutate({
-      deviceId: commerceStartDevice.deviceCode,
-      taskType: "commerce_card_live_comment",
-      commandType: "START",
-      workflowVersion: 2,
-      targetId: values.targetId,
-      executionApprovalId,
-      expectedAccountName: values.expectedAccountName,
-      reason: commerceStartModeReason(commerceStartMode),
-      payload: {
-        commerceCardStartMode: commerceStartMode
-      },
-      priority: 100
     });
   }
 
@@ -1006,55 +949,6 @@ export function TaskSchedulerPage() {
           >
             <Input.TextArea rows={4} maxLength={1000} placeholder="填写真机截图、日志时间或现场核对结果" />
           </Form.Item>
-        </Form>
-      </Modal>
-
-      <Modal
-        title={commerceStartModeTitle(commerceStartMode)}
-        open={commerceStartOpen}
-        onCancel={() => setCommerceStartOpen(false)}
-        onOk={() => commerceStartForm.submit()}
-        confirmLoading={mutation.isPending}
-        okText="启动任务"
-        cancelText="取消"
-        destroyOnClose
-      >
-        <Form<CommerceStartFormValues>
-          form={commerceStartForm}
-          layout="vertical"
-          onFinish={submitCommerceStart}
-        >
-          {commerceTargets.length === 0 ? (
-            <Alert type="warning" showIcon message="暂无可运行的 V2 目标配置" description="请先在直播目标中心完成商品卡组合任务配置和设备绑定。" />
-          ) : null}
-          <Form.Item name="targetId" label="直播目标" rules={[{ required: true, message: "请选择直播目标" }]}>
-            <Select
-              placeholder="选择已配置的商品卡目标"
-              options={commerceTargets.map((target) => ({ value: target.id || "", label: target.targetName }))}
-              onChange={() => commerceStartForm.setFieldValue("executionApprovalId", undefined)}
-            />
-          </Form.Item>
-          <Form.Item name="expectedAccountName" label="本次执行账号" rules={[{ required: true, message: "请填写手机当前登录的抖音账号" }]}>
-            <Input maxLength={100} placeholder="必须与手机当前登录账号一致" />
-          </Form.Item>
-          {commerceStartMode === "target_comment" ? (
-            <Form.Item name="executionApprovalId" label="真实评论审批">
-              <Select
-                allowClear
-                placeholder="不选择则只执行无评论流程"
-                options={availableApprovals.map((approval) => ({
-                  value: approval.id,
-                  label: `${approval.expectedAccountName || "指定账号"} · 剩余额度 ${approval.remainingQuota} · ${formatDateTime(approval.expiresAt)}`
-                }))}
-              />
-            </Form.Item>
-          ) : null}
-          <Alert
-            type="info"
-            showIcon
-            message={commerceStartMode === "product_nurture" ? "本次只执行商品卡养号阶段" : "真实评论仍受全局急停、目标实时开关和短时许可控制"}
-            description={commerceStartMode === "product_nurture" ? "手机会按目标配置浏览商品卡，并通过目标直播间门禁确认结果，不会点击发送评论。" : "未选择有效审批时，手机只执行目标识别和无评论流程，不会点击发送评论。"}
-          />
         </Form>
       </Modal>
 

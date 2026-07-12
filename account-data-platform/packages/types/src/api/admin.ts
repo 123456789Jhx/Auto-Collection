@@ -230,12 +230,6 @@ export const createTaskAssignmentSchema = z
       if (value.taskType !== "commerce_card_live_comment") {
         context.addIssue({ code: z.ZodIssueCode.custom, message: "V2 只支持商品卡组合任务", path: ["taskType"] });
       }
-      if (!value.targetId) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: "V2 启动必须选择直播目标", path: ["targetId"] });
-      }
-      if (!value.expectedAccountId && !value.expectedAccountName) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: "V2 启动必须指定预期抖音账号", path: ["expectedAccountName"] });
-      }
     }
     if (value.commandType !== "START") {
       if (!value.assignmentId) {
