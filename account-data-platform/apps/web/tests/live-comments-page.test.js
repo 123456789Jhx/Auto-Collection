@@ -6,6 +6,7 @@ import { test } from "bun:test";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const source = fs.readFileSync(path.join(currentDir, "../src/routes/LiveCommentsPage.tsx"), "utf8");
+const schedulerSource = fs.readFileSync(path.join(currentDir, "../src/routes/TaskSchedulerPage.tsx"), "utf8");
 
 function targetRoomMutationSource() {
   const start = source.indexOf("const targetRoomMutation = useMutation");
@@ -57,4 +58,23 @@ test("保存目标直播间时使用话术库模式", () => {
 
 test("目标直播间配置只保留关键词字段", () => {
   testTargetRoomConfigUsesKeywordFieldsOnly();
+});
+
+test("任务调度详情承接结果未知评论的人工确认", () => {
+  assert(/getLiveCommentActions/.test(schedulerSource), "scheduler should load comment actions for the selected assignment");
+  assert(/resolveLiveCommentAction/.test(schedulerSource), "scheduler should call the manual resolution endpoint");
+  assert(/action\.assignmentId\s*===\s*detailAssignment\?\.id/.test(schedulerSource), "scheduler should scope actions to the selected assignment");
+  assert(/action\.actionState\s*===\s*"unknown"/.test(schedulerSource), "scheduler should surface unknown actions");
+  assert(/action\.actionState\s*===\s*"submitted"/.test(schedulerSource), "scheduler should surface submitted actions");
+  assert(/expectedActionStateVersion\s*:\s*action\.stateVersion/.test(schedulerSource), "manual resolution should carry the action state version");
+  assert(/人工确认评论结果/.test(schedulerSource), "scheduler should mount a reachable resolution modal");
+  assert(/确认依据/.test(schedulerSource), "manual resolution should require human evidence");
+  assert(/任务仍保持待人工处理/.test(schedulerSource), "resolution copy should require an explicit resume or stop afterwards");
+});
+
+test("直播评论记录展示完整动作状态", () => {
+  assert(/value="submitting"/.test(source), "live comment filters should include submitting");
+  assert(/value="submitted"/.test(source), "live comment filters should include submitted");
+  assert(/value="unknown"/.test(source), "live comment filters should include unknown");
+  assert(/item\.actionState\s*\|\|\s*item\.status/.test(source), "action state should take precedence over the legacy status field");
 });

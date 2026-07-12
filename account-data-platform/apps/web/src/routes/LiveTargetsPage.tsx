@@ -25,6 +25,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
   Select,
   Skeleton,
   Space,
@@ -36,18 +37,22 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import {
   ApiError,
+  createCommerceCardExecutionApproval,
   getCommerceCardFeaturePreview,
+  getCommerceCardExecutionApprovals,
   getDevices,
   getFeatureRolloutControls,
   getLiveTargets,
   saveDeviceLiveTargetBindings,
   saveLiveTarget,
   saveLiveTargetFeatureConfig,
+  revokeCommerceCardExecutionApproval,
   updateFeatureRolloutControl,
   type LiveTarget,
   type LiveTargetAlias,
   type LiveTargetFeatureConfig,
-  type LiveTargetFeatureType
+  type LiveTargetFeatureType,
+  type CommerceCardExecutionApproval
 } from "../lib/api-client";
 import { deviceDisplayName, deviceSubTitle } from "../lib/display-maps";
 
@@ -108,7 +113,19 @@ type RolloutFormValues = {
   reason: string;
 };
 
-type LiveTargetTabKey = "live_comment" | "commerce_card_live_comment" | "bindings";
+type ApprovalFormValues = {
+  deviceCode: string;
+  expectedAccountName: string;
+  maxCommentsPerRoom: number;
+  totalQuota: number;
+  accountDailyLimit: number;
+  targetDailyLimit: number;
+  cooldownSeconds: number;
+  validHours: number;
+  reason: string;
+};
+
+type LiveTargetTabKey = "live_comment" | "commerce_card_live_comment" | "approvals" | "bindings";
 
 const stageOptions: Array<{ value: CommerceCardWorkflowStage; label: string }> = [
   { value: "product_nurture", label: "商品卡养号" },
@@ -333,6 +350,7 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
   const targetQuery = useQuery({ queryKey: ["liveTargets"], queryFn: () => getLiveTargets("douyin") });
   const deviceQuery = useQuery({ queryKey: ["devices"], queryFn: getDevices });
   const rolloutQuery = useQuery({ queryKey: ["featureRolloutControls"], queryFn: getFeatureRolloutControls });
+  const approvalQuery = useQuery({ queryKey: ["commerceCardExecutionApprovals"], queryFn: getCommerceCardExecutionApprovals });
   const targets = targetQuery.data || [];
   const devices = (deviceQuery.data || []) as DeviceRow[];
   const selectedTarget = useMemo(() => (creating ? null : targets.find((item) => item.id === selectedId) || null), [targets, selectedId, creating]);
@@ -345,6 +363,10 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
     enabled: Boolean(selectedTarget?.id && selectedTarget.featureConfigs.some((item) => item.featureType === "commerce_card_live_comment")),
     retry: false
   });
+  const targetApprovals = useMemo(
+    () => (approvalQuery.data || []).filter((approval) => approval.targetId === selectedTarget?.id),
+    [approvalQuery.data, selectedTarget?.id]
+  );
 
   useEffect(() => {
     if (activeTab) setTabKey(activeTab);
@@ -444,6 +466,39 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
     }
   });
 
+  const approvalMutation = useMutation({
+    mutationFn: (values: ApprovalFormValues) => createCommerceCardExecutionApproval({
+      targetId: selectedTarget?.id || "",
+      deviceCode: values.deviceCode,
+      expectedAccountId: null,
+      expectedAccountName: values.expectedAccountName,
+      maxCommentsPerRoom: values.maxCommentsPerRoom,
+      totalQuota: values.totalQuota,
+      accountDailyLimit: values.accountDailyLimit,
+      targetDailyLimit: values.targetDailyLimit,
+      cooldownSeconds: values.cooldownSeconds,
+      expiresAt: new Date(Date.now() + values.validHours * 60 * 60 * 1000).toISOString(),
+      reason: values.reason
+    }),
+    onSuccess: async () => {
+      message.success("执行审批已创建");
+      await queryClient.invalidateQueries({ queryKey: ["commerceCardExecutionApprovals"] });
+    },
+    onError: (error: Error) => message.error(error.message || "执行审批创建失败")
+  });
+
+  const revokeApprovalMutation = useMutation({
+    mutationFn: (approval: CommerceCardExecutionApproval) => revokeCommerceCardExecutionApproval(approval.id, {
+      expectedRevision: approval.revision,
+      reason: "管理员从直播目标配置页手动撤销"
+    }),
+    onSuccess: async () => {
+      message.success("执行审批已撤销");
+      await queryClient.invalidateQueries({ queryKey: ["commerceCardExecutionApprovals"] });
+    },
+    onError: (error: Error) => message.error(error.message || "执行审批撤销失败")
+  });
+
   function createTarget() {
     setSelectedId("");
     setCreating(true);
@@ -471,7 +526,7 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
           <p>维护目标身份、组合任务阶段、设备范围和运行门禁。</p>
         </div>
         <div className="ops-toolbar">
-          <Button icon={<ReloadOutlined />} onClick={() => void Promise.all([targetQuery.refetch(), rolloutQuery.refetch()])}>刷新</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => void Promise.all([targetQuery.refetch(), rolloutQuery.refetch(), approvalQuery.refetch()])}>刷新</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={createTarget}>新增目标</Button>
         </div>
       </div>
@@ -570,6 +625,27 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
                   )
                 },
                 {
+                  key: "approvals",
+                  label: "执行审批",
+                  children: (
+                    <ApprovalPanel
+                      selectedTarget={selectedTarget}
+                      devices={devices}
+                      approvals={targetApprovals}
+                      loading={approvalMutation.isPending || revokeApprovalMutation.isPending}
+                      onCreate={(values) => approvalMutation.mutate(values)}
+                      onRevoke={(approval) => Modal.confirm({
+                        title: "撤销执行审批",
+                        content: `撤销后，${approval.deviceName || approval.deviceCode} 的在途任务下一次评论预占会立即被拒绝。`,
+                        okText: "撤销审批",
+                        okButtonProps: { danger: true },
+                        cancelText: "取消",
+                        onOk: () => revokeApprovalMutation.mutateAsync(approval)
+                      })}
+                    />
+                  )
+                },
+                {
                   key: "bindings",
                   label: "设备绑定",
                   children: (
@@ -592,6 +668,99 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
             />
           </div>
         </section>
+      </div>
+    </div>
+  );
+}
+
+function ApprovalPanel({
+  selectedTarget,
+  devices,
+  approvals,
+  loading,
+  onCreate,
+  onRevoke
+}: {
+  selectedTarget: LiveTarget | null;
+  devices: DeviceRow[];
+  approvals: CommerceCardExecutionApproval[];
+  loading: boolean;
+  onCreate: (values: ApprovalFormValues) => void;
+  onRevoke: (approval: CommerceCardExecutionApproval) => void;
+}) {
+  const [form] = Form.useForm<ApprovalFormValues>();
+  return (
+    <div className="approval-panel">
+      <Alert
+        type="warning"
+        showIcon
+        message="审批只授权指定设备、账号和当前配置哈希"
+        description="目标配置、评论池或账号发生变化后必须重新审批；全局急停和实时发送开关仍可立即阻断。"
+        style={{ marginBottom: 16 }}
+      />
+      <Form<ApprovalFormValues>
+        form={form}
+        layout="vertical"
+        initialValues={{
+          maxCommentsPerRoom: 1,
+          totalQuota: 3,
+          accountDailyLimit: 3,
+          targetDailyLimit: 3,
+          cooldownSeconds: 300,
+          validHours: 2,
+          reason: "受控商品卡真实评论验收"
+        }}
+        onFinish={onCreate}
+      >
+        <div className="workflow-field-grid three-columns">
+          <Form.Item label="授权设备" name="deviceCode" rules={[{ required: true, message: "请选择设备" }]}>
+            <Select
+              placeholder="选择设备"
+              options={devices.filter((device) => device.deviceCode).map((device) => ({
+                value: device.deviceCode!,
+                label: `${deviceDisplayName(device)} / ${deviceSubTitle(device)}`
+              }))}
+              onChange={(deviceCode) => {
+                const device = devices.find((item) => item.deviceCode === deviceCode);
+                form.setFieldValue("expectedAccountName", device?.douyinAccountName || "");
+              }}
+            />
+          </Form.Item>
+          <Form.Item label="授权抖音账号" name="expectedAccountName" rules={[{ required: true, message: "请填写授权账号" }]}>
+            <Input maxLength={100} />
+          </Form.Item>
+          <Form.Item label="有效小时" name="validHours" rules={[{ required: true }]}>
+            <InputNumber min={1} max={24} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item label="单房上限" name="maxCommentsPerRoom"><InputNumber min={1} max={5} style={{ width: "100%" }} /></Form.Item>
+          <Form.Item label="审批总额度" name="totalQuota"><InputNumber min={1} max={500} style={{ width: "100%" }} /></Form.Item>
+          <Form.Item label="账号日上限" name="accountDailyLimit"><InputNumber min={1} max={500} style={{ width: "100%" }} /></Form.Item>
+          <Form.Item label="目标日上限" name="targetDailyLimit"><InputNumber min={1} max={500} style={{ width: "100%" }} /></Form.Item>
+          <Form.Item label="跨运行冷却秒数" name="cooldownSeconds"><InputNumber min={0} max={86400} style={{ width: "100%" }} /></Form.Item>
+        </div>
+        <Form.Item label="审批原因" name="reason" rules={[{ required: true, min: 3, message: "请填写审批原因" }]}>
+          <Input maxLength={500} />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" icon={<LockOutlined />} disabled={!selectedTarget?.id} loading={loading}>创建执行审批</Button>
+      </Form>
+
+      <Divider orientation="left">当前目标审批记录</Divider>
+      <div className="ops-table-wrap">
+        <table className="ops-table">
+          <thead><tr><th>设备 / 账号</th><th>状态</th><th>额度</th><th>有效期</th><th>操作</th></tr></thead>
+          <tbody>
+            {approvals.length === 0 ? <tr><td className="ops-empty" colSpan={5}>暂无审批记录</td></tr> : null}
+            {approvals.map((approval) => (
+              <tr key={approval.id}>
+                <td><strong>{approval.deviceName || approval.deviceCode}</strong><div className="ops-small">{approval.expectedAccountName || "未命名账号"}</div></td>
+                <td><Tag color={approval.effectiveStatus === "ACTIVE" ? "green" : "default"}>{approval.effectiveStatus === "ACTIVE" ? "有效" : approval.effectiveStatus}</Tag></td>
+                <td>{approval.remainingQuota} / {approval.totalQuota}<div className="ops-small">单房 {approval.maxCommentsPerRoom}</div></td>
+                <td>{new Date(approval.expiresAt).toLocaleString()}</td>
+                <td><Button danger icon={<StopOutlined />} disabled={approval.effectiveStatus !== "ACTIVE" || loading} onClick={() => onRevoke(approval)}>撤销</Button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -660,7 +829,7 @@ function FeatureForm({
                   if (limit > 0 && parseLines(value).length < limit) throw new Error("评论内容数量不能少于单房评论上限");
                 }
               })]}><Input.TextArea rows={4} placeholder="一行一条，无默认发送话术" /></Form.Item>
-              <Alert type="warning" showIcon message="阶段 A 安全基线会强制阻断真实评论，当前配置不会触发发送。" />
+              <Alert type="warning" showIcon message="真实评论只有在全局门禁、实时开关、独立审批和手机短时许可同时有效时才会发送。" />
             </section>
           ) : null}
 
@@ -705,7 +874,7 @@ function RolloutControlsPanel({
 }) {
   return (
     <section className="ops-panel rollout-controls-panel">
-      <div className="ops-panel-head"><span>运行门禁</span><span className="ops-panel-note">阶段 A 配置准备</span></div>
+      <div className="ops-panel-head"><span>运行门禁</span><span className="ops-panel-note">按设备灰度控制</span></div>
       <div className="ops-panel-body">
         {error ? <Alert type="error" showIcon message="运行门禁加载失败" description={error} /> : null}
         {controls.length === 0 && !error ? <div className="ops-empty">运行门禁尚未初始化</div> : null}
@@ -788,10 +957,10 @@ function CommercePreview({ preview, loading, error }: { preview?: CommerceCardFe
       <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }}>
         <Descriptions.Item label="配置来源">直播目标中心</Descriptions.Item>
         <Descriptions.Item label="配置版本">第 {preview.revision} 版</Descriptions.Item>
-        <Descriptions.Item label="执行审批">未开放</Descriptions.Item>
+        <Descriptions.Item label="执行审批">需单独创建</Descriptions.Item>
         <Descriptions.Item label="预计主动时长">{preview.duration.minimumMinutes}-{preview.duration.maximumMinutes} 分钟</Descriptions.Item>
         <Descriptions.Item label="任务上限">{preview.duration.taskLimitMinutes} 分钟</Descriptions.Item>
-        <Descriptions.Item label="当前可执行">否</Descriptions.Item>
+        <Descriptions.Item label="当前可执行">{preview.rollout.enabled ? "需校验设备能力与审批" : "门禁关闭"}</Descriptions.Item>
       </Descriptions>
       <details className="commerce-preview-details">
         <summary>配置快照与校验哈希</summary>

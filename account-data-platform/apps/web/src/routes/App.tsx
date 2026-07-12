@@ -12,15 +12,23 @@ import { TasksPage } from "./TasksPage";
 const { Header, Sider, Content } = Layout;
 
 const pages = {
-  dashboard: { title: "工作台", component: <DashboardPage /> },
-  scheduler: { title: "任务调度", component: <TaskSchedulerPage /> },
-  tasks: { title: "配置", component: <TasksPage /> },
-  records: { title: "采集记录", component: <RecordsPage /> },
-  logs: { title: "日志中心", component: <LogsPage /> }
+  dashboard: { title: "工作台" },
+  scheduler: { title: "任务调度" },
+  tasks: { title: "配置" },
+  records: { title: "采集记录" },
+  logs: { title: "日志中心" }
 };
 
 type PageKey = keyof typeof pages;
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
+
+function renderPage(page: PageKey, openScheduler: () => void) {
+  if (page === "dashboard") return <DashboardPage onOpenScheduler={openScheduler} />;
+  if (page === "scheduler") return <TaskSchedulerPage />;
+  if (page === "tasks") return <TasksPage />;
+  if (page === "records") return <RecordsPage />;
+  return <LogsPage />;
+}
 
 type LoginFormValues = {
   username: string;
@@ -65,7 +73,10 @@ export function App() {
   const [page, setPage] = useState<PageKey>("dashboard");
   const [authStatus, setAuthStatus] = useState<AuthStatus>(() => (getAdminToken() ? "checking" : "unauthenticated"));
   const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
-  const current = useMemo(() => pages[page], [page]);
+  const current = useMemo(() => ({
+    title: pages[page].title,
+    component: renderPage(page, () => setPage("scheduler"))
+  }), [page]);
 
   function logout() {
     clearAdminToken();

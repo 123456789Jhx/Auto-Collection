@@ -243,3 +243,230 @@ export type CommerceCardFeaturePreview = {
   manualExecutionApproved: false;
   payload: MobileLiveTargetConfig;
 };
+
+export const taskAssignmentStateSchema = z.enum([
+  "PENDING",
+  "DISPATCHED",
+  "RUNNING",
+  "PAUSING",
+  "PAUSED",
+  "RESUMING",
+  "BLOCKED",
+  "SUCCEEDED",
+  "FAILED",
+  "CANCELLED",
+  "EXPIRED"
+]);
+
+export type TaskAssignmentState = z.infer<typeof taskAssignmentStateSchema>;
+
+export const commerceCardExpectedAccountSchema = z
+  .object({
+    accountId: z.string().trim().min(1).max(100).nullable().default(null),
+    accountName: z.string().trim().min(1).max(100).nullable().default(null)
+  })
+  .strict()
+  .refine((value) => Boolean(value.accountId || value.accountName), {
+    message: "必须指定预期抖音账号"
+  });
+
+export type CommerceCardExpectedAccount = z.infer<typeof commerceCardExpectedAccountSchema>;
+
+export const commerceCardWorkflowSnapshotSchema = z
+  .object({
+    target: mobileLiveTargetConfigSchema,
+    runtimeConfig: commerceCardWorkflowRuntimeConfigSchema,
+    configSource: z.literal("target_center_v2")
+  })
+  .strict();
+
+export type CommerceCardWorkflowSnapshot = z.infer<typeof commerceCardWorkflowSnapshotSchema>;
+
+export const commerceCardEffectiveWorkflowSchema = z
+  .object({
+    assignmentId: z.string().uuid(),
+    workflowVersion: z.literal(2),
+    selectedTarget: mobileLiveTargetConfigSchema,
+    expectedAccount: commerceCardExpectedAccountSchema,
+    configRevision: z.number().int().positive(),
+    configHash: z.string().regex(/^[0-9a-f]{64}$/),
+    snapshotHash: z.string().regex(/^[0-9a-f]{64}$/),
+    executionApprovalId: z.string().uuid().nullable(),
+    expiresAt: z.string().datetime({ offset: true }),
+    state: taskAssignmentStateSchema,
+    stateVersion: z.number().int().positive(),
+    lastEventSeq: z.number().int().nonnegative(),
+    configSnapshot: commerceCardWorkflowSnapshotSchema
+  })
+  .strict();
+
+export type CommerceCardEffectiveWorkflow = z.infer<typeof commerceCardEffectiveWorkflowSchema>;
+
+export const commerceCardCheckpointV2Schema = z
+  .object({
+    checkpointVersion: z.literal(2),
+    assignmentId: z.string().uuid(),
+    configRevision: z.number().int().positive(),
+    configHash: z.string().regex(/^[0-9a-f]{64}$/),
+    snapshotHash: z.string().regex(/^[0-9a-f]{64}$/),
+    taskType: z.literal("commerce_card_live_comment"),
+    state: taskAssignmentStateSchema,
+    stateVersion: z.number().int().positive(),
+    stage: commerceCardWorkflowStageSchema,
+    cycleIndex: z.number().int().nonnegative(),
+    stateEnteredAt: z.string().datetime({ offset: true }),
+    stageActiveElapsedMs: z.number().int().nonnegative(),
+    taskActiveElapsedMs: z.number().int().nonnegative(),
+    cardIndex: z.number().int().nonnegative(),
+    browsedCardFingerprints: z.array(z.string().trim().min(1).max(160)).max(200),
+    liveScanIndex: z.number().int().nonnegative(),
+    liveMissCount: z.number().int().nonnegative(),
+    liveRefreshCount: z.number().int().nonnegative(),
+    roomKeyVersion: z.number().int().positive(),
+    currentRoomKey: z.string().trim().max(200),
+    targetFingerprint: z.string().trim().max(500),
+    commentActionsByRoom: z.record(z.object({
+      roomKey: z.string().trim().min(1).max(200),
+      slot: z.number().int().nonnegative(),
+      actionId: z.string().uuid(),
+      commentHash: z.string().regex(/^[0-9a-f]{64}$/),
+      actionState: z.enum(["planned", "submitting", "submitted", "sent", "unknown", "failed", "skipped"])
+    }).strict()),
+    plannedWatchMs: z.number().int().nonnegative(),
+    completedWatchMs: z.number().int().nonnegative(),
+    remainingWatchMs: z.number().int().nonnegative(),
+    pendingSideEffect: z.object({
+      actionId: z.string().uuid(),
+      idempotencyKey: z.string().trim().min(1).max(220),
+      slot: z.number().int().nonnegative(),
+      commentHash: z.string().regex(/^[0-9a-f]{64}$/),
+      permitExpiresAt: z.string().datetime({ offset: true }),
+      lastConfirmedState: z.enum(["planned", "submitting", "submitted", "sent", "unknown", "failed", "skipped"])
+    }).strict().nullable(),
+    expectedAccountId: z.string().trim().max(100),
+    pageSignature: z.string().trim().max(500),
+    checkpointSequence: z.number().int().positive(),
+    checkpointHash: z.string().regex(/^[0-9a-f]{64}$/),
+    updatedAt: z.string().datetime({ offset: true })
+  })
+  .strict();
+
+export type CommerceCardCheckpointV2 = z.infer<typeof commerceCardCheckpointV2Schema>;
+
+export const taskAssignmentEventPayloadSchema = z
+  .object({
+    deviceId: z.string().trim().min(1).max(64),
+    sequence: z.number().int().positive(),
+    idempotencyKey: z.string().trim().min(1).max(200),
+    expectedStateVersion: z.number().int().positive(),
+    eventType: z.string().trim().min(1).max(100),
+    stage: commerceCardWorkflowStageSchema.nullable().optional(),
+    fromState: taskAssignmentStateSchema.nullable().optional(),
+    toState: taskAssignmentStateSchema.nullable().optional(),
+    status: z.enum(["started", "succeeded", "failed", "skipped", "blocked", "checkpointed"]),
+    reasonCode: z.string().trim().max(100).nullable().optional(),
+    retryable: z.boolean().default(false),
+    recoveryAction: z.string().trim().max(200).nullable().optional(),
+    evidence: z.record(z.unknown()).default({}),
+    occurredAt: z.string().datetime({ offset: true }).optional()
+  })
+  .strict();
+
+export type TaskAssignmentEventPayload = z.infer<typeof taskAssignmentEventPayloadSchema>;
+
+export const taskAssignmentProgressPayloadSchema = z
+  .object({
+    deviceId: z.string().trim().min(1).max(64),
+    expectedStateVersion: z.number().int().positive(),
+    stage: commerceCardWorkflowStageSchema,
+    checkpoint: commerceCardCheckpointV2Schema,
+    progress: z.record(z.unknown()).default({})
+  })
+  .strict();
+
+export type TaskAssignmentProgressPayload = z.infer<typeof taskAssignmentProgressPayloadSchema>;
+
+export const taskAssignmentCompletePayloadSchema = z
+  .object({
+    deviceId: z.string().trim().min(1).max(64),
+    expectedStateVersion: z.number().int().positive(),
+    state: z.enum(["SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED"]),
+    terminalReason: z.string().trim().min(1).max(200),
+    finalProgress: z.record(z.unknown()).default({}),
+    occurredAt: z.string().datetime({ offset: true }).optional()
+  })
+  .strict();
+
+export type TaskAssignmentCompletePayload = z.infer<typeof taskAssignmentCompletePayloadSchema>;
+
+export const commerceCardExecutionApprovalStatusSchema = z.enum(["ACTIVE", "REVOKED", "EXPIRED", "EXHAUSTED"]);
+
+export const createCommerceCardExecutionApprovalSchema = z
+  .object({
+    targetId: z.string().uuid(),
+    deviceCode: z.string().trim().min(1).max(64),
+    expectedAccountId: z.string().trim().min(1).max(100).nullable().default(null),
+    expectedAccountName: z.string().trim().min(1).max(100).nullable().default(null),
+    maxCommentsPerRoom: z.number().int().min(1).max(5),
+    totalQuota: z.number().int().min(1).max(500),
+    accountDailyLimit: z.number().int().min(1).max(500),
+    targetDailyLimit: z.number().int().min(1).max(500),
+    cooldownSeconds: z.number().int().min(0).max(86400).default(0),
+    validFrom: z.string().datetime({ offset: true }).optional(),
+    expiresAt: z.string().datetime({ offset: true }),
+    reason: z.string().trim().min(3).max(500)
+  })
+  .strict()
+  .refine((value) => Boolean(value.expectedAccountId || value.expectedAccountName), {
+    message: "必须指定审批账号"
+  });
+
+export type CreateCommerceCardExecutionApprovalPayload = z.infer<typeof createCommerceCardExecutionApprovalSchema>;
+
+export const revokeCommerceCardExecutionApprovalSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  reason: z.string().trim().min(3).max(500)
+}).strict();
+
+export type RevokeCommerceCardExecutionApprovalPayload = z.infer<typeof revokeCommerceCardExecutionApprovalSchema>;
+
+export const reserveCommerceCardCommentActionSchema = z
+  .object({
+    deviceId: z.string().trim().min(1).max(64),
+    expectedStateVersion: z.number().int().positive(),
+    roomKeyVersion: z.number().int().positive(),
+    roomKey: z.string().trim().min(8).max(200),
+    commentSlot: z.number().int().nonnegative().max(20),
+    commentHash: z.string().regex(/^[0-9a-f]{64}$/),
+    replyText: z.string().trim().min(1).max(80),
+    currentAccountId: z.string().trim().max(100).nullable().optional(),
+    currentAccountName: z.string().trim().max(100).nullable().optional(),
+    idempotencyKey: z.string().trim().min(16).max(220)
+  })
+  .strict();
+
+export type ReserveCommerceCardCommentActionPayload = z.infer<typeof reserveCommerceCardCommentActionSchema>;
+
+export const updateCommerceCardCommentActionSchema = z
+  .object({
+    deviceId: z.string().trim().min(1).max(64),
+    expectedActionStateVersion: z.number().int().positive(),
+    state: z.enum(["submitting", "submitted", "sent", "unknown", "failed", "skipped"]),
+    permitToken: z.string().trim().min(32).max(256).optional(),
+    failureReason: z.string().trim().max(500).nullable().optional(),
+    evidence: z.record(z.unknown()).default({}),
+    occurredAt: z.string().datetime({ offset: true }).optional()
+  })
+  .strict();
+
+export type UpdateCommerceCardCommentActionPayload = z.infer<typeof updateCommerceCardCommentActionSchema>;
+
+export const resolveCommerceCardCommentActionSchema = z
+  .object({
+    expectedActionStateVersion: z.number().int().positive(),
+    resolution: z.enum(["sent", "failed"]),
+    evidence: z.string().trim().min(3).max(1000)
+  })
+  .strict();
+
+export type ResolveCommerceCardCommentActionPayload = z.infer<typeof resolveCommerceCardCommentActionSchema>;

@@ -396,6 +396,189 @@ function testUnsupportedExplicitStartTaskDoesNotFallbackToVideo() {
   assert.strictEqual(context.floatyControl.state.running, false);
 }
 
+function createV2ControlFixture(commandType) {
+  var acks = [];
+  var pauseCalls = 0;
+  var stopCalls = 0;
+  var checkpoint = {
+    checkpointVersion: 2,
+    assignmentId: "assignment-v2",
+    checkpointSequence: 4,
+    pendingSideEffect: null
+  };
+  var effectiveWorkflow = {
+    assignmentId: "assignment-v2",
+    workflowVersion: 2,
+    stateVersion: 6,
+    lastEventSeq: 5,
+    snapshotHash: "snapshot-v2"
+  };
+  var command = {
+    id: "command-" + commandType.toLowerCase(),
+    assignmentId: "assignment-v2",
+    commandSequence: 3,
+    commandType: commandType,
+    payload: {
+      taskType: "commerce_card_live_comment",
+      workflowVersion: 2,
+      assignmentId: "assignment-v2",
+      commandSequence: 3,
+      expectedStateVersion: 6,
+      effectiveWorkflow: effectiveWorkflow
+    }
+  };
+  var context = createContext({
+    config: {
+      upload: {
+        controlEnabled: true,
+        commandPollIntervalSeconds: 5
+      },
+      device: {
+        deviceId: "test-device"
+      },
+      task: {
+        effectiveWorkflow: effectiveWorkflow
+      }
+    },
+    counters: {
+      currentPhase: "commerce_card_live_comment",
+      phaseEndedAt: ""
+    },
+    uploader: {
+      isRegistered: function () { return true; },
+      pollCommands: function () { return [command]; },
+      uploadRuntimeLog: function () {},
+      ackCommand: function (id, status, result) {
+        acks.push({ id: id, status: status, result: result });
+        return { success: true, data: {} };
+      }
+    },
+    taskScheduler: {
+      getActiveTaskType: function () { return "commerce_card_live_comment"; },
+      getCheckpoint: function () { return checkpoint; },
+      recordAssignmentCommand: function () { return { accepted: true }; },
+      rememberAssignmentCommandAck: function () { return true; },
+      requestTask: function () {},
+      pauseTask: function () { pauseCalls += 1; },
+      stopTask: function () { stopCalls += 1; },
+      updateAssignmentRuntime: function () {}
+    }
+  });
+  return {
+    context: context,
+    acks: acks,
+    checkpoint: checkpoint,
+    getPauseCalls: function () { return pauseCalls; },
+    getStopCalls: function () { return stopCalls; }
+  };
+}
+
+function testV2PauseWaitsForSafeCheckpoint() {
+  var fixture = createV2ControlFixture("PAUSE");
+  var controlLoop = createControlLoop(fixture.context);
+
+  controlLoop.pollControlCommands(true);
+
+  assert.strictEqual(fixture.acks[0].status, "FETCHED");
+  assert.strictEqual(fixture.acks[0].result.checkpointStable, false);
+  assert.strictEqual(fixture.getPauseCalls(), 0);
+
+  fixture.checkpoint.checkpointSequence = 5;
+  fixture.checkpoint.pendingSideEffect = { actionId: "action-pending" };
+  var blocked = controlLoop.completePendingAssignmentControl("PAUSE", { checkpointStable: true });
+  assert.strictEqual(blocked.skipped, true);
+  assert.strictEqual(fixture.acks.length, 1);
+
+  fixture.checkpoint.pendingSideEffect = null;
+  var completed = controlLoop.completePendingAssignmentControl("PAUSE", { checkpointStable: true });
+  assert.strictEqual(completed.success, true);
+  assert.strictEqual(fixture.acks[1].status, "DONE");
+  assert.strictEqual(fixture.acks[1].result.checkpointStable, true);
+  assert.strictEqual(fixture.acks[1].result.completed, true);
+}
+
+function testV2StopWaitsForSafeCheckpoint() {
+  var fixture = createV2ControlFixture("STOP");
+  var controlLoop = createControlLoop(fixture.context);
+
+  controlLoop.pollControlCommands(true);
+
+  assert.strictEqual(fixture.acks[0].status, "FETCHED");
+  assert.strictEqual(fixture.getStopCalls(), 0);
+  fixture.checkpoint.checkpointSequence = 5;
+  var completed = controlLoop.completePendingAssignmentControl("STOP", { reason: "backend_stop" });
+  assert.strictEqual(completed.success, true);
+  assert.strictEqual(fixture.acks[1].status, "DONE");
+  assert.strictEqual(fixture.acks[1].result.completed, true);
+}
+
+function testDuplicateV2CommandReplaysFinalAck() {
+  var ack = null;
+  var requestCount = 0;
+  var effectiveWorkflow = {
+    assignmentId: "assignment-v2",
+    workflowVersion: 2,
+    stateVersion: 6,
+    lastEventSeq: 5,
+    snapshotHash: "snapshot-v2"
+  };
+  var context = createContext({
+    config: {
+      upload: { controlEnabled: true, commandPollIntervalSeconds: 5 },
+      device: { deviceId: "test-device" },
+      task: { effectiveWorkflow: effectiveWorkflow }
+    },
+    uploader: {
+      isRegistered: function () { return true; },
+      pollCommands: function () {
+        return [{
+          id: "command-start",
+          assignmentId: "assignment-v2",
+          commandSequence: 1,
+          commandType: "START",
+          payload: {
+            taskType: "commerce_card_live_comment",
+            workflowVersion: 2,
+            assignmentId: "assignment-v2",
+            commandSequence: 1,
+            expectedStateVersion: 2,
+            effectiveWorkflow: effectiveWorkflow
+          }
+        }];
+      },
+      uploadRuntimeLog: function () {},
+      ackCommand: function (id, status, result) {
+        ack = { id: id, status: status, result: result };
+        return { success: true, data: {} };
+      }
+    },
+    taskScheduler: {
+      getActiveTaskType: function () { return ""; },
+      recordAssignmentCommand: function () {
+        return {
+          accepted: true,
+          duplicate: true,
+          ackStatus: "DONE",
+          ackResult: { applied: true, commandType: "START", taskType: "commerce_card_live_comment" }
+        };
+      },
+      rememberAssignmentCommandAck: function () { return true; },
+      requestTask: function () { requestCount += 1; }
+    }
+  });
+  var controlLoop = createControlLoop(context);
+
+  controlLoop.pollControlCommands(true);
+
+  assert.strictEqual(requestCount, 0);
+  assert.strictEqual(ack.status, "DONE");
+  assert.deepStrictEqual(ack.result, {
+    applied: true,
+    commandType: "START",
+    taskType: "commerce_card_live_comment"
+  });
+}
+
 testPollAsyncDoesNotStartThreadBeforeInterval();
 testUnregisteredPollAttemptsAreThrottled();
 testLiveCommentPauseRequestsInterrupt();
@@ -403,5 +586,8 @@ testStopIsNotSupersededByLaterStartInSamePoll();
 testRefreshRuntimeConfigAppliesCommerceCardConfig();
 testCommerceCardLiveStartUsesIndependentTaskType();
 testUnsupportedExplicitStartTaskDoesNotFallbackToVideo();
+testV2PauseWaitsForSafeCheckpoint();
+testV2StopWaitsForSafeCheckpoint();
+testDuplicateV2CommandReplaysFinalAck();
 
 console.log("control-loop tests passed");

@@ -20,6 +20,30 @@ function createHeartbeatService(context) {
     return context.taskScheduler && context.taskScheduler.getActiveTaskType ? context.taskScheduler.getActiveTaskType() : "";
   }
 
+  function agentCapabilities() {
+    return {
+      workflowVersion: 2,
+      checkpointVersion: 2,
+      pauseResume: true,
+      stableRoomKey: true,
+      idempotentComment: true,
+      shortLivedCommentPermit: true
+    };
+  }
+
+  function assignmentPayload() {
+    var taskType = currentTaskType();
+    var assignment = context.taskScheduler && context.taskScheduler.getAssignmentContext
+      ? context.taskScheduler.getAssignmentContext(taskType)
+      : null;
+    var checkpoint = assignment && assignment.checkpoint || {};
+    return {
+      assignmentId: assignment && assignment.assignmentId || "",
+      assignmentStateVersion: assignment && assignment.stateVersion || 0,
+      stage: checkpoint.stage || checkpoint.currentStage || ""
+    };
+  }
+
   function normalizeHeartbeatSceneType(sceneType) {
     var value = String(sceneType || "");
     if (value === "commerce_card_live_comment" || value === "live_comment") {
@@ -140,6 +164,7 @@ function createHeartbeatService(context) {
       counters.liveElapsedMinutes = elapsedMinutes;
       counters.liveRemainingMinutes = remainingMinutes;
     }
+    var assignment = assignmentPayload();
     var payload = {
       sceneType: uploadSceneType,
       elapsedMinutes: elapsedMinutes,
@@ -161,6 +186,10 @@ function createHeartbeatService(context) {
       stopRequested: floatyControl.state.stopRequested,
       status: floatyControl.state.paused ? "paused" : "running",
       currentTaskType: currentTaskType(),
+      assignmentId: assignment.assignmentId,
+      assignmentStateVersion: assignment.assignmentStateVersion,
+      stage: assignment.stage,
+      capabilities: agentCapabilities(),
       lastMessage: floatyControl.state.lastMessage,
       douyinAccountName: heartbeat.douyinAccountName || "",
       douyinAccountNameUpdatedAt: heartbeat.douyinAccountNameLastAt ? new Date(heartbeat.douyinAccountNameLastAt).toISOString() : "",
@@ -176,6 +205,7 @@ function createHeartbeatService(context) {
     var isActiveTask = heartbeatStatus === "running";
     var startedAt = isActiveTask && counters.phaseStartedAt ? new Date(counters.phaseStartedAt).getTime() : 0;
     var activeSceneType = isActiveTask ? normalizeHeartbeatSceneType(sceneType || counters.currentPhase || "") : "";
+    var assignment = assignmentPayload();
     var payload = {
       sceneType: activeSceneType,
       elapsedMinutes: isActiveTask && startedAt && !isNaN(startedAt) ? Math.max(0, Math.round((Date.now() - startedAt) / 60000)) : 0,
@@ -197,6 +227,10 @@ function createHeartbeatService(context) {
       stopRequested: floatyControl.state.stopRequested,
       status: heartbeatStatus,
       currentTaskType: currentTaskType(),
+      assignmentId: assignment.assignmentId,
+      assignmentStateVersion: assignment.assignmentStateVersion,
+      stage: assignment.stage,
+      capabilities: agentCapabilities(),
       lastMessage: message || floatyControl.state.lastMessage,
       douyinAccountName: heartbeat.douyinAccountName || "",
       douyinAccountNameUpdatedAt: heartbeat.douyinAccountNameLastAt ? new Date(heartbeat.douyinAccountNameLastAt).toISOString() : "",

@@ -19,6 +19,8 @@ describe("task assignment types", () => {
       taskType: "commerce_card_live_comment",
       assignmentId: "11111111-1111-4111-8111-111111111111",
       commandType: "PAUSE",
+      expectedStateVersion: 3,
+      commandIdempotencyKey: "admin:assignment:pause:001",
       reason: "manual_pause"
     });
 

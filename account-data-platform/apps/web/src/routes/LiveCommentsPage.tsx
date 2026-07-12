@@ -2,7 +2,7 @@ import { PauseOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined } from 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Checkbox, Form, Input, InputNumber, Modal, Select, Skeleton, Space, Switch, message } from "antd";
 import { useMemo, useState } from "react";
-import { createMobileCommand, getDeviceTaskConfig, getLiveCommentActions, getLiveCommentDeviceSummary, updateDevice, updateDeviceTaskConfig } from "../lib/api-client";
+import { createMobileCommand, getDeviceTaskConfig, getLiveCommentActions, getLiveCommentDeviceSummary, updateDevice, updateDeviceTaskConfig, type LiveCommentAction } from "../lib/api-client";
 import { deviceDisplayName, deviceSubTitle, statusText } from "../lib/display-maps";
 
 type LiveCommentMode = "off" | "target_follow" | "agri_chatbot";
@@ -26,22 +26,6 @@ type LiveCommentDeviceSummary = {
   lastMessage?: string | null;
   liveCommentMode?: LiveCommentMode;
   configSource?: string;
-};
-
-type LiveCommentAction = {
-  id: string;
-  createdAt?: string;
-  deviceCode?: string;
-  deviceName?: string;
-  roomName?: string | null;
-  leaderAccountName?: string | null;
-  triggerText?: string | null;
-  replyText?: string;
-  plannedDelayMs?: number | null;
-  status?: string;
-  skipReason?: string | null;
-  failureReason?: string | null;
-  sentAt?: string | null;
 };
 
 type DeviceTaskConfig = {
@@ -90,12 +74,16 @@ function actionStatusTone(value?: string) {
   if (value === "sent") return "green";
   if (value === "failed") return "red";
   if (value === "skipped") return "amber";
+  if (value === "unknown" || value === "submitted") return "red";
   return "blue";
 }
 
 function actionStatusText(value?: string) {
   if (value === "planned") return "已计划";
+  if (value === "submitting") return "发送中";
+  if (value === "submitted") return "已提交待确认";
   if (value === "sent") return "已发送";
+  if (value === "unknown") return "结果未知";
   if (value === "failed") return "失败";
   if (value === "skipped") return "跳过";
   return value || "-";
@@ -557,7 +545,10 @@ export function LiveCommentsPage() {
           <select id="live-action-status" className="ops-input" value={status ?? ""} onChange={(event) => setStatus(event.currentTarget.value || undefined)}>
             <option value="">全部状态</option>
             <option value="planned">已计划</option>
+            <option value="submitting">发送中</option>
+            <option value="submitted">已提交待确认</option>
             <option value="sent">已发送</option>
+            <option value="unknown">结果未知</option>
             <option value="failed">失败</option>
             <option value="skipped">跳过</option>
           </select>
@@ -739,7 +730,7 @@ function LiveActionTable(props: { actions: LiveCommentAction[] }) {
               </td>
               <td>{shortText(item.triggerText, 60) || "-"}</td>
               <td>{shortText(item.replyText, 60)}</td>
-              <td><span className={`ops-tag ${actionStatusTone(item.status)}`}>{actionStatusText(item.status)}</span></td>
+              <td><span className={`ops-tag ${actionStatusTone(item.actionState || item.status)}`}>{actionStatusText(item.actionState || item.status)}</span></td>
               <td>
                 <div>{shortText(reasonText(item.failureReason || item.skipReason), 80)}</div>
                 <div className="ops-small">{formatDateTime(item.sentAt)}</div>

@@ -42,6 +42,16 @@ test("任务调度内置单台手机直播评论配置弹窗", () => {
   assert(/REFRESH_CONFIG/.test(deviceConfigModalSource), "modal copy should reflect save-triggered phone config refresh");
 });
 
+test("任务调度按运行状态阻止直接切换并使用稳定控制幂等键", () => {
+  assert(/function taskAssignmentCommandIdempotencyKey/.test(schedulerSource), "scheduler should build assignment command idempotency keys explicitly");
+  assert(/state:\$\{stateVersion\}/.test(schedulerSource), "idempotency keys should be stable for the same assignment state version");
+  assert(!/crypto\.randomUUID/.test(schedulerSource), "control commands must not depend on secure-context randomUUID support");
+  assert(/commandIdempotencyKey:\s*taskAssignmentCommandIdempotencyKey/.test(schedulerSource), "control requests should use the stable key builder");
+  assert(/commandType\s*===\s*"START"\s*&&\s*isActiveAssignment/.test(schedulerSource), "START should be rejected locally while an assignment is active");
+  assert(/detailStartBlocked/.test(schedulerSource), "detail controls should disable new START actions while a run is active");
+  assert(/先停止当前任务并等待结束后/.test(schedulerSource), "operators should see the required stop-then-wait workflow");
+});
+
 test("配置页恢复公共模板原有表单口径", () => {
   assert(/<h1>配置<\/h1>/.test(tasksSource), "TasksPage should use the config page title");
   assert(/维护公共任务模板、直播评论机器人话术和高级 JSON；设备单独覆盖在设备运行页处理。/.test(tasksSource), "TasksPage should restore the original config description");

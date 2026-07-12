@@ -1,4 +1,18 @@
-import { createAgentVersionSchema, createMobileCommandSchema, createTaskAssignmentSchema, estimateCommerceCardWorkflowDuration, featureRolloutControlUpdateSchema, featureRolloutKeySchema, updateDeviceSchema, updateDeviceTaskConfigSchema, updateTaskSchema } from "@pkg/types";
+import {
+  createAgentVersionSchema,
+  createCommerceCardExecutionApprovalSchema,
+  createMobileCommandSchema,
+  createTaskAssignmentCommandSchema,
+  createTaskAssignmentSchema,
+  estimateCommerceCardWorkflowDuration,
+  featureRolloutControlUpdateSchema,
+  featureRolloutKeySchema,
+  resolveCommerceCardCommentActionSchema,
+  revokeCommerceCardExecutionApprovalSchema,
+  updateDeviceSchema,
+  updateDeviceTaskConfigSchema,
+  updateTaskSchema
+} from "@pkg/types";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { validationError } from "../lib/validation";
@@ -7,11 +21,15 @@ import { loginAdmin } from "../services/auth.service";
 import { createCommand, getCommands } from "../services/command.service";
 import { clearDeviceToken, deleteDeviceRecord, getDeviceDailyProgress, getDeviceProgressHistory, getDeviceTaskConfig, getDevices, getLiveCommentActions, getLiveCommentDeviceSummary, getLogDates, getLogDeviceSummary, getLogFileDates, getLogFileDetail, getLogFiles, getLogs, getOverview, getRecordDates, getRecordDeviceSummary, getRecords, getTasks, rotateDeviceToken, updateDevice, updateDeviceTaskConfig, updateTaskConfig } from "../services/admin.service";
 import { getAgentVersions, publishAgentVersion } from "../services/agent-version.service";
-import { createTaskAssignmentFromAdmin, getTaskAssignments } from "../services/task-orchestrator.service";
+import { createTaskAssignmentCommandFromAdmin, createTaskAssignmentFromAdmin, getTaskAssignments } from "../services/task-orchestrator.service";
 import { deleteLiveTarget, getCommerceCardFeaturePreviewData, listLiveTargetDetails, replaceLiveTargetDeviceBindings, upsertLiveTarget, upsertLiveTargetFeatureConfig } from "../repositories/live-target.repository";
 import { FeatureAllowlistDeviceNotFoundError, FeatureControlRevisionConflictError } from "../repositories/feature-rollout.repository";
 import { FeatureActivationNotReadyError, FeatureRolloutRejectedError, getFeatureRolloutControl, listFeatureRolloutControls, updateFeatureRolloutControl } from "../services/feature-rollout-control.service";
 import { ConfigRevisionConflictError, ConfigRevisionRequiredError, liveTargetFeatureConfigSchema, liveTargetFeatureTypeSchema, liveTargetPayloadSchema } from "../services/live-target-config.service";
+import { AssignmentRuntimeError } from "../repositories/task-assignment.repository";
+import { createExecutionApproval, getExecutionApprovals, revokeExecutionApproval } from "../services/commerce-card-execution-approval.service";
+import { resolveCommentAction } from "../services/commerce-card-comment-action.service";
+import { getTaskAssignmentEvents } from "../services/task-assignment-runtime.service";
 
 const adminLoginSchema = z.object({
   username: z.string().trim().min(1),
@@ -37,6 +55,24 @@ function liveTargetMutationError(c: Context<{ Variables: AdminVariables }>, erro
     }, 409);
   }
   throw error;
+}
+
+function assignmentRuntimeErrorResponse(c: Context<{ Variables: AdminVariables }>, error: unknown) {
+  if (!(error instanceof AssignmentRuntimeError)) {
+    throw error;
+  }
+  const notFound = ["ASSIGNMENT_NOT_FOUND", "COMMENT_ACTION_NOT_FOUND", "EXECUTION_APPROVAL_NOT_FOUND"].includes(error.message);
+  return c.json({
+    error: {
+      code: error.message,
+      message: error.message,
+      category: "assignment_runtime",
+      stage: "admin_control",
+      retryable: false,
+      recoveryAction: notFound ? "refresh_list" : "refresh_assignment_state",
+      details: error.details
+    }
+  }, notFound ? 404 : 409);
 }
 
 export const adminRoutes = new Hono<{ Variables: AdminVariables }>();
@@ -213,6 +249,27 @@ adminRoutes.post("/live-target-device-bindings", async (c) => {
 });
 adminRoutes.get("/mobile-commands", async (c) => c.json(await getCommands()));
 adminRoutes.get("/task-assignments", async (c) => c.json(await getTaskAssignments()));
+adminRoutes.get("/task-assignments/:id/events", async (c) => {
+  try {
+    return c.json(await getTaskAssignmentEvents(c.req.param("id")));
+  } catch (error) {
+    return assignmentRuntimeErrorResponse(c, error);
+  }
+});
+adminRoutes.post("/task-assignments/:id/commands", async (c) => {
+  const parsed = createTaskAssignmentCommandSchema.safeParse(await c.req.json());
+  if (!parsed.success) {
+    return validationError(c, parsed.error);
+  }
+  try {
+    return c.json(await createTaskAssignmentCommandFromAdmin(c.req.param("id"), parsed.data), 201);
+  } catch (error) {
+    if (error instanceof FeatureRolloutRejectedError) {
+      return c.json({ error: { code: error.message, message: "当前设备不满足商品卡 V2 恢复条件", details: { reasons: error.reasons } } }, 409);
+    }
+    return assignmentRuntimeErrorResponse(c, error);
+  }
+});
 adminRoutes.post("/task-assignments", async (c) => {
   const parsed = createTaskAssignmentSchema.safeParse(await c.req.json());
   if (!parsed.success) {
@@ -224,7 +281,41 @@ adminRoutes.post("/task-assignments", async (c) => {
     if (error instanceof FeatureRolloutRejectedError) {
       return c.json({ error: { code: error.message, message: "当前设备不满足商品卡 V2 启动条件", details: { reasons: error.reasons } } }, 409);
     }
-    throw error;
+    return assignmentRuntimeErrorResponse(c, error);
+  }
+});
+adminRoutes.get("/commerce-card-execution-approvals", async (c) => c.json(await getExecutionApprovals()));
+adminRoutes.post("/commerce-card-execution-approvals", async (c) => {
+  const parsed = createCommerceCardExecutionApprovalSchema.safeParse(await c.req.json());
+  if (!parsed.success) {
+    return validationError(c, parsed.error);
+  }
+  try {
+    return c.json(await createExecutionApproval(parsed.data, c.get("admin").username), 201);
+  } catch (error) {
+    return assignmentRuntimeErrorResponse(c, error);
+  }
+});
+adminRoutes.post("/commerce-card-execution-approvals/:id/revoke", async (c) => {
+  const parsed = revokeCommerceCardExecutionApprovalSchema.safeParse(await c.req.json());
+  if (!parsed.success) {
+    return validationError(c, parsed.error);
+  }
+  try {
+    return c.json(await revokeExecutionApproval(c.req.param("id"), parsed.data, c.get("admin").username));
+  } catch (error) {
+    return assignmentRuntimeErrorResponse(c, error);
+  }
+});
+adminRoutes.post("/live-comment-actions/:id/resolve", async (c) => {
+  const parsed = resolveCommerceCardCommentActionSchema.safeParse(await c.req.json());
+  if (!parsed.success) {
+    return validationError(c, parsed.error);
+  }
+  try {
+    return c.json(await resolveCommentAction(c.req.param("id"), parsed.data, c.get("admin").username));
+  } catch (error) {
+    return assignmentRuntimeErrorResponse(c, error);
   }
 });
 adminRoutes.get("/agent-versions", async (c) => c.json(await getAgentVersions()));
@@ -240,5 +331,9 @@ adminRoutes.post("/mobile-commands", async (c) => {
   if (!parsed.success) {
     return validationError(c, parsed.error);
   }
-  return c.json(await createCommand(parsed.data), 201);
+  try {
+    return c.json(await createCommand(parsed.data), 201);
+  } catch (error) {
+    return assignmentRuntimeErrorResponse(c, error);
+  }
 });

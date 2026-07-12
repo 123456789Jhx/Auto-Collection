@@ -50,6 +50,19 @@ export async function listLiveCommentActions(page: number, pageSize: number, fil
   const data = await db
     .select({
       id: liveCommentActions.id,
+      assignmentId: liveCommentActions.assignmentId,
+      targetId: liveCommentActions.targetId,
+      approvalId: liveCommentActions.approvalId,
+      stage: liveCommentActions.stage,
+      expectedAccountName: liveCommentActions.expectedAccountName,
+      roomKeyVersion: liveCommentActions.roomKeyVersion,
+      roomKey: liveCommentActions.roomKey,
+      commentSlot: liveCommentActions.commentSlot,
+      commentHash: liveCommentActions.commentHash,
+      actionState: liveCommentActions.actionState,
+      stateVersion: liveCommentActions.stateVersion,
+      idempotencyKey: liveCommentActions.idempotencyKey,
+      permitExpiresAt: liveCommentActions.permitExpiresAt,
       createdAt: liveCommentActions.createdAt,
       reportedAt: liveCommentActions.reportedAt,
       platform: liveCommentActions.platform,
@@ -63,7 +76,12 @@ export async function listLiveCommentActions(page: number, pageSize: number, fil
       skipReason: liveCommentActions.skipReason,
       failureReason: liveCommentActions.failureReason,
       plannedAt: liveCommentActions.plannedAt,
+      submittedAt: liveCommentActions.submittedAt,
       sentAt: liveCommentActions.sentAt,
+      confirmedAt: liveCommentActions.confirmedAt,
+      resolvedBy: liveCommentActions.resolvedBy,
+      resolvedAt: liveCommentActions.resolvedAt,
+      resolutionEvidence: liveCommentActions.resolutionEvidence,
       deviceCode: collectorDevices.deviceCode,
       deviceName: collectorDevices.deviceName
     })

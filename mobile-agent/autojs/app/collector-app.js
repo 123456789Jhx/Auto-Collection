@@ -804,12 +804,15 @@ function createCollectorApp(context) {
       };
     }
     var result = commerceCardLiveRunner.runCommerceCardLiveCommentTask();
-    persistCheckpoint({
-      taskType: "commerce_card_live_comment",
-      checkpointType: result && result.success ? "commerce_card_live_task_end" : "commerce_card_live_task_failed",
-      stopReason: counters.lastStopReason,
-      result: result || null
-    });
+    var workflow = config.task && config.task.effectiveWorkflow;
+    if (!workflow || Number(workflow.workflowVersion || 1) < 2) {
+      persistCheckpoint({
+        taskType: "commerce_card_live_comment",
+        checkpointType: result && result.success ? "commerce_card_live_task_end" : "commerce_card_live_task_failed",
+        stopReason: counters.lastStopReason,
+        result: result || null
+      });
+    }
     return result;
   }
 
@@ -924,6 +927,63 @@ function createCollectorApp(context) {
       }
       if (requestedTaskType === "commerce_card_live_comment") {
         var commerceCardLiveResult = runCommerceCardLiveCommentTask(todayLiveMinutes);
+        if (commerceCardLiveResult && commerceCardLiveResult.paused) {
+          counters.phaseEndedAt = new Date().toISOString();
+          var pausedCommerceCheckpoint = taskScheduler
+            ? taskScheduler.getCheckpoint("commerce_card_live_comment")
+            : null;
+          if (taskScheduler) {
+            taskScheduler.pauseTask("commerce_card_live_comment", {
+              reason: commerceCardLiveResult.reason || "manual_pause",
+              checkpoint: pausedCommerceCheckpoint
+            });
+          }
+          if (pausedCommerceCheckpoint && pausedCommerceCheckpoint.checkpointVersion === 2 &&
+            controlLoop.completePendingAssignmentControl) {
+            controlLoop.completePendingAssignmentControl("PAUSE", {
+              checkpointStable: true,
+              assignmentId: pausedCommerceCheckpoint.assignmentId || "",
+              reason: commerceCardLiveResult.reason || "manual_pause"
+            });
+          }
+          return;
+        }
+        if (commerceCardLiveResult && commerceCardLiveResult.blocked) {
+          counters.phaseEndedAt = new Date().toISOString();
+          floatyControl.update({
+            running: false,
+            paused: true,
+            stopRequested: false,
+            lastMessage: "评论状态待人工确认"
+          });
+          if (taskScheduler) {
+            taskScheduler.pauseTask("commerce_card_live_comment", {
+              reason: commerceCardLiveResult.reason || "comment_unknown",
+              checkpoint: taskScheduler.getCheckpoint("commerce_card_live_comment")
+            });
+          }
+          return;
+        }
+        if (commerceCardLiveResult && commerceCardLiveResult.cancelled) {
+          counters.phaseEndedAt = new Date().toISOString();
+          var cancelledCommerceCheckpoint = taskScheduler
+            ? taskScheduler.getCheckpoint("commerce_card_live_comment")
+            : null;
+          if (taskScheduler) {
+            taskScheduler.stopTask("commerce_card_live_comment", {
+              reason: commerceCardLiveResult.reason || "backend_close",
+              checkpoint: cancelledCommerceCheckpoint
+            });
+          }
+          if (controlLoop.completePendingAssignmentControl) {
+            controlLoop.completePendingAssignmentControl("STOP", {
+              checkpointStable: !!(cancelledCommerceCheckpoint && cancelledCommerceCheckpoint.checkpointVersion === 2),
+              assignmentId: cancelledCommerceCheckpoint && cancelledCommerceCheckpoint.assignmentId || "",
+              reason: "backend_stop"
+            });
+          }
+          return;
+        }
         finishTask({
           status: commerceCardLiveResult && commerceCardLiveResult.success ? "completed" : "failed",
           reason: (commerceCardLiveResult && commerceCardLiveResult.reason) || counters.lastStopReason || "commerce_card_live_comment_finished",

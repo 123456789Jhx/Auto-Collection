@@ -205,20 +205,64 @@ export type CreateMobileCommandPayload = z.infer<typeof createMobileCommandSchem
 
 export const taskAssignmentTypeSchema = z.enum(["video", "live", "live_comment", "commerce_card_live_comment"]);
 
-export const createTaskAssignmentSchema = z.object({
-  deviceId: z.string().min(1),
-  taskType: taskAssignmentTypeSchema,
-  commandType: z.enum(["START", "RESUME", "PAUSE", "STOP"]).default("START"),
-  assignmentId: z.string().uuid().optional(),
-  reason: z.string().trim().max(200).optional(),
-  priority: z.number().int().min(1).max(1000).default(100),
-  source: z.string().trim().min(1).max(64).default("manual"),
-  targetContext: z.string().trim().max(64).optional(),
-  payload: z.record(z.unknown()).optional(),
-  expiresInSeconds: z.number().int().min(60).max(86400).default(3600)
-});
+export const createTaskAssignmentSchema = z
+  .object({
+    deviceId: z.string().min(1),
+    taskType: taskAssignmentTypeSchema,
+    commandType: z.enum(["START", "RESUME", "PAUSE", "STOP"]).default("START"),
+    assignmentId: z.string().uuid().optional(),
+    workflowVersion: z.union([z.literal(1), z.literal(2)]).default(1),
+    targetId: z.string().uuid().optional(),
+    executionApprovalId: z.string().uuid().nullable().optional(),
+    expectedAccountId: z.string().trim().min(1).max(100).nullable().optional(),
+    expectedAccountName: z.string().trim().min(1).max(100).nullable().optional(),
+    expectedStateVersion: z.number().int().positive().optional(),
+    commandIdempotencyKey: z.string().trim().min(16).max(160).optional(),
+    reason: z.string().trim().max(200).optional(),
+    priority: z.number().int().min(1).max(1000).default(100),
+    source: z.string().trim().min(1).max(64).default("manual"),
+    targetContext: z.string().trim().max(64).optional(),
+    payload: z.record(z.unknown()).optional(),
+    expiresInSeconds: z.number().int().min(60).max(86400).default(3600)
+  })
+  .superRefine((value, context) => {
+    if (value.commandType === "START" && value.workflowVersion === 2) {
+      if (value.taskType !== "commerce_card_live_comment") {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "V2 只支持商品卡组合任务", path: ["taskType"] });
+      }
+      if (!value.targetId) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "V2 启动必须选择直播目标", path: ["targetId"] });
+      }
+      if (!value.expectedAccountId && !value.expectedAccountName) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "V2 启动必须指定预期抖音账号", path: ["expectedAccountName"] });
+      }
+    }
+    if (value.commandType !== "START") {
+      if (!value.assignmentId) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "控制命令必须指定原任务运行", path: ["assignmentId"] });
+      }
+      if (!value.expectedStateVersion) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "控制命令必须携带状态版本", path: ["expectedStateVersion"] });
+      }
+      if (!value.commandIdempotencyKey) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "控制命令必须携带幂等键", path: ["commandIdempotencyKey"] });
+      }
+    }
+  });
 
 export type CreateTaskAssignmentPayload = z.infer<typeof createTaskAssignmentSchema>;
+
+export const createTaskAssignmentCommandSchema = z.object({
+  commandType: z.enum(["PAUSE", "RESUME", "STOP"]),
+  expectedStateVersion: z.number().int().positive(),
+  commandIdempotencyKey: z.string().trim().min(16).max(160),
+  reason: z.string().trim().max(200).optional(),
+  priority: z.number().int().min(1).max(1000).default(100),
+  expiresInSeconds: z.number().int().min(60).max(86400).default(3600),
+  payload: z.record(z.unknown()).optional()
+}).strict();
+
+export type CreateTaskAssignmentCommandPayload = z.infer<typeof createTaskAssignmentCommandSchema>;
 
 export const createAgentVersionSchema = z.object({
   version: z.string().min(1),

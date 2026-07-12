@@ -9,12 +9,19 @@ import {
 } from "../repositories/command.repository";
 import { findDeviceByCode, markDeviceCommandIssued, resolveDeviceByToken } from "../repositories/device.repository";
 import { findTaskByCode } from "../repositories/task.repository";
-import { updateTaskAssignmentByCommand } from "../repositories/task-assignment.repository";
+import {
+  acknowledgeTaskAssignmentCommandAtomic,
+  AssignmentRuntimeError,
+  findActiveTaskAssignmentForDeviceAny
+} from "../repositories/task-assignment.repository";
 import { supersededCommandTypesFor } from "./command-policy";
+import { buildCanonicalSha256 } from "./live-target-config.service";
 
 function addSeconds(seconds: number) {
   return new Date(Date.now() + seconds * 1000);
 }
+
+const assignmentStateCommandTypes = new Set(["START", "PAUSE", "RESUME", "STOP"]);
 
 export async function createCommand(payload: CreateMobileCommandPayload) {
   const [device, task] = await Promise.all([
@@ -23,6 +30,20 @@ export async function createCommand(payload: CreateMobileCommandPayload) {
   ]);
   if (!device) {
     throw new Error("DEVICE_UNREGISTERED");
+  }
+  if (payload.assignmentId || payload.commandSequence || payload.idempotencyKey) {
+    throw new AssignmentRuntimeError("ASSIGNMENT_COMMAND_ROUTE_REQUIRED", {
+      assignmentId: payload.assignmentId ?? null
+    });
+  }
+  if (assignmentStateCommandTypes.has(payload.commandType)) {
+    const activeAssignment = await findActiveTaskAssignmentForDeviceAny(device.id);
+    if (activeAssignment) {
+      throw new AssignmentRuntimeError("ASSIGNMENT_COMMAND_ROUTE_REQUIRED", {
+        assignmentId: activeAssignment.id,
+        state: activeAssignment.status
+      });
+    }
   }
 
   const supersededCommandTypes = supersededCommandTypesFor(payload.commandType);
@@ -78,6 +99,8 @@ export async function pollCommands(deviceCode: string, deviceToken?: string) {
   await Promise.all(commands.filter((item) => item.status === "PENDING").map((item) => updateMobileCommandStatus(item.id, "FETCHED")));
   return commands.map((item) => ({
     id: item.id,
+    assignmentId: item.assignmentId,
+    commandSequence: item.commandSequence,
     commandType: item.commandType,
     payload: item.payloadJson ?? {},
     issuedAt: item.issuedAt,
@@ -87,29 +110,12 @@ export async function pollCommands(deviceCode: string, deviceToken?: string) {
 
 export async function acknowledgeCommand(commandId: string, payload: MobileCommandAckPayload, deviceToken?: string) {
   const device = await resolveCommandDevice(payload.deviceId, deviceToken);
-  const command = await updateMobileCommandStatus(commandId, payload.status, {
-    resultJson: payload.result,
-    updatedBy: "mobile_agent"
-  }, device.id);
-  if (!command) {
-    throw new Error("COMMAND_NOT_FOUND");
-  }
-  const terminalAt = command.acknowledgedAt ?? new Date();
-  const assignmentStatus = resolveAssignmentStatusFromCommandAck(command.commandType, payload.status);
-  await updateTaskAssignmentByCommand(command, {
-    status: assignmentStatus,
-    acknowledgedAt: terminalAt,
-    completedAt: assignmentStatus === "STOPPED" || assignmentStatus === "FAILED" || assignmentStatus === "SUPERSEDED" ? terminalAt : undefined,
-    updatedBy: "mobile_agent"
+  const result = await acknowledgeTaskAssignmentCommandAtomic({
+    commandId,
+    deviceId: device.id,
+    status: payload.status,
+    result: payload.result ?? {},
+    payloadHash: buildCanonicalSha256(payload)
   });
-  return command;
-}
-
-function resolveAssignmentStatusFromCommandAck(commandType: string, status: MobileCommandAckPayload["status"]) {
-  if (status === "FAILED") return "FAILED";
-  if (status === "IGNORED") return "SUPERSEDED";
-  if (commandType === "STOP") return "STOPPED";
-  if (commandType === "PAUSE") return "PAUSED";
-  if (commandType === "RESUME") return "ACKED";
-  return "ACKED";
+  return result;
 }

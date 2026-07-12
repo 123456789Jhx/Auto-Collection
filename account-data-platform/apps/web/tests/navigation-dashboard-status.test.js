@@ -62,6 +62,16 @@ test("工作台设备卡片采用有序行式布局", () => {
 test("工作台配置按钮打开表单而不是下发刷新指令", () => {
   assert(/DeviceLiveCommentConfigModal/.test(dashboardSource), "dashboard should reuse the live comment config modal");
   assert(/openDashboardConfig\(item\)/.test(dashboardSource), "device card config action should open the config form");
-  assert(!/sendCommand\(item\.deviceCode,\s*["']REFRESH_CONFIG["']\)}><ReloadOutlined \/>配置/.test(dashboardSource), "card label 配置 must not send REFRESH_CONFIG directly");
+  assert(!/refreshDeviceConfig\(item\.deviceCode\)/.test(dashboardSource), "card label 配置 must not send REFRESH_CONFIG directly");
   assert(/刷新配置/.test(dashboardSource), "refresh command should keep explicit wording");
+});
+
+test("工作台状态控制统一跳转任务调度", () => {
+  assert(/DashboardPage onOpenScheduler=\{openScheduler\}/.test(appSource), "App should pass a real scheduler navigation callback to the dashboard");
+  assert(/onOpenScheduler:\s*\(\)\s*=>\s*void/.test(dashboardSource), "dashboard should require the scheduler navigation callback");
+  assert(/前往任务调度/.test(dashboardSource), "device details should guide operators to task scheduling");
+  assert(/<ControlOutlined \/>任务调度/.test(dashboardSource), "device cards should expose the scheduler command");
+  assert(!/sendCommand\(/.test(dashboardSource), "dashboard must not keep the generic state-command sender");
+  assert(!/commandType:\s*["'](?:START|PAUSE|RESUME|STOP)["']/.test(dashboardSource), "dashboard must not create assignment state commands directly");
+  assert(/commandType:\s*["']REFRESH_CONFIG["']/.test(dashboardSource), "dashboard may keep the non-assignment refresh command");
 });

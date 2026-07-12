@@ -8,8 +8,17 @@ import { listMobileLiveTargetsForDevice } from "../repositories/live-target.repo
 import { createCollectionRecord } from "../repositories/record.repository";
 import { findCurrentTask, findDeviceTaskConfig, findTaskByCode, resolveTaskConfig } from "../repositories/task.repository";
 import { findDeviceByCode, findDeviceByToken, registerDeviceByToken, resolveDeviceByToken, updateDeviceCapabilities } from "../repositories/device.repository";
+import { findActiveTaskAssignmentForDeviceAny } from "../repositories/task-assignment.repository";
 import { buildDeviceLiveTargetsFromTaskConfig, mergeMobileLiveTargetConfigs } from "./live-target-config.service";
-import type { MobileCollectionRecordPayload, MobileHeartbeatPayload, MobileLiveCommentActionPayload, MobileLogFilePayload, MobileRuntimeLogPayload } from "@pkg/types";
+import {
+  commerceCardEffectiveWorkflowSchema,
+  commerceCardWorkflowSnapshotSchema,
+  type MobileCollectionRecordPayload,
+  type MobileHeartbeatPayload,
+  type MobileLiveCommentActionPayload,
+  type MobileLogFilePayload,
+  type MobileRuntimeLogPayload
+} from "@pkg/types";
 
 function normalizeDouyinAccountName(value: unknown) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
@@ -110,7 +119,10 @@ function pickCommerceCardLiveCommentConfig(value: unknown) {
 
 export async function getCurrentTask(deviceId: string, platform: string, clientIp?: string, deviceToken?: string) {
   const device = await resolveMobileDevice({ deviceId, deviceToken, platform, clientIp });
-  const result = await findDeviceTaskConfig(device.deviceCode, platform);
+  const [result, activeAssignment] = await Promise.all([
+    findDeviceTaskConfig(device.deviceCode, platform),
+    findActiveTaskAssignmentForDeviceAny(device.id)
+  ]);
   const task = result.task ?? (await findCurrentTask(platform));
   const taskConfig = resolveTaskConfig(task, result.config);
   const publicLiveTargets = await listMobileLiveTargetsForDevice(device.id, platform);
@@ -130,6 +142,32 @@ export async function getCurrentTask(deviceId: string, platform: string, clientI
     leaderAccountNames,
     leaderAccountIds
   };
+  let effectiveWorkflow = null;
+  if (activeAssignment?.workflowVersion === 2 && activeAssignment.taskType === "commerce_card_live_comment") {
+    const snapshot = commerceCardWorkflowSnapshotSchema.safeParse(activeAssignment.configSnapshot);
+    const candidate = snapshot.success && activeAssignment.configRevision && activeAssignment.configHash && activeAssignment.snapshotHash && activeAssignment.expiresAt
+      ? {
+        assignmentId: activeAssignment.id,
+        workflowVersion: 2 as const,
+        selectedTarget: snapshot.data.target,
+        expectedAccount: {
+          accountId: activeAssignment.expectedAccountId,
+          accountName: activeAssignment.expectedAccountName
+        },
+        configRevision: activeAssignment.configRevision,
+        configHash: activeAssignment.configHash,
+        snapshotHash: activeAssignment.snapshotHash,
+        executionApprovalId: activeAssignment.executionApprovalId,
+        expiresAt: activeAssignment.expiresAt.toISOString(),
+        state: activeAssignment.status,
+        stateVersion: activeAssignment.stateVersion,
+        lastEventSeq: activeAssignment.lastEventSeq,
+        configSnapshot: snapshot.data
+      }
+      : null;
+    const parsedWorkflow = commerceCardEffectiveWorkflowSchema.safeParse(candidate);
+    effectiveWorkflow = parsedWorkflow.success ? parsedWorkflow.data : null;
+  }
 
   return {
     taskId: task.taskCode,
@@ -155,6 +193,7 @@ export async function getCurrentTask(deviceId: string, platform: string, clientI
     followedAccounts,
     liveCommentConfig: effectiveLiveCommentConfig,
     commerceCardLiveComment: pickCommerceCardLiveCommentConfig(taskConfig.p3ExtensionsConfig),
+    effectiveWorkflow,
     p3ExtensionsConfig: taskConfig.p3ExtensionsConfig ?? null,
     heartbeatMinutes: taskConfig.heartbeatMinutes,
     configSource: result.config ? "device" : "task"

@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { commerceCardAgentCapabilitiesSchema } from "../domain/commerce-card-workflow";
+import {
+  commerceCardAgentCapabilitiesSchema,
+  commerceCardEffectiveWorkflowSchema,
+  mobileLiveTargetConfigSchema
+} from "../domain/commerce-card-workflow";
 import { deviceStatusSchema, runtimeLogLevelSchema, sceneTypeSchema } from "../domain/common";
 
 export const mobileTaskConfigSchema = z.object({
@@ -32,7 +36,9 @@ export const mobileTaskConfigSchema = z.object({
     .optional(),
   liveCommentConfig: z.record(z.unknown()).nullable().optional(),
   commerceCardLiveComment: z.record(z.unknown()).nullable().optional(),
-  p3ExtensionsConfig: z.record(z.unknown()).nullable().optional()
+  p3ExtensionsConfig: z.record(z.unknown()).nullable().optional(),
+  liveTargets: z.array(mobileLiveTargetConfigSchema).max(50).optional(),
+  effectiveWorkflow: commerceCardEffectiveWorkflowSchema.nullable().optional()
 });
 
 export const mobileCollectionRecordSchema = z.object({
@@ -105,7 +111,7 @@ export const mobileLiveCommentActionSchema = z.object({
   matchedKeywords: z.array(z.string()).optional(),
   replyText: z.string().min(1),
   plannedDelayMs: z.number().int().nonnegative().optional(),
-  status: z.enum(["planned", "sent", "failed", "skipped"]),
+  status: z.enum(["planned", "submitting", "submitted", "sent", "unknown", "failed", "skipped"]),
   skipReason: z.string().optional(),
   failureReason: z.string().optional(),
   rawPayload: z.record(z.unknown()).optional(),

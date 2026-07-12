@@ -46,6 +46,19 @@ export async function updateDeviceRuntimeMetadata(deviceId: string, values: {
   return updated ?? null;
 }
 
+export async function findDeviceById(deviceId: string) {
+  const [device] = await db
+    .select()
+    .from(collectorDevices)
+    .where(and(
+      eq(collectorDevices.tenantId, config.tenantId),
+      eq(collectorDevices.id, deviceId),
+      isNull(collectorDevices.deletedAt)
+    ))
+    .limit(1);
+  return device ?? null;
+}
+
 export async function updateDeviceCapabilities(deviceId: string, capabilities: CommerceCardAgentCapabilities) {
   const [device] = await db
     .update(collectorDevices)

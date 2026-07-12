@@ -1,5 +1,6 @@
 import { relations, sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   index,
   integer,
@@ -236,7 +237,7 @@ export const mobileCommands = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     taskId: uuid("task_id").references(() => collectionTasks.id),
     deviceId: uuid("device_id").references(() => collectorDevices.id),
-    assignmentId: uuid("assignment_id"),
+    assignmentId: uuid("assignment_id").references((): AnyPgColumn => deviceTaskAssignments.id),
     commandSequence: integer("command_sequence"),
     idempotencyKey: varchar("idempotency_key", { length: 160 }),
     commandType: varchar("command_type", { length: 32 }).notNull(),
@@ -273,7 +274,8 @@ export const deviceTaskAssignments = pgTable(
     configHash: varchar("config_hash", { length: 64 }),
     configSnapshot: jsonb("config_snapshot").$type<Record<string, unknown>>(),
     snapshotHash: varchar("snapshot_hash", { length: 64 }),
-    executionApprovalId: uuid("execution_approval_id"),
+    executionApprovalId: uuid("execution_approval_id").references(() => commerceCardExecutionApprovals.id),
+    workflowVersion: integer("workflow_version").notNull().default(1),
     expectedAccountId: varchar("expected_account_id", { length: 100 }),
     expectedAccountName: varchar("expected_account_name", { length: 100 }),
     currentStage: varchar("current_stage", { length: 64 }),
@@ -281,6 +283,9 @@ export const deviceTaskAssignments = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }),
     lastEventSeq: integer("last_event_seq").notNull().default(0),
     stateVersion: integer("state_version").notNull().default(1),
+    checkpointSequence: integer("checkpoint_sequence").notNull().default(0),
+    checkpointHash: varchar("checkpoint_hash", { length: 64 }),
+    checkpointSummary: jsonb("checkpoint_summary").$type<Record<string, unknown>>(),
     blockReason: varchar("block_reason", { length: 200 }),
     terminalReason: varchar("terminal_reason", { length: 200 }),
     targetContext: varchar("target_context", { length: 64 }),
@@ -301,7 +306,7 @@ export const deviceTaskAssignments = pgTable(
     index("idx_device_task_assignments_tenant_command").on(table.tenantId, table.commandId),
     index("idx_device_task_assignments_tenant_target").on(table.tenantId, table.selectedTargetId),
     index("idx_device_task_assignments_tenant_snapshot").on(table.tenantId, table.snapshotHash),
-    uniqueIndex("uniq_device_task_assignments_one_active_per_device").on(table.tenantId, table.deviceId).where(sql`${table.deletedAt} is null and ${table.status} not in ('STOPPED','SUPERSEDED','CANCELLED','FAILED','COMPLETED','EXPIRED')`)
+    uniqueIndex("uniq_device_task_assignments_one_active_per_device").on(table.tenantId, table.deviceId).where(sql`${table.deletedAt} is null and ${table.status} not in ('SUCCEEDED','FAILED','CANCELLED','EXPIRED','STOPPED','SUPERSEDED','COMPLETED')`)
   ]
 );
 
@@ -321,6 +326,7 @@ export const deviceTaskAssignmentEvents = pgTable(
     status: varchar("status", { length: 32 }).notNull(),
     reasonCode: varchar("reason_code", { length: 100 }),
     idempotencyKey: varchar("idempotency_key", { length: 200 }).notNull(),
+    payloadHash: varchar("payload_hash", { length: 64 }).notNull(),
     evidenceJson: jsonb("evidence_json").$type<Record<string, unknown>>().notNull().default({}),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
     actor: varchar("actor", { length: 32 }).notNull().default("system"),
@@ -473,12 +479,64 @@ export const featureRolloutDeviceAllowlist = pgTable(
   ]
 );
 
+export const commerceCardExecutionApprovals = pgTable(
+  "commerce_card_execution_approvals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    targetId: uuid("target_id").notNull().references(() => liveTargets.id),
+    deviceId: uuid("device_id").notNull().references(() => collectorDevices.id),
+    expectedAccountId: varchar("expected_account_id", { length: 100 }),
+    expectedAccountName: varchar("expected_account_name", { length: 100 }),
+    configHash: varchar("config_hash", { length: 64 }).notNull(),
+    commentPoolHash: varchar("comment_pool_hash", { length: 64 }).notNull(),
+    maxCommentsPerRoom: integer("max_comments_per_room").notNull(),
+    totalQuota: integer("total_quota").notNull(),
+    consumedQuota: integer("consumed_quota").notNull().default(0),
+    accountDailyLimit: integer("account_daily_limit").notNull(),
+    targetDailyLimit: integer("target_daily_limit").notNull(),
+    cooldownSeconds: integer("cooldown_seconds").notNull().default(0),
+    status: varchar("status", { length: 32 }).notNull().default("ACTIVE"),
+    revision: integer("revision").notNull().default(1),
+    validFrom: timestamp("valid_from", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    approvedBy: varchar("approved_by", { length: 64 }).notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true }).notNull().defaultNow(),
+    revokedBy: varchar("revoked_by", { length: 64 }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokeReason: varchar("revoke_reason", { length: 500 }),
+    reason: varchar("reason", { length: 500 }).notNull(),
+    ...auditColumns
+  },
+  (table) => [
+    index("idx_commerce_card_approvals_tenant_status_expiry").on(table.tenantId, table.status, table.expiresAt),
+    index("idx_commerce_card_approvals_tenant_device_target").on(table.tenantId, table.deviceId, table.targetId),
+    index("idx_commerce_card_approvals_tenant_config_hash").on(table.tenantId, table.configHash)
+  ]
+);
+
 export const liveCommentActions = pgTable(
   "live_comment_actions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     taskId: uuid("task_id").references(() => collectionTasks.id),
     deviceId: uuid("device_id").references(() => collectorDevices.id),
+    assignmentId: uuid("assignment_id").references(() => deviceTaskAssignments.id),
+    targetId: uuid("target_id").references(() => liveTargets.id),
+    approvalId: uuid("approval_id").references(() => commerceCardExecutionApprovals.id),
+    assignmentEventId: uuid("assignment_event_id").references(() => deviceTaskAssignmentEvents.id),
+    stage: varchar("stage", { length: 64 }),
+    expectedAccountId: varchar("expected_account_id", { length: 100 }),
+    expectedAccountName: varchar("expected_account_name", { length: 100 }),
+    roomKeyVersion: integer("room_key_version"),
+    roomKey: varchar("room_key", { length: 200 }),
+    commentSlot: integer("comment_slot"),
+    commentHash: varchar("comment_hash", { length: 64 }),
+    attemptNo: integer("attempt_no").notNull().default(1),
+    actionState: varchar("action_state", { length: 32 }),
+    stateVersion: integer("state_version").notNull().default(1),
+    idempotencyKey: varchar("idempotency_key", { length: 220 }),
+    permitTokenHash: varchar("permit_token_hash", { length: 64 }),
+    permitExpiresAt: timestamp("permit_expires_at", { withTimezone: true }),
     triggerEventId: varchar("trigger_event_id", { length: 128 }),
     platform: varchar("platform", { length: 32 }).notNull().default("douyin"),
     roomName: varchar("room_name", { length: 200 }),
@@ -492,14 +550,53 @@ export const liveCommentActions = pgTable(
     failureReason: varchar("failure_reason", { length: 500 }),
     rawPayload: jsonb("raw_payload").$type<Record<string, unknown>>(),
     plannedAt: timestamp("planned_at", { withTimezone: true }),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
     sentAt: timestamp("sent_at", { withTimezone: true }),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    resolvedBy: varchar("resolved_by", { length: 64 }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolutionEvidence: varchar("resolution_evidence", { length: 1000 }),
     reportedAt: timestamp("reported_at", { withTimezone: true }),
     ...auditColumns
   },
   (table) => [
     index("idx_live_comment_actions_tenant_device_created_at").on(table.tenantId, table.deviceId, table.createdAt),
     index("idx_live_comment_actions_tenant_status").on(table.tenantId, table.status),
-    index("idx_live_comment_actions_tenant_task").on(table.tenantId, table.taskId)
+    index("idx_live_comment_actions_tenant_task").on(table.tenantId, table.taskId),
+    index("idx_live_comment_actions_tenant_assignment").on(table.tenantId, table.assignmentId),
+    index("idx_live_comment_actions_tenant_approval").on(table.tenantId, table.approvalId),
+    uniqueIndex("uniq_live_comment_actions_tenant_idempotency").on(table.tenantId, table.idempotencyKey).where(sql`${table.idempotencyKey} is not null`),
+    uniqueIndex("uniq_live_comment_actions_physical_slot").on(
+      table.tenantId,
+      table.assignmentId,
+      table.targetId,
+      table.expectedAccountId,
+      table.roomKeyVersion,
+      table.roomKey,
+      table.commentSlot
+    ).where(sql`${table.assignmentId} is not null and ${table.targetId} is not null and ${table.expectedAccountId} is not null and ${table.roomKeyVersion} is not null and ${table.roomKey} is not null and ${table.commentSlot} is not null`)
+  ]
+);
+
+export const commerceCardApprovalConsumptions = pgTable(
+  "commerce_card_approval_consumptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    approvalId: uuid("approval_id").notNull().references(() => commerceCardExecutionApprovals.id),
+    assignmentId: uuid("assignment_id").notNull().references(() => deviceTaskAssignments.id),
+    actionId: uuid("action_id").notNull().references(() => liveCommentActions.id),
+    deviceId: uuid("device_id").notNull().references(() => collectorDevices.id),
+    targetId: uuid("target_id").notNull().references(() => liveTargets.id),
+    expectedAccountId: varchar("expected_account_id", { length: 100 }).notNull(),
+    amount: integer("amount").notNull().default(1),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }).notNull().defaultNow(),
+    ...auditColumns
+  },
+  (table) => [
+    uniqueIndex("uniq_commerce_card_approval_consumption_action").on(table.tenantId, table.actionId),
+    index("idx_commerce_card_approval_consumptions_approval").on(table.tenantId, table.approvalId, table.consumedAt),
+    index("idx_commerce_card_approval_consumptions_account").on(table.tenantId, table.expectedAccountId, table.consumedAt),
+    index("idx_commerce_card_approval_consumptions_target").on(table.tenantId, table.targetId, table.consumedAt)
   ]
 );
 

@@ -1,9 +1,13 @@
 import type {
   CommerceCardFeaturePreview,
+  CreateCommerceCardExecutionApprovalPayload,
+  CreateTaskAssignmentCommandPayload,
   FeatureRolloutControl,
   FeatureRolloutControlUpdate,
   FeatureRolloutKey,
-  LiveTargetFeatureType
+  LiveTargetFeatureType,
+  ResolveCommerceCardCommentActionPayload,
+  RevokeCommerceCardExecutionApprovalPayload
 } from "@pkg/types";
 
 const apiBaseUrl =
@@ -170,8 +174,38 @@ export function getRecords(params?: QueryParams) {
   return request<{ data: unknown[]; pagination: Record<string, number> }>("/admin/collection-records", params);
 }
 
+export type LiveCommentAction = {
+  id: string;
+  assignmentId?: string | null;
+  targetId?: string | null;
+  approvalId?: string | null;
+  stage?: string | null;
+  expectedAccountName?: string | null;
+  roomKey?: string | null;
+  commentSlot?: number | null;
+  actionState?: string | null;
+  stateVersion?: number;
+  createdAt?: string;
+  deviceCode?: string;
+  deviceName?: string;
+  roomName?: string | null;
+  leaderAccountName?: string | null;
+  triggerText?: string | null;
+  replyText?: string;
+  plannedDelayMs?: number | null;
+  status?: string;
+  skipReason?: string | null;
+  failureReason?: string | null;
+  submittedAt?: string | null;
+  sentAt?: string | null;
+  confirmedAt?: string | null;
+  resolvedBy?: string | null;
+  resolvedAt?: string | null;
+  resolutionEvidence?: string | null;
+};
+
 export function getLiveCommentActions(params?: QueryParams) {
-  return request<{ data: unknown[]; pagination: Record<string, number> }>("/admin/live-comment-actions", params);
+  return request<{ data: LiveCommentAction[]; pagination: Record<string, number> }>("/admin/live-comment-actions", params);
 }
 
 export function getLiveCommentDeviceSummary(params?: QueryParams) {
@@ -313,14 +347,84 @@ export function updateFeatureRolloutControl(featureKey: FeatureRolloutKey, paylo
   return patch<FeatureRolloutControl>(`/admin/feature-rollout-controls/${encodeURIComponent(featureKey)}`, payload);
 }
 
+export type TaskAssignment = {
+  id: string;
+  deviceCode?: string;
+  deviceName?: string;
+  douyinAccountName?: string | null;
+  deviceStatus?: string;
+  taskType?: string;
+  targetContext?: string | null;
+  status?: string;
+  priority?: number;
+  source?: string;
+  reason?: string | null;
+  desiredPayload?: Record<string, unknown> | null;
+  commandId?: string | null;
+  commandType?: string | null;
+  commandStatus?: string | null;
+  commandFetchedAt?: string | null;
+  commandAcknowledgedAt?: string | null;
+  commandResult?: Record<string, unknown> | null;
+  workflowVersion?: number;
+  selectedTargetId?: string | null;
+  targetCode?: string | null;
+  currentStage?: string | null;
+  stateVersion?: number;
+  lastEventSeq?: number;
+  blockReason?: string | null;
+  terminalReason?: string | null;
+  createdAt?: string;
+  issuedAt?: string | null;
+  acknowledgedAt?: string | null;
+  expiresAt?: string | null;
+  completedAt?: string | null;
+  lastHeartbeatAt?: string | null;
+  latestHeartbeat?: {
+    status?: string;
+    sceneType?: string | null;
+    lastMessage?: string | null;
+    rawPayload?: Record<string, unknown> | null;
+    reportedAt?: string | null;
+  } | null;
+};
+
+export type TaskAssignmentEvent = {
+  id: string;
+  sequence: number;
+  eventType: string;
+  stage?: string | null;
+  fromState?: string | null;
+  toState?: string | null;
+  status: string;
+  reasonCode?: string | null;
+  occurredAt?: string;
+};
+
 export function getTaskAssignments() {
-  return request<unknown[]>("/admin/task-assignments");
+  return request<TaskAssignment[]>("/admin/task-assignments");
+}
+
+export function getTaskAssignmentEvents(assignmentId: string) {
+  return request<TaskAssignmentEvent[]>(`/admin/task-assignments/${encodeURIComponent(assignmentId)}/events`);
+}
+
+export function createTaskAssignmentCommand(assignmentId: string, payload: CreateTaskAssignmentCommandPayload) {
+  return mutate<unknown>(`/admin/task-assignments/${encodeURIComponent(assignmentId)}/commands`, payload);
 }
 
 export function createTaskAssignment(payload: {
   deviceId: string;
   taskType: "video" | "live" | "live_comment" | "commerce_card_live_comment";
   commandType?: "START" | "RESUME" | "PAUSE" | "STOP";
+  assignmentId?: string;
+  workflowVersion?: 1 | 2;
+  targetId?: string;
+  executionApprovalId?: string | null;
+  expectedAccountId?: string | null;
+  expectedAccountName?: string | null;
+  expectedStateVersion?: number;
+  commandIdempotencyKey?: string;
   reason?: string;
   priority?: number;
   source?: string;
@@ -329,6 +433,48 @@ export function createTaskAssignment(payload: {
   expiresInSeconds?: number;
 }) {
   return mutate<unknown>("/admin/task-assignments", payload);
+}
+
+export type CommerceCardExecutionApproval = {
+  id: string;
+  targetId: string;
+  targetCode: string;
+  targetName: string;
+  deviceId: string;
+  deviceCode: string;
+  deviceName?: string | null;
+  expectedAccountId?: string | null;
+  expectedAccountName?: string | null;
+  maxCommentsPerRoom: number;
+  totalQuota: number;
+  consumedQuota: number;
+  remainingQuota: number;
+  accountDailyLimit: number;
+  targetDailyLimit: number;
+  cooldownSeconds: number;
+  status: string;
+  effectiveStatus: string;
+  revision: number;
+  validFrom: string;
+  expiresAt: string;
+  approvedBy: string;
+  reason: string;
+};
+
+export function getCommerceCardExecutionApprovals() {
+  return request<CommerceCardExecutionApproval[]>("/admin/commerce-card-execution-approvals");
+}
+
+export function createCommerceCardExecutionApproval(payload: CreateCommerceCardExecutionApprovalPayload) {
+  return mutate<CommerceCardExecutionApproval>("/admin/commerce-card-execution-approvals", payload);
+}
+
+export function revokeCommerceCardExecutionApproval(approvalId: string, payload: RevokeCommerceCardExecutionApprovalPayload) {
+  return mutate<CommerceCardExecutionApproval>(`/admin/commerce-card-execution-approvals/${encodeURIComponent(approvalId)}/revoke`, payload);
+}
+
+export function resolveLiveCommentAction(actionId: string, payload: ResolveCommerceCardCommentActionPayload) {
+  return mutate<unknown>(`/admin/live-comment-actions/${encodeURIComponent(actionId)}/resolve`, payload);
 }
 
 export function getDeviceTaskConfig(deviceCode: string, platform?: string) {

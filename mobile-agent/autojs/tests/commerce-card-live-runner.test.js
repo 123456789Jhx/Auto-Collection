@@ -172,6 +172,253 @@ function createContext(overrides) {
   return context;
 }
 
+function createV2Context(options) {
+  options = options || {};
+  var context = createContext();
+  var checkpoint = null;
+  var stateVersion = 3;
+  var lastEventSeq = 2;
+  var action = null;
+  var completedAssignments = [];
+  var commentUpdates = [];
+  var accountReadCount = 0;
+  var liveFeedSearchCalls = [];
+  var liveFeedRefreshes = [];
+  var workflow = {
+    assignmentId: "assignment-v2",
+    workflowVersion: 2,
+    selectedTarget: {
+      targetId: "target-v2",
+      targetCode: "target-code",
+      targetName: "target room",
+      searchKeywords: ["target room"],
+      productKeywords: ["product"],
+      liveSignals: ["live"],
+      requiredKeywords: [],
+      forbiddenKeywords: [],
+      aliases: [],
+      similarityThreshold: 0.9,
+      enabled: true
+    },
+    expectedAccount: {
+      accountId: "name:test account",
+      accountName: "Test Account"
+    },
+    configRevision: 1,
+    configHash: new Array(65).join("a"),
+    snapshotHash: new Array(65).join("b"),
+    executionApprovalId: "approval-v2",
+    expiresAt: "2027-07-09T00:00:00.000Z",
+    state: "RUNNING",
+    stateVersion: stateVersion,
+    lastEventSeq: lastEventSeq,
+    configSnapshot: {
+      runtimeConfig: {
+        enabledStages: ["target_comment"],
+        recommendationSignals: ["recommended"],
+        productCardDwellSeconds: 120,
+        productNurtureRoundMinutes: 15,
+        productNurtureMaxRounds: 1,
+        targetLiveMaxRoomsPerRefresh: 25,
+        targetCommentSearchMaxActiveMinutes: 60,
+        maxCommentsPerRoom: 1,
+        commentPool: ["hello"],
+        liveNurtureKeywords: [],
+        liveNurtureRefreshAfterRooms: 10,
+        liveNurtureWatchMinMinutes: 10,
+        liveNurtureWatchMaxMinutes: 20,
+        liveNurtureTotalMinMinutes: 70,
+        liveNurtureTotalMaxMinutes: 100,
+        taskMaxActiveMinutes: 240
+      }
+    }
+  };
+  if (options.enabledStages) {
+    workflow.configSnapshot.runtimeConfig.enabledStages = options.enabledStages.slice();
+  }
+  if (options.runtimeConfig) {
+    for (var runtimeKey in options.runtimeConfig) {
+      if (Object.prototype.hasOwnProperty.call(options.runtimeConfig, runtimeKey)) {
+        workflow.configSnapshot.runtimeConfig[runtimeKey] = options.runtimeConfig[runtimeKey];
+      }
+    }
+  }
+  context.config.device = { deviceId: "device-v2" };
+  context.config.task.taskId = "task-v2";
+  context.config.task.effectiveWorkflow = workflow;
+  context.taskScheduler = {
+    getAssignmentContext: function () {
+      return {
+        assignmentId: workflow.assignmentId,
+        stateVersion: stateVersion,
+        lastEventSeq: lastEventSeq,
+        checkpoint: checkpoint ? JSON.parse(JSON.stringify(checkpoint)) : null
+      };
+    },
+    getTaskState: function () {
+      return { status: workflow.state };
+    },
+    recordCheckpoint: function (_taskType, value) {
+      checkpoint = JSON.parse(JSON.stringify(value));
+      context.checkpoints.push({ taskType: "commerce_card_live_comment", checkpoint: checkpoint });
+      if (options.onCheckpoint) {
+        options.onCheckpoint(checkpoint, context);
+      }
+      return JSON.parse(JSON.stringify(checkpoint));
+    },
+    updateAssignmentRuntime: function (_taskType, state, nextStateVersion, nextEventSeq) {
+      workflow.state = state || workflow.state;
+      stateVersion = Number(nextStateVersion || stateVersion);
+      lastEventSeq = Math.max(lastEventSeq, Number(nextEventSeq || 0));
+    }
+  };
+  context.uploader = {
+    liveCommentActions: [],
+    sha256Hex: function () { return new Array(65).join("c"); },
+    canonicalSha256: function () { return new Array(65).join("d"); },
+    uploadLiveCommentAction: function (entry) {
+      this.liveCommentActions.push(entry);
+    },
+    reportAssignmentEvent: function () {
+      lastEventSeq += 1;
+      stateVersion += 1;
+      return {
+        success: true,
+        data: {
+          assignment: {
+            state: workflow.state,
+            stateVersion: stateVersion,
+            lastEventSeq: lastEventSeq
+          }
+        }
+      };
+    },
+    updateAssignmentProgress: function () {
+      return {
+        success: true,
+        data: {
+          assignment: {
+            state: workflow.state,
+            stateVersion: stateVersion,
+            lastEventSeq: lastEventSeq
+          }
+        }
+      };
+    },
+    completeAssignment: function (_assignmentId, payload) {
+      completedAssignments.push(payload);
+      workflow.state = payload.state;
+      stateVersion += 1;
+      lastEventSeq += 1;
+      return {
+        success: true,
+        data: {
+          assignment: {
+            state: workflow.state,
+            stateVersion: stateVersion,
+            lastEventSeq: lastEventSeq
+          }
+        }
+      };
+    },
+    reserveCommerceCardCommentAction: function () {
+      action = options.reserveAction || {
+        id: "action-v2",
+        roomKey: "target:target-code",
+        commentSlot: 0,
+        commentHash: new Array(65).join("c"),
+        actionState: "planned",
+        stateVersion: 1
+      };
+      return {
+        success: true,
+        data: {
+          action: action,
+          permitToken: options.permitToken === undefined ? new Array(40).join("p") : options.permitToken,
+          permitExpiresAt: options.permitExpiresAt || "2027-07-09T00:00:00.000Z",
+          assignment: {
+            state: workflow.state,
+            stateVersion: stateVersion,
+            lastEventSeq: lastEventSeq
+          }
+        }
+      };
+    },
+    updateCommerceCardCommentAction: function (_assignmentId, _actionId, payload) {
+      commentUpdates.push(payload.state);
+      action = {
+        id: action.id,
+        roomKey: action.roomKey,
+        commentSlot: action.commentSlot,
+        commentHash: action.commentHash,
+        actionState: payload.state,
+        stateVersion: Number(action.stateVersion || 0) + 1,
+        failureReason: payload.failureReason || ""
+      };
+      stateVersion += 1;
+      lastEventSeq += 1;
+      if (payload.state === "unknown") {
+        workflow.state = "BLOCKED";
+      }
+      return {
+        success: true,
+        data: {
+          action: action,
+          assignment: {
+            state: workflow.state,
+            stateVersion: stateVersion,
+            lastEventSeq: lastEventSeq
+          }
+        }
+      };
+    },
+    getCommerceCardCommentActionByKey: function () {
+      return { success: true, data: action };
+    }
+  };
+  context.douyin.openTargetLiveRoomFromLiveFeed = function (gateOptions) {
+    liveFeedSearchCalls.push(gateOptions);
+    if (Array.isArray(options.targetGateResults) && options.targetGateResults.length) {
+      return options.targetGateResults.shift() === true;
+    }
+    if (options.targetGateResult !== undefined) {
+      return options.targetGateResult === true;
+    }
+    return true;
+  };
+  context.douyin.openTargetLiveRoomFromSearch = function () {
+    throw new Error("V2 target comment must use live feed gate");
+  };
+  context.douyin.getLastTargetLiveSearchResult = function () {
+    return { reason: "room_verified", roomKey: "target:target-code", roomName: "target room", anchorName: "anchor" };
+  };
+  context.douyin.refreshLiveFeedFromHome = function (refreshOptions) {
+    liveFeedRefreshes.push(refreshOptions || {});
+    return true;
+  };
+  context.douyin.readCurrentAccountName = function () {
+    accountReadCount += 1;
+    var accountName = options.accountNames && options.accountNames[accountReadCount - 1] || "Test Account";
+    return { success: true, accountName: accountName };
+  };
+  context.douyin.isLiveRoomVisible = function () {
+    return options.liveRoomVisible !== false;
+  };
+  context.douyin.sendLiveComment = function (comment) {
+    context.comments.push(comment);
+    return { success: true };
+  };
+  context._v2 = {
+    getCheckpoint: function () { return checkpoint; },
+    getAction: function () { return action; },
+    completedAssignments: completedAssignments,
+    commentUpdates: commentUpdates,
+    liveFeedSearchCalls: liveFeedSearchCalls,
+    liveFeedRefreshes: liveFeedRefreshes
+  };
+  return context;
+}
+
 function testCommerceCardLiveRunsThreeMatchedRounds() {
   withFakeClock(function (sleeps) {
     var context = createContext();
@@ -425,6 +672,184 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(source.indexOf("browseCommerceCards: browseCommerceCards") >= 0, "douyin adapter must export browseCommerceCards");
 }
 
+function testV2ProductNurtureUsesLiveFeedGateAndReusesRoom() {
+  var context = createV2Context({
+    enabledStages: ["product_nurture", "target_comment"]
+  });
+  var browseCalls = [];
+  context.douyin.browseCommerceCards = function (options) {
+    browseCalls.push(options);
+    return {
+      success: true,
+      reason: "commerce_cards_browsed",
+      browsedCount: 8,
+      textSample: "product recommended"
+    };
+  };
+  var runner = createCommerceCardLiveRunner(context);
+
+  var result = runner.runCommerceCardLiveCommentTask();
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(context.comments.length, 1);
+  assert.strictEqual(browseCalls.length, 1);
+  assert.strictEqual(browseCalls[0].dwellSeconds, 120);
+  assert.deepStrictEqual(browseCalls[0].recommendationSignals, ["recommended"]);
+  assert.strictEqual(context._v2.liveFeedSearchCalls.length, 1);
+  assert.strictEqual(context._v2.liveFeedSearchCalls[0].source, "product_nurture");
+  assert.strictEqual(context._v2.liveFeedSearchCalls[0].restartBeforeScan, true);
+  assert.strictEqual(context._v2.completedAssignments[0].state, "SUCCEEDED");
+}
+
+function testV2ProductNurtureFailsWhenTargetNotFoundAfterRounds() {
+  var context = createV2Context({
+    enabledStages: ["product_nurture"],
+    targetGateResults: [false, false],
+    runtimeConfig: {
+      productNurtureMaxRounds: 2
+    }
+  });
+  var browseCount = 0;
+  context.douyin.browseCommerceCards = function () {
+    browseCount += 1;
+    return {
+      success: true,
+      reason: "commerce_cards_browsed",
+      browsedCount: 4,
+      textSample: "product only"
+    };
+  };
+  var runner = createCommerceCardLiveRunner(context);
+
+  var result = runner.runCommerceCardLiveCommentTask();
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.reason, "product_target_not_found");
+  assert.strictEqual(browseCount, 2);
+  assert.strictEqual(context.comments.length, 0);
+  assert.strictEqual(context._v2.completedAssignments[0].state, "FAILED");
+}
+
+function testV2TargetCommentMissRefreshesAndFailsClosed() {
+  var context = createV2Context({
+    targetGateResults: [false, false],
+    runtimeConfig: {
+      targetCommentSearchMaxActiveMinutes: 3
+    }
+  });
+  var runner = createCommerceCardLiveRunner(context);
+
+  var result = runner.runCommerceCardLiveCommentTask();
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.reason, "target_live_room_not_found");
+  assert.strictEqual(context.comments.length, 0);
+  assert.strictEqual(context._v2.liveFeedSearchCalls.length, 2);
+  assert.strictEqual(context._v2.liveFeedRefreshes.length, 1);
+  assert.strictEqual(context._v2.completedAssignments[0].state, "FAILED");
+}
+
+function testV2StopBeforeSendFailsClosed() {
+  var context = createV2Context({
+    onCheckpoint: function (checkpoint, currentContext) {
+      if (checkpoint.pendingSideEffect && checkpoint.pendingSideEffect.lastConfirmedState === "submitting") {
+        currentContext.floatyControl.state.stopRequested = true;
+      }
+    }
+  });
+  var runner = createCommerceCardLiveRunner(context);
+
+  var result = runner.runCommerceCardLiveCommentTask();
+
+  assert.strictEqual(result.cancelled, true);
+  assert.strictEqual(context.comments.length, 0);
+  assert(context._v2.commentUpdates.indexOf("failed") >= 0);
+  assert.strictEqual(context._v2.getCheckpoint().pendingSideEffect, null);
+}
+
+function testV2ExpiredPermitDoesNotSend() {
+  var context = createV2Context({
+    permitExpiresAt: "2020-01-01T00:00:00.000Z"
+  });
+  var runner = createCommerceCardLiveRunner(context);
+
+  var result = runner.runCommerceCardLiveCommentTask();
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(context.comments.length, 0);
+  assert(context._v2.commentUpdates.indexOf("failed") >= 0);
+  assert.strictEqual(context._v2.completedAssignments[0].state, "FAILED");
+}
+
+function testV2AccountChangeDoesNotSend() {
+  var context = createV2Context({
+    accountNames: ["Test Account", "Other Account"]
+  });
+  var runner = createCommerceCardLiveRunner(context);
+
+  var result = runner.runCommerceCardLiveCommentTask();
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(context.comments.length, 0);
+  assert(context._v2.commentUpdates.indexOf("failed") >= 0);
+}
+
+function testV2MissingLivePageDoesNotSend() {
+  var context = createV2Context({ liveRoomVisible: false });
+  var runner = createCommerceCardLiveRunner(context);
+
+  var result = runner.runCommerceCardLiveCommentTask();
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(context.comments.length, 0);
+  assert(context._v2.commentUpdates.indexOf("failed") >= 0);
+}
+
+function testV2SubmittingActionBecomesUnknownWithoutResend() {
+  var context = createV2Context({
+    reserveAction: {
+      id: "action-v2",
+      roomKey: "target:target-code",
+      commentSlot: 0,
+      commentHash: new Array(65).join("c"),
+      actionState: "submitting",
+      stateVersion: 2
+    }
+  });
+  var runner = createCommerceCardLiveRunner(context);
+
+  var result = runner.runCommerceCardLiveCommentTask();
+
+  assert.strictEqual(result.blocked, true);
+  assert.strictEqual(context.comments.length, 0);
+  assert(context._v2.commentUpdates.indexOf("unknown") >= 0);
+  assert.strictEqual(context._v2.getAction().actionState, "unknown");
+}
+
+function testV2CheckpointRemainsStructuredAfterCompletion() {
+  var context = createV2Context();
+  var runner = createCommerceCardLiveRunner(context);
+
+  var result = runner.runCommerceCardLiveCommentTask();
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(context.comments.length, 1);
+  assert.strictEqual(context._v2.getCheckpoint().checkpointVersion, 2);
+  assert.strictEqual(context._v2.getCheckpoint().assignmentId, "assignment-v2");
+}
+
+function testCollectorPreservesV2CheckpointAndCompletesDeferredControl() {
+  var source = fs.readFileSync(path.join(__dirname, "../app/collector-app.js"), "utf8");
+  var runCommerceStart = source.indexOf("function runCommerceCardLiveCommentTask");
+  var runLiveStart = source.indexOf("function runLiveTask", runCommerceStart);
+  var runCommerceBlock = source.slice(runCommerceStart, runLiveStart);
+
+  assert(runCommerceBlock.indexOf("Number(workflow.workflowVersion || 1) < 2") >= 0);
+  assert(runCommerceBlock.indexOf("persistCheckpoint") >= 0);
+  assert(source.indexOf("completePendingAssignmentControl(\"PAUSE\"") >= 0);
+  assert(source.indexOf("completePendingAssignmentControl(\"STOP\"") >= 0);
+}
+
 testCommerceCardLiveRunsThreeMatchedRounds();
 testCommerceCardLiveStopsGracefullyWhenNoMatchInRound();
 testCommerceCardLiveBrowsesProductCardsBeforeTargetLiveSearch();
@@ -435,5 +860,15 @@ testCommerceCardLiveIsDisabledByDefault();
 testCommerceCardLiveRequiresExplicitSendApproval();
 testCollectorKeepsCommerceLiveSeparateFromOrdinaryLivePhase();
 testDouyinProvidesDedicatedCommerceCardBrowseAdapter();
+testV2ProductNurtureUsesLiveFeedGateAndReusesRoom();
+testV2ProductNurtureFailsWhenTargetNotFoundAfterRounds();
+testV2TargetCommentMissRefreshesAndFailsClosed();
+testV2StopBeforeSendFailsClosed();
+testV2ExpiredPermitDoesNotSend();
+testV2AccountChangeDoesNotSend();
+testV2MissingLivePageDoesNotSend();
+testV2SubmittingActionBecomesUnknownWithoutResend();
+testV2CheckpointRemainsStructuredAfterCompletion();
+testCollectorPreservesV2CheckpointAndCompletesDeferredControl();
 
 console.log("commerce-card-live-runner tests passed");

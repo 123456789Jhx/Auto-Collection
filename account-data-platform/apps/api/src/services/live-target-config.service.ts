@@ -261,6 +261,14 @@ function stableJsonValue(value: unknown): unknown {
   return result;
 }
 
+export function buildCanonicalSha256(value: unknown) {
+  return createHash("sha256").update(JSON.stringify(stableJsonValue(value))).digest("hex");
+}
+
+export function buildCommerceCardCommentPoolHash(commentPool: string[]) {
+  return buildCanonicalSha256(normalizeList(commentPool));
+}
+
 function businessRuntimeConfig(runtimeConfig: Record<string, unknown>) {
   const result = { ...runtimeConfig };
   delete result.executeEnabled;

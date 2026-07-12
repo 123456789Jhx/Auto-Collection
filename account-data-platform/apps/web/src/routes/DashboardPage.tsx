@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Skeleton, message } from "antd";
-import { PauseOutlined, PlayCircleOutlined, SettingOutlined, StopOutlined, SyncOutlined } from "@ant-design/icons";
+import { ControlOutlined, ReloadOutlined, SettingOutlined } from "@ant-design/icons";
 import { useMemo, useState } from "react";
 import { createMobileCommand, getDeviceDailyProgress, getDeviceProgressHistory, getOverview } from "../lib/api-client";
 import { deviceDisplayName, deviceSubTitle, sceneText, statusText } from "../lib/display-maps";
@@ -59,7 +59,6 @@ type DailyProgress = {
   lastMessage?: string | null;
 };
 
-type CommandType = "START" | "PAUSE" | "RESUME" | "STOP" | "REFRESH_CONFIG";
 type FeatureTone = "ok" | "warn" | "danger" | "idle";
 
 type FeatureStatus = {
@@ -258,7 +257,7 @@ function ProgressLine(props: { label: string; percent: number; note: string; ton
   );
 }
 
-export function DashboardPage() {
+export function DashboardPage({ onOpenScheduler }: { onOpenScheduler: () => void }) {
   const queryClient = useQueryClient();
   const [messageApi, contextHolder] = message.useMessage();
   const [selectedDeviceCode, setSelectedDeviceCode] = useState("");
@@ -285,10 +284,10 @@ export function DashboardPage() {
     refetchInterval: detailOpen && selected ? 15000 : false
   });
   const commandMutation = useMutation({
-    mutationFn: ({ deviceId, commandType }: { deviceId: string; commandType: CommandType }) =>
-      createMobileCommand({ deviceId, commandType, expiresInSeconds: 3600 }),
+    mutationFn: (deviceId: string) =>
+      createMobileCommand({ deviceId, commandType: "REFRESH_CONFIG", expiresInSeconds: 3600 }),
     onSuccess: async () => {
-      messageApi.success("控制指令已下发，等待手机领取");
+      messageApi.success("刷新配置指令已下发，等待手机领取");
       await queryClient.invalidateQueries({ queryKey: ["overview"] });
     },
     onError: (error: Error) => messageApi.error(error.message)
@@ -308,9 +307,9 @@ export function DashboardPage() {
     setDetailOpen(true);
   }
 
-  function sendCommand(deviceCode: string | undefined, commandType: CommandType) {
+  function refreshDeviceConfig(deviceCode: string | undefined) {
     if (!deviceCode) return;
-    commandMutation.mutate({ deviceId: deviceCode, commandType });
+    commandMutation.mutate(deviceCode);
   }
 
   function openDashboardConfig(device: DeviceProgress) {
@@ -420,11 +419,8 @@ export function DashboardPage() {
                   </div>
                   <div className="device-run-ops" onClick={(event) => event.stopPropagation()}>
                     <div className="device-run-actions">
-                      <button className="ops-mini-btn primary" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "START")}><PlayCircleOutlined />启动</button>
-                      <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "PAUSE")}><PauseOutlined />暂停</button>
-                      <button className="ops-mini-btn" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "RESUME")}><SyncOutlined />恢复</button>
+                      <button className="ops-mini-btn primary" type="button" onClick={onOpenScheduler}><ControlOutlined />任务调度</button>
                       <button className="ops-mini-btn" type="button" onClick={() => openDashboardConfig(item)}><SettingOutlined />配置</button>
-                      <button className="ops-mini-btn danger" type="button" disabled={commandMutation.isPending} onClick={() => sendCommand(item.deviceCode, "STOP")}><StopOutlined />停止</button>
                     </div>
                   </div>
                 </article>
@@ -471,11 +467,9 @@ export function DashboardPage() {
 
             <div className="drawer-section-title">常用操作</div>
             <div className="drawer-action-grid">
-              <button className="ops-btn primary" type="button" onClick={() => sendCommand(selected.deviceCode, "START")}>启动/继续</button>
-              <button className="ops-btn" type="button" onClick={() => sendCommand(selected.deviceCode, "PAUSE")}>暂停</button>
-              <button className="ops-btn" type="button" onClick={() => sendCommand(selected.deviceCode, "RESUME")}>恢复</button>
-              <button className="ops-btn" type="button" onClick={() => sendCommand(selected.deviceCode, "REFRESH_CONFIG")}>刷新配置</button>
-              <button className="ops-btn danger" type="button" onClick={() => sendCommand(selected.deviceCode, "STOP")}>停止</button>
+              <button className="ops-btn primary" type="button" onClick={onOpenScheduler}><ControlOutlined />前往任务调度</button>
+              <button className="ops-btn" type="button" onClick={() => openDashboardConfig(selected)}><SettingOutlined />配置</button>
+              <button className="ops-btn" type="button" disabled={commandMutation.isPending} onClick={() => refreshDeviceConfig(selected.deviceCode)}><ReloadOutlined />刷新配置</button>
             </div>
 
             <div className="drawer-section-title">最近 7 天</div>

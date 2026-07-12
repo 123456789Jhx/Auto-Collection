@@ -23,6 +23,26 @@ function createUploader(config, logger, storage) {
     return bytesToHex(digest.digest());
   }
 
+  function stableJsonValue(value) {
+    if (Object.prototype.toString.call(value) === "[object Array]") {
+      return value.map(stableJsonValue);
+    }
+    if (!value || typeof value !== "object") {
+      return value;
+    }
+    var result = {};
+    Object.keys(value).sort().forEach(function (key) {
+      if (value[key] !== undefined) {
+        result[key] = stableJsonValue(value[key]);
+      }
+    });
+    return result;
+  }
+
+  function canonicalSha256(value) {
+    return sha256Hex(JSON.stringify(stableJsonValue(value)));
+  }
+
   function sha256FileHex(filePath) {
     var digest = java.security.MessageDigest.getInstance("SHA-256");
     var input = new java.io.FileInputStream(filePath);
@@ -416,6 +436,7 @@ function createUploader(config, logger, storage) {
         capturedCount: payload.capturedCount,
         lastMessage: payload.lastMessage,
         douyinAccountName: payload.douyinAccountName,
+        capabilities: payload.capabilities,
         expectedEndAt: payload.expectedEndAt,
         rawPayload: payload,
         reportedAt: payload.reportedAt || new Date().toISOString()
@@ -533,6 +554,113 @@ function createUploader(config, logger, storage) {
         success: false,
         message: String(error)
       };
+    }
+  }
+
+  function parseJsonResponse(response) {
+    var text = response && response.body ? response.body.string() : "";
+    var data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (error) {
+      data = null;
+    }
+    return {
+      success: !!response && response.statusCode >= 200 && response.statusCode < 300,
+      statusCode: response ? response.statusCode : 0,
+      data: data,
+      body: text,
+      errorCode: data && data.error && data.error.code || ""
+    };
+  }
+
+  function reportAssignmentEvent(assignmentId, payload) {
+    if (!config.upload.enabled || !assignmentId) {
+      return { success: false, message: "assignment upload disabled" };
+    }
+    try {
+      return parseJsonResponse(postJson(endpoint("/mobile/task-assignments/" + assignmentId + "/events"), payload || {}));
+    } catch (error) {
+      logger.warn("任务运行事件上报失败", { assignmentId: assignmentId, message: String(error) });
+      return { success: false, message: String(error) };
+    }
+  }
+
+  function updateAssignmentProgress(assignmentId, payload) {
+    if (!config.upload.enabled || !assignmentId) {
+      return { success: false, message: "assignment upload disabled" };
+    }
+    try {
+      var bodyText = JSON.stringify(payload || {});
+      var url = endpoint("/mobile/task-assignments/" + assignmentId + "/progress");
+      var response = http.request(url, {
+        method: "PATCH",
+        headers: requestHeaders(url, "PATCH", bodyText, { includeDeviceToken: true }),
+        contentType: "application/json; charset=utf-8",
+        body: bodyText
+      });
+      return parseJsonResponse(response);
+    } catch (error) {
+      logger.warn("任务检查点上报失败", { assignmentId: assignmentId, message: String(error) });
+      return { success: false, message: String(error) };
+    }
+  }
+
+  function completeAssignment(assignmentId, payload) {
+    if (!config.upload.enabled || !assignmentId) {
+      return { success: false, message: "assignment upload disabled" };
+    }
+    try {
+      return parseJsonResponse(postJson(endpoint("/mobile/task-assignments/" + assignmentId + "/complete"), payload || {}));
+    } catch (error) {
+      logger.warn("任务终态上报失败", { assignmentId: assignmentId, message: String(error) });
+      return { success: false, message: String(error) };
+    }
+  }
+
+  function reserveCommerceCardCommentAction(assignmentId, payload) {
+    if (!config.upload.enabled || !assignmentId) {
+      return { success: false, message: "comment reserve disabled" };
+    }
+    try {
+      return parseJsonResponse(postJson(endpoint("/mobile/task-assignments/" + assignmentId + "/comment-actions/reserve"), payload || {}));
+    } catch (error) {
+      logger.warn("商品卡评论预占失败", { assignmentId: assignmentId, message: String(error) });
+      return { success: false, message: String(error) };
+    }
+  }
+
+  function updateCommerceCardCommentAction(assignmentId, actionId, payload) {
+    if (!config.upload.enabled || !assignmentId || !actionId) {
+      return { success: false, message: "comment action update disabled" };
+    }
+    try {
+      var bodyText = JSON.stringify(payload || {});
+      var url = endpoint("/mobile/task-assignments/" + assignmentId + "/comment-actions/" + actionId);
+      var response = http.request(url, {
+        method: "PATCH",
+        headers: requestHeaders(url, "PATCH", bodyText, { includeDeviceToken: true }),
+        contentType: "application/json; charset=utf-8",
+        body: bodyText
+      });
+      return parseJsonResponse(response);
+    } catch (error) {
+      logger.warn("商品卡评论状态上报失败", { assignmentId: assignmentId, actionId: actionId, message: String(error) });
+      return { success: false, message: String(error) };
+    }
+  }
+
+  function getCommerceCardCommentActionByKey(assignmentId, idempotencyKey) {
+    if (!config.upload.enabled || !assignmentId || !idempotencyKey) {
+      return { success: false, message: "comment action query disabled" };
+    }
+    try {
+      var url = endpoint("/mobile/task-assignments/" + assignmentId + "/comment-actions/by-key/" + encodeURIComponent(idempotencyKey)) +
+        "?deviceId=" + encodeURIComponent(config.device.deviceId);
+      return parseJsonResponse(getJson(url));
+    } catch (error) {
+      logger.warn("商品卡评论状态查询失败", { assignmentId: assignmentId, message: String(error) });
+      return { success: false, message: String(error) };
     }
   }
 
@@ -806,17 +934,20 @@ function createUploader(config, logger, storage) {
         status: status,
         result: result || {}
       });
+      var parsed = parseJsonResponse(response);
       logger.info("后台控制指令回执完成", {
         commandId: commandId,
         commandStatus: status,
         statusCode: response.statusCode
       });
+      return parsed;
     } catch (error) {
       logger.warn("后台控制指令回执失败", {
         commandId: commandId,
         commandStatus: status,
         message: String(error)
       });
+      return { success: false, message: String(error) };
     }
   }
 
@@ -1119,7 +1250,15 @@ function createUploader(config, logger, storage) {
     fetchCurrentTask: fetchCurrentTask,
     checkAgentVersion: checkAgentVersion,
     applyAgentUpdate: applyAgentUpdate,
-    uploadAgentUpdateEvent: uploadAgentUpdateEvent
+    uploadAgentUpdateEvent: uploadAgentUpdateEvent,
+    reportAssignmentEvent: reportAssignmentEvent,
+    updateAssignmentProgress: updateAssignmentProgress,
+    completeAssignment: completeAssignment,
+    reserveCommerceCardCommentAction: reserveCommerceCardCommentAction,
+    updateCommerceCardCommentAction: updateCommerceCardCommentAction,
+    getCommerceCardCommentActionByKey: getCommerceCardCommentActionByKey,
+    sha256Hex: sha256Hex,
+    canonicalSha256: canonicalSha256
   };
 }
 

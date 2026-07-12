@@ -1468,9 +1468,11 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     var searchKeyword = String(options.searchKeyword || "").replace(/\s+/g, " ").trim();
     var matchKeywords = options.matchKeywords || [];
     var liveSignals = options.liveSignals || [];
+    var recommendationSignals = options.recommendationSignals || ["你可能还会喜欢"];
     var targetRoom = options.targetRoom || {};
     var scanMinutes = Math.max(1, Number(options.scanMinutes || 15));
     var cardCount = Math.max(1, Number(options.cardCount || 4));
+    var dwellSeconds = Math.max(1, Number(options.dwellSeconds || 120));
     if (!searchKeyword) {
       return {
         success: false,
@@ -1486,6 +1488,88 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         searchKeyword: searchKeyword
       });
       return true;
+    }
+    function sleepInterruptible(totalMs, source) {
+      var endAt = Date.now() + Math.max(0, Number(totalMs || 0));
+      while (Date.now() < endAt) {
+        if (isInterrupted(source)) {
+          return false;
+        }
+        var slice = Math.min(1000, Math.max(0, endAt - Date.now()));
+        if (slice <= 0) {
+          break;
+        }
+        if (typeof sleep === "function") {
+          sleep(slice);
+        } else {
+          autojsUtils.sleepRandom(slice, slice);
+        }
+      }
+      return true;
+    }
+    function browseOpenedCommerceDetail(attempt, hardEndAt, remainingCards) {
+      var detailStartedAt = Date.now();
+      var detailEndAt = Math.min(hardEndAt, detailStartedAt + dwellSeconds * 1000);
+      var detailBrowsedCount = 1;
+      var openedLive = false;
+      var recommendedClicks = 0;
+      var nextSwipeAt = detailStartedAt + 15000;
+      var sample = "";
+      while (Date.now() < detailEndAt && Date.now() < hardEndAt) {
+        if (isInterrupted("commerce_detail_browse_" + attempt)) {
+          return {
+            success: false,
+            reason: "manual_pause",
+            browsedCount: detailBrowsedCount,
+            textSample: sample
+          };
+        }
+        var detailText = extractVisibleText();
+        sample = detailText.slice(0, 220);
+        if (!openedLive && hasAnyTextKeyword(detailText, liveSignals) && openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals, targetRoom)) {
+          openedLive = true;
+          sleepInterruptible(1800, "commerce_detail_live_watch_" + attempt);
+          if (isLiveRoomVisible()) {
+            exitLiveRoom();
+          } else {
+            back();
+            autojsUtils.sleepRandom(700, 1100);
+          }
+        }
+        if (Date.now() >= nextSwipeAt && Date.now() + 1200 < detailEndAt) {
+          swipeSearchResultsUp();
+          nextSwipeAt = Date.now() + 15000;
+          continue;
+        }
+        if (recommendedClicks < 2 &&
+          detailBrowsedCount < remainingCards &&
+          Date.now() - detailStartedAt >= Math.min(60000, Math.floor(dwellSeconds * 500)) &&
+          Date.now() + dwellSeconds * 1000 < hardEndAt &&
+          hasAnyTextKeyword(detailText, recommendationSignals) &&
+          hasTargetTextMatch(detailText, matchKeywords, targetRoom) &&
+          clickCommerceKeywordCard(matchKeywords)) {
+          recommendedClicks += 1;
+          detailBrowsedCount += 1;
+          detailStartedAt = Date.now();
+          detailEndAt = Math.min(hardEndAt, detailStartedAt + dwellSeconds * 1000);
+          nextSwipeAt = detailStartedAt + 15000;
+          openedLive = false;
+          continue;
+        }
+        if (!sleepInterruptible(Math.min(1000, detailEndAt - Date.now()), "commerce_detail_wait_" + attempt)) {
+          return {
+            success: false,
+            reason: "manual_pause",
+            browsedCount: detailBrowsedCount,
+            textSample: sample
+          };
+        }
+      }
+      return {
+        success: true,
+        browsedCount: detailBrowsedCount,
+        textSample: sample
+      };
     }
     if (!openCommerceCardSearch(searchKeyword)) {
       return {
@@ -1520,28 +1604,27 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         textSample: visibleText.slice(0, 180)
       });
       if (keywordMatched && clickCommerceKeywordCard(matchKeywords)) {
-        browsedCount += 1;
-        var detailText = extractVisibleText();
-        lastTextSample = detailText.slice(0, 220);
+        var detailResult = browseOpenedCommerceDetail(attempt, endAt, cardCount - browsedCount);
+        browsedCount += Math.max(1, Number(detailResult.browsedCount || 1));
+        lastTextSample = detailResult.textSample || lastTextSample;
         logger.info("commerce card detail browsed", {
           attempt: attempt,
           browsedCount: browsedCount,
           targetCount: cardCount,
-          hasLiveSignal: hasAnyTextKeyword(detailText, liveSignals),
-          textSample: detailText.slice(0, 180)
+          textSample: String(lastTextSample || "").slice(0, 180)
         });
-        if (hasAnyTextKeyword(detailText, liveSignals) && openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals, targetRoom)) {
-          autojsUtils.sleepRandom(1800, 2600);
-          if (isLiveRoomVisible()) {
-            exitLiveRoom();
-          } else {
-            back();
-            autojsUtils.sleepRandom(700, 1100);
-          }
-        } else {
-          back();
-          autojsUtils.sleepRandom(700, 1100);
+        if (!detailResult.success) {
+          return {
+            success: false,
+            reason: detailResult.reason || "manual_pause",
+            elapsedMs: Date.now() - startedAt,
+            attempt: attempt,
+            browsedCount: browsedCount,
+            textSample: lastTextSample
+          };
         }
+        back();
+        autojsUtils.sleepRandom(700, 1100);
       }
       if (isInterrupted("commerce_browse_before_swipe_" + attempt)) {
         return {
@@ -1583,6 +1666,211 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function getLastTargetLiveSearchResult() {
     return lastTargetLiveSearchResult || {};
+  }
+
+  function targetRoomRuntimeKey(targetRoom) {
+    var code = String(targetRoom && targetRoom.targetCode || "").replace(/\s+/g, " ").trim().toLowerCase();
+    return code ? "target:" + code : "";
+  }
+
+  function restartToLiveFeed(reason) {
+    logger.warn("重启任务上下文：回到手机首页并重新进入抖音直播流", {
+      reason: reason || ""
+    });
+    home();
+    autojsUtils.sleepRandom(1200, 2000);
+    openApp();
+    closeKnownOverlays(3);
+    enterVideoFeed();
+    openLiveTabIfVisible();
+    return true;
+  }
+
+  function findBottomHomeTab() {
+    var nodes = [];
+    pushFoundNodes(nodes, text("首页"));
+    pushFoundNodes(nodes, desc("首页"));
+    var screen = autojsUtils.getScreenSize();
+    var best = null;
+    var bestScore = -1;
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var bounds = node && node.bounds && node.bounds();
+      if (!bounds) {
+        continue;
+      }
+      var centerY = bounds.centerY();
+      var centerX = bounds.centerX();
+      if (centerY < screen.height * 0.58 || centerY > screen.height * 0.98) {
+        continue;
+      }
+      if (centerX < screen.width * 0.02 || centerX > screen.width * 0.45) {
+        continue;
+      }
+      var score = 10;
+      if (centerX < screen.width * 0.25) {
+        score += 8;
+      }
+      if (centerY > screen.height * 0.78) {
+        score += 6;
+      }
+      if (node.clickable && node.clickable()) {
+        score += 3;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = node;
+      }
+    }
+    return best;
+  }
+
+  function clickBottomHomeTab() {
+    var homeNode = findBottomHomeTab();
+    if (homeNode) {
+      logger.info("点击抖音底部首页刷新直播流", {
+        bounds: autojsUtils.formatBounds(homeNode.bounds && homeNode.bounds())
+      });
+      autojsUtils.safeClick(homeNode, 3, logger);
+      autojsUtils.sleepRandom(1400, 2200);
+      return true;
+    }
+    var screen = autojsUtils.getScreenSize();
+    var x = Math.floor(screen.width * 0.14);
+    var y = Math.floor(screen.height * 0.92);
+    logger.warn("未找到底部首页控件，使用坐标兜底刷新直播流", { x: x, y: y });
+    autojsUtils.clickPoint(x, y, logger, "bottom_home_fallback");
+    autojsUtils.sleepRandom(1400, 2200);
+    return true;
+  }
+
+  function refreshLiveFeedFromHome(options) {
+    options = options || {};
+    logger.info("刷新直播流：回到底部首页后重新进入直播板块", {
+      reason: options.reason || ""
+    });
+    if (!isForeground()) {
+      openApp();
+    }
+    closeKnownOverlays(3);
+    if (isLiveRoomVisible()) {
+      exitLiveRoom();
+    }
+    clickBottomHomeTab();
+    enterVideoFeed();
+    openLiveTabIfVisible();
+    closeKnownOverlays(2);
+    return true;
+  }
+
+  function openTargetLiveRoomFromLiveFeed(options) {
+    options = options || {};
+    var startedAt = Date.now();
+    var targetRoom = options.targetRoom || {};
+    var keyword = String(options.keyword || pickTargetRoomSearchKeyword(targetRoom) || "").replace(/\s+/g, " ").trim();
+    var targetKeywords = buildTargetRoomKeywords(targetRoom, keyword);
+    var maxCandidates = Math.max(1, Number(options.maxCandidates || options.maxRooms || 25));
+    var source = options.source || "live_feed_gate";
+    function isInterrupted(sourceName) {
+      if (!options.shouldStop || !options.shouldStop()) {
+        return false;
+      }
+      setTargetLiveSearchResult("manual_pause", {
+        keyword: keyword,
+        targetKeywords: targetKeywords,
+        elapsedMs: Date.now() - startedAt,
+        source: sourceName || source
+      });
+      return true;
+    }
+    if (!keyword && targetKeywords.length > 0) {
+      keyword = targetKeywords[0];
+    }
+    if (!targetKeywords.length) {
+      setTargetLiveSearchResult("target_keyword_empty", {
+        keyword: keyword,
+        targetKeywords: targetKeywords,
+        source: source
+      });
+      return false;
+    }
+    setTargetLiveSearchResult("live_feed_gate_started", {
+      keyword: keyword,
+      targetKeywords: targetKeywords,
+      source: source,
+      maxCandidates: maxCandidates
+    });
+    if (options.restartBeforeScan) {
+      restartToLiveFeed(source);
+    } else if (options.enterLiveFeed !== false) {
+      enterLiveFeed(keyword);
+    }
+    for (var candidateIndex = 1; candidateIndex <= maxCandidates; candidateIndex++) {
+      if (isInterrupted("live_feed_candidate_" + candidateIndex)) {
+        return false;
+      }
+      if (isLiveRoomVisible()) {
+        if (confirmTargetLiveRoom(keyword, targetKeywords, candidateIndex, "target_live_feed_current_room", targetRoom)) {
+          setTargetLiveSearchResult("room_verified", {
+            keyword: keyword,
+            targetKeywords: targetKeywords,
+            matchedKeywords: targetKeywords,
+            attempt: candidateIndex,
+            candidatesChecked: candidateIndex,
+            elapsedMs: Date.now() - startedAt,
+            source: source,
+            roomKey: targetRoomRuntimeKey(targetRoom),
+            roomName: targetRoom.targetName || "",
+            textSample: extractVisibleText().slice(0, 220)
+          });
+          return true;
+        }
+        if (isLiveRoomVisible()) {
+          exitLiveRoom();
+        }
+      }
+      var visibleText = extractVisibleText();
+      if (hasTargetTextMatch(visibleText, targetKeywords, targetRoom)) {
+        rememberPendingTargetLiveEntry(keyword, targetKeywords, {
+          text: visibleText,
+          contextText: visibleText
+        }, "target_live_feed_candidate");
+        if (openLiveRoomFromCurrentScreen(visibleText) && confirmTargetLiveRoom(keyword, targetKeywords, candidateIndex, "target_live_feed_candidate", targetRoom)) {
+          setTargetLiveSearchResult("room_verified", {
+            keyword: keyword,
+            targetKeywords: targetKeywords,
+            matchedKeywords: targetKeywords,
+            attempt: candidateIndex,
+            candidatesChecked: candidateIndex,
+            elapsedMs: Date.now() - startedAt,
+            source: source,
+            roomKey: targetRoomRuntimeKey(targetRoom),
+            roomName: targetRoom.targetName || "",
+            textSample: visibleText.slice(0, 220)
+          });
+          return true;
+        }
+      } else {
+        logger.info("直播流候选未命中目标直播间", {
+          candidateIndex: candidateIndex,
+          maxCandidates: maxCandidates,
+          targetKeywords: targetKeywords,
+          textSample: visibleText.slice(0, 180)
+        });
+      }
+      if (candidateIndex < maxCandidates) {
+        nextVideo();
+      }
+    }
+    setTargetLiveSearchResult("target_live_room_not_found", {
+      keyword: keyword,
+      targetKeywords: targetKeywords,
+      elapsedMs: Date.now() - startedAt,
+      source: source,
+      candidatesChecked: maxCandidates,
+      textSample: extractVisibleText().slice(0, 220)
+    });
+    return false;
   }
 
   function openTargetLiveRoomFromSearch(options) {
@@ -4026,6 +4314,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     openCommerceCardSearch: openCommerceCardSearch,
     browseCommerceCards: browseCommerceCards,
     openMatchingCommerceLiveFromCards: openMatchingCommerceLiveFromCards,
+    openTargetLiveRoomFromLiveFeed: openTargetLiveRoomFromLiveFeed,
     openTargetLiveRoomFromSearch: openTargetLiveRoomFromSearch,
     getLastTargetLiveSearchResult: getLastTargetLiveSearchResult,
     openFirstVideoFromSearch: openFirstVideoFromSearch,
@@ -4047,6 +4336,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     nextVideo: nextVideo,
     recover: recover,
     restartSearchContext: restartSearchContext,
+    restartToLiveFeed: restartToLiveFeed,
+    refreshLiveFeedFromHome: refreshLiveFeedFromHome,
     restartToFeed: restartToFeed,
     exitAppToHome: exitAppToHome
   };

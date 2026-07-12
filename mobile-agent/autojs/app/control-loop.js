@@ -15,9 +15,133 @@ function createControlLoop(context) {
     ready: false
   };
   context.backendSync = backendSync;
+  var assignmentControl = context.assignmentControl || {
+    pending: null
+  };
+  context.assignmentControl = assignmentControl;
 
   function reportRuntimeLog(level, message, logContext) {
     uploader.uploadRuntimeLog(level, message, logContext || {});
+  }
+
+  function ackControlCommand(command, status, result) {
+    var payload = command && (command.payload || command.payloadJson || {}) || {};
+    var taskType = normalizeCommandTaskType(payload.taskType, "");
+    var assignmentId = String(payload.assignmentId || command && command.assignmentId || "");
+    var commandSequence = Number(payload.commandSequence || command && command.commandSequence || 0);
+    var ackResult = result || {};
+    if (assignmentId && commandSequence && taskType && taskScheduler && taskScheduler.rememberAssignmentCommandAck) {
+      taskScheduler.rememberAssignmentCommandAck(
+        taskType,
+        assignmentId,
+        commandSequence,
+        command && command.id || "",
+        status,
+        ackResult
+      );
+    }
+    var response = uploader.ackCommand(command.id, status, ackResult);
+    var assignment = response && response.data && response.data.assignment;
+    if (assignment && taskType && taskScheduler && taskScheduler.updateAssignmentRuntime) {
+      taskScheduler.updateAssignmentRuntime(taskType, assignment.state, assignment.stateVersion, assignment.lastEventSeq);
+    } else if (assignment && taskType && taskScheduler && taskScheduler.updateAssignmentState) {
+      taskScheduler.updateAssignmentState(taskType, assignment.state, assignment.stateVersion);
+    }
+    if (response && response.success && assignmentControl.pending && assignmentControl.pending.command.id === command.id &&
+      (status === "DONE" || status === "FAILED" || status === "IGNORED")) {
+      assignmentControl.pending = null;
+    }
+    return response;
+  }
+
+  function mergeAckResult(base, extra) {
+    var result = {};
+    var key;
+    base = base || {};
+    extra = extra || {};
+    for (key in base) {
+      if (Object.prototype.hasOwnProperty.call(base, key)) {
+        result[key] = base[key];
+      }
+    }
+    for (key in extra) {
+      if (Object.prototype.hasOwnProperty.call(extra, key)) {
+        result[key] = extra[key];
+      }
+    }
+    return result;
+  }
+
+  function isTerminalAckStatus(status) {
+    return status === "DONE" || status === "FAILED" || status === "IGNORED";
+  }
+
+  function isAssignmentExecutionInFlight(taskType) {
+    if (!taskType || !taskScheduler || !taskScheduler.getActiveTaskType) {
+      return false;
+    }
+    var activeTaskType = normalizeCommandTaskType(taskScheduler.getActiveTaskType(), "");
+    var currentPhase = normalizeCommandTaskType(counters.currentPhase, "");
+    return activeTaskType === taskType && currentPhase === taskType && !counters.phaseEndedAt;
+  }
+
+  function checkpointForControl(taskType, checkpointType, workflowVersion) {
+    var existing = taskScheduler && taskScheduler.getCheckpoint
+      ? taskScheduler.getCheckpoint(taskType)
+      : null;
+    if (Number(workflowVersion || 1) >= 2) {
+      return existing && existing.checkpointVersion === 2 ? existing : null;
+    }
+    return currentCheckpoint({ checkpointType: checkpointType });
+  }
+
+  function deferAssignmentControl(command, commandType, taskType, result) {
+    if (assignmentControl.pending && assignmentControl.pending.command.id === command.id) {
+      return ackControlCommand(command, "FETCHED", assignmentControl.pending.result);
+    }
+    var checkpoint = taskScheduler && taskScheduler.getCheckpoint
+      ? taskScheduler.getCheckpoint(taskType)
+      : null;
+    var pendingResult = mergeAckResult({
+      applied: false,
+      accepted: true,
+      completed: false,
+      checkpointStable: false,
+      commandType: commandType,
+      taskType: taskType,
+      reason: commandType === "PAUSE" ? "pause_waiting_for_safe_point" : "stop_waiting_for_safe_point"
+    }, result);
+    assignmentControl.pending = {
+      command: command,
+      commandType: commandType,
+      taskType: taskType,
+      result: pendingResult,
+      checkpointSequence: Number(checkpoint && checkpoint.checkpointVersion === 2 && checkpoint.checkpointSequence || 0)
+    };
+    return ackControlCommand(command, "FETCHED", pendingResult);
+  }
+
+  function completePendingAssignmentControl(commandType, result) {
+    var pending = assignmentControl.pending;
+    if (!pending || pending.commandType !== commandType) {
+      return { success: false, skipped: true, message: "pending assignment control not found" };
+    }
+    var checkpoint = taskScheduler && taskScheduler.getCheckpoint
+      ? taskScheduler.getCheckpoint(pending.taskType)
+      : null;
+    if (!checkpoint || checkpoint.checkpointVersion !== 2 ||
+      Number(checkpoint.checkpointSequence || 0) <= Number(pending.checkpointSequence || 0) ||
+      checkpoint.pendingSideEffect) {
+      return { success: false, skipped: true, message: "assignment safe checkpoint not ready" };
+    }
+    var completedResult = mergeAckResult(pending.result, result || {});
+    completedResult.applied = true;
+    completedResult.accepted = true;
+    completedResult.completed = true;
+    if (commandType === "PAUSE") {
+      completedResult.checkpointStable = completedResult.checkpointStable === true;
+    }
+    return ackControlCommand(pending.command, "DONE", completedResult);
   }
 
   function isStateCommand(commandType) {
@@ -47,7 +171,7 @@ function createControlLoop(context) {
       latestCommandId: latestCommand && latestCommand.id,
       latestCommandType: latestCommand && latestCommand.commandType
     });
-    uploader.ackCommand(command.id, "IGNORED", {
+    ackControlCommand(command, "IGNORED", {
       applied: false,
       commandType: command.commandType,
       reason: reason,
@@ -285,6 +409,53 @@ function createControlLoop(context) {
     return normalizedTaskType;
   }
 
+  function prepareAssignmentCommand(command, payload) {
+    var effectiveWorkflow = payload.effectiveWorkflow || config.task && config.task.effectiveWorkflow;
+    var workflowVersion = Number(payload.workflowVersion || effectiveWorkflow && effectiveWorkflow.workflowVersion || 1);
+    if (workflowVersion < 2) {
+      return { accepted: true, effectiveWorkflow: null, workflowVersion: workflowVersion };
+    }
+    var assignmentId = String(payload.assignmentId || command.assignmentId || "");
+    var commandSequence = Number(payload.commandSequence || command.commandSequence || 0);
+    var expectedStateVersion = Number(payload.expectedStateVersion || 0);
+    if (!assignmentId || !commandSequence || !expectedStateVersion) {
+      return { accepted: false, reason: "assignment_command_identity_missing" };
+    }
+    if (effectiveWorkflow && String(effectiveWorkflow.assignmentId || "") !== assignmentId) {
+      return { accepted: false, reason: "assignment_effective_workflow_mismatch" };
+    }
+    if ((command.commandType === "START" || command.commandType === "RESUME") && !effectiveWorkflow) {
+      return { accepted: false, reason: "assignment_effective_workflow_missing" };
+    }
+    var taskType = normalizeCommandTaskType(payload.taskType, "");
+    if (!taskType || !taskScheduler || !taskScheduler.recordAssignmentCommand) {
+      return { accepted: false, reason: "assignment_scheduler_unavailable" };
+    }
+    var accepted = taskScheduler.recordAssignmentCommand(
+      taskType,
+      assignmentId,
+      commandSequence,
+      expectedStateVersion,
+      command.id
+    );
+    if (!accepted || accepted.accepted !== true) {
+      return accepted || { accepted: false, reason: "assignment_command_rejected" };
+    }
+    if (effectiveWorkflow) {
+      config.task.effectiveWorkflow = effectiveWorkflow;
+    }
+    return {
+      accepted: true,
+      effectiveWorkflow: effectiveWorkflow,
+      commandSequence: commandSequence,
+      expectedStateVersion: expectedStateVersion,
+      workflowVersion: workflowVersion,
+      duplicate: accepted.duplicate === true,
+      ackStatus: accepted.ackStatus || "",
+      ackResult: accepted.ackResult || null
+    };
+  }
+
   function currentCheckpoint(extra) {
     var checkpoint = {
       currentPhase: counters.currentPhase,
@@ -471,10 +642,29 @@ function createControlLoop(context) {
         });
         return;
       }
+      var assignmentCommand = isStateCommand(commandType)
+        ? prepareAssignmentCommand(command, payload)
+        : { accepted: true, effectiveWorkflow: null };
+      if (!assignmentCommand.accepted) {
+        ackControlCommand(command, "IGNORED", {
+          applied: false,
+          commandType: commandType,
+          reason: assignmentCommand.reason || "assignment_command_rejected",
+          assignmentId: payload.assignmentId || command.assignmentId || "",
+          commandSequence: payload.commandSequence || command.commandSequence || 0
+        });
+        return;
+      }
+      if (assignmentCommand.duplicate && isTerminalAckStatus(assignmentCommand.ackStatus)) {
+        ackControlCommand(command, assignmentCommand.ackStatus, assignmentCommand.ackResult || {});
+        return;
+      }
       if (commandType === "START" || commandType === "RESUME") {
         var normalizedStartTaskType = syncTaskSchedulerState(payload.taskType, commandType, {
           reason: "backend_command",
-          checkpoint: currentCheckpoint({ checkpointType: "backend_start" })
+          checkpoint: currentCheckpoint({ checkpointType: "backend_start" }),
+          effectiveWorkflow: assignmentCommand.effectiveWorkflow,
+          commandSequence: assignmentCommand.commandSequence
         });
         floatyControl.update({
           running: true,
@@ -491,10 +681,18 @@ function createControlLoop(context) {
           stopRequested: false
         });
         heartbeatService.reportImmediateHeartbeat(counters.currentPhase, "running", "后台指令恢复运行");
-        uploader.ackCommand(command.id, "DONE", { applied: true, commandType: commandType, taskType: normalizedStartTaskType });
+        ackControlCommand(command, "DONE", {
+          applied: true,
+          commandType: commandType,
+          taskType: normalizedStartTaskType,
+          assignmentId: payload.assignmentId || ""
+        });
         return;
       }
       if (commandType === "PAUSE") {
+        var normalizedPauseTaskType = normalizeCommandTaskType(payload.taskType, "");
+        var deferPauseAck = Number(assignmentCommand.workflowVersion || 1) >= 2 &&
+          isAssignmentExecutionInFlight(normalizedPauseTaskType);
         floatyControl.update({
           running: true,
           paused: true,
@@ -502,20 +700,42 @@ function createControlLoop(context) {
           lastManualAction: "backend_pause",
           lastMessage: "后台指令暂停"
         });
-        syncTaskSchedulerState(payload.taskType, commandType, {
-          reason: "backend_command",
-          checkpoint: currentCheckpoint({ checkpointType: "backend_pause" })
-        });
+        if (!deferPauseAck) {
+          syncTaskSchedulerState(payload.taskType, commandType, {
+            reason: "backend_command",
+            checkpoint: checkpointForControl(normalizedPauseTaskType, "backend_pause", assignmentCommand.workflowVersion)
+          });
+        }
         logCommandApplied(command, "INFO", {
           running: floatyControl.state.running,
           paused: true,
           stopRequested: false
         });
-        heartbeatService.reportImmediateHeartbeat(counters.currentPhase, "paused", "后台指令暂停");
-        uploader.ackCommand(command.id, "DONE", { applied: true, commandType: commandType });
+        heartbeatService.reportImmediateHeartbeat(
+          counters.currentPhase,
+          deferPauseAck ? "running" : "paused",
+          deferPauseAck ? "后台指令暂停中" : "后台指令暂停"
+        );
+        if (deferPauseAck) {
+          deferAssignmentControl(command, commandType, normalizedPauseTaskType, {
+            assignmentId: payload.assignmentId || ""
+          });
+        } else {
+          ackControlCommand(command, "DONE", {
+            applied: true,
+            accepted: true,
+            completed: true,
+            commandType: commandType,
+            checkpointStable: true,
+            assignmentId: payload.assignmentId || ""
+          });
+        }
         return;
       }
       if (commandType === "STOP") {
+        var normalizedStopTaskType = normalizeCommandTaskType(payload.taskType, "");
+        var deferStopAck = Number(assignmentCommand.workflowVersion || 1) >= 2 &&
+          isAssignmentExecutionInFlight(normalizedStopTaskType);
         counters.lastStopReason = "backend_close";
         floatyControl.update({
           running: false,
@@ -526,10 +746,12 @@ function createControlLoop(context) {
           lastManualAction: "backend_close",
           lastMessage: "后台指令停止任务"
         });
-        syncTaskSchedulerState(payload.taskType, commandType, {
-          reason: "backend_command",
-          checkpoint: currentCheckpoint({ checkpointType: "backend_stop" })
-        });
+        if (!deferStopAck) {
+          syncTaskSchedulerState(payload.taskType, commandType, {
+            reason: "backend_command",
+            checkpoint: checkpointForControl(normalizedStopTaskType, "backend_stop", assignmentCommand.workflowVersion)
+          });
+        }
         logCommandApplied(command, "WARN", {
           running: floatyControl.state.running,
           paused: true,
@@ -537,14 +759,25 @@ function createControlLoop(context) {
           exitRequested: false,
           stopReason: counters.lastStopReason
         });
-        heartbeatService.reportImmediateHeartbeat(counters.currentPhase, "stopped", "后台指令停止任务");
-        uploader.ackCommand(command.id, "DONE", {
-          applied: true,
-          accepted: true,
-          completed: false,
-          commandType: commandType,
-          message: "command accepted; task execution continues asynchronously"
-        });
+        heartbeatService.reportImmediateHeartbeat(
+          counters.currentPhase,
+          deferStopAck ? "running" : "stopped",
+          deferStopAck ? "后台指令停止中" : "后台指令停止任务"
+        );
+        if (deferStopAck) {
+          deferAssignmentControl(command, commandType, normalizedStopTaskType, {
+            assignmentId: payload.assignmentId || ""
+          });
+        } else {
+          ackControlCommand(command, "DONE", {
+            applied: true,
+            accepted: true,
+            completed: true,
+            commandType: commandType,
+            reason: "backend_stop",
+            assignmentId: payload.assignmentId || ""
+          });
+        }
         return;
       }
       if (commandType === "STATUS") {
@@ -830,6 +1063,9 @@ function createControlLoop(context) {
     config.task.accountProfile = sanitizeObjectConfig(remoteConfig.accountProfile, config.task.accountProfile || {});
     config.task.liveCommentBotConfig = sanitizeObjectConfig(remoteConfig.liveCommentBotConfig, config.task.liveCommentBotConfig || {});
     config.task.liveTargets = sanitizeLiveTargets(remoteConfig.liveTargets || []);
+    config.task.effectiveWorkflow = remoteConfig.effectiveWorkflow && typeof remoteConfig.effectiveWorkflow === "object"
+      ? remoteConfig.effectiveWorkflow
+      : null;
     var commerceCardLiveComment = pickCommerceCardLiveCommentConfig(remoteConfig);
     if (commerceCardLiveComment) {
       config.task.commerceCardLiveComment = sanitizeCommerceCardLiveCommentConfig(commerceCardLiveComment);
@@ -919,7 +1155,8 @@ function createControlLoop(context) {
     waitWhilePaused: waitWhilePaused,
     reportRuntimeLog: reportRuntimeLog,
     syncBackendOnce: syncBackendOnce,
-    syncBackendAsync: syncBackendAsync
+    syncBackendAsync: syncBackendAsync,
+    completePendingAssignmentControl: completePendingAssignmentControl
   };
 
   function normalizeStringList(value, maxItems, maxLength) {

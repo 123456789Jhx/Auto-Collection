@@ -155,6 +155,13 @@
       "when": 1783857600000,
       "tag": "0021_assignment_command_timeline",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1783861200000,
+      "tag": "0022_commerce_card_runtime_safety",
+      "breakpoints": true
     }
   ]
 }

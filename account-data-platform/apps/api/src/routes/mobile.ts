@@ -1,11 +1,27 @@
-import { mobileAgentUpdateEventSchema, mobileCollectionRecordSchema, mobileCommandAckSchema, mobileHeartbeatSchema, mobileLiveCommentActionSchema, mobileLogFileSchema, mobileRuntimeLogSchema } from "@pkg/types";
-import { Hono } from "hono";
+import {
+  mobileAgentUpdateEventSchema,
+  mobileCollectionRecordSchema,
+  mobileCommandAckSchema,
+  mobileHeartbeatSchema,
+  mobileLiveCommentActionSchema,
+  mobileLogFileSchema,
+  mobileRuntimeLogSchema,
+  reserveCommerceCardCommentActionSchema,
+  taskAssignmentCompletePayloadSchema,
+  taskAssignmentEventPayloadSchema,
+  taskAssignmentProgressPayloadSchema,
+  updateCommerceCardCommentActionSchema
+} from "@pkg/types";
+import { Hono, type Context } from "hono";
 import { savedResponse } from "../lib/response";
 import { validationError } from "../lib/validation";
 import { mobileAuth } from "../middleware/mobile-auth";
 import { acknowledgeCommand, pollCommands } from "../services/command.service";
 import { getAgentVersionCheck, saveAgentUpdateEvent } from "../services/agent-version.service";
 import { getCurrentTask, registerDeviceToken, saveCollectionRecord, saveHeartbeat, saveLiveCommentAction, saveLogFile, saveRuntimeLog } from "../services/mobile.service";
+import { getCommentActionByKey, reserveCommentAction, updateCommentAction } from "../services/commerce-card-comment-action.service";
+import { completeTaskAssignment, saveTaskAssignmentEvent, saveTaskAssignmentProgress } from "../services/task-assignment-runtime.service";
+import { AssignmentRuntimeError } from "../repositories/task-assignment.repository";
 
 type MobileVariables = {
   mobileBody: Record<string, unknown>;
@@ -42,6 +58,24 @@ function clientIp(c: { get: (key: "clientIp") => string }) {
 
 function deviceToken(c: { get: (key: "deviceToken") => string }) {
   return c.get("deviceToken") || undefined;
+}
+
+function assignmentRuntimeErrorResponse(c: Context<{ Variables: MobileVariables }>, error: unknown) {
+  if (!(error instanceof AssignmentRuntimeError)) {
+    throw error;
+  }
+  const notFound = error.message === "ASSIGNMENT_NOT_FOUND" || error.message === "COMMENT_ACTION_NOT_FOUND";
+  return c.json({
+    error: {
+      code: error.message,
+      message: error.message,
+      category: "assignment_runtime",
+      stage: "mobile_runtime",
+      retryable: false,
+      recoveryAction: notFound ? "stop_local_assignment" : "refresh_assignment_state",
+      details: error.details
+    }
+  }, notFound ? 404 : 409);
 }
 
 mobileRoutes.use("*", mobileAuth);
@@ -183,6 +217,98 @@ mobileRoutes.post("/live-comment-actions", async (c) => {
   return c.json(savedResponse(action.id, action.createdAt));
 });
 
+mobileRoutes.post("/task-assignments/:id/events", async (c) => {
+  const body = mobileBody(c);
+  const parsed = taskAssignmentEventPayloadSchema.safeParse(body);
+  if (!parsed.success) {
+    logValidationError(`/task-assignments/${c.req.param("id")}/events`, body, parsed.error);
+    return validationError(c, parsed.error);
+  }
+  try {
+    return c.json(await saveTaskAssignmentEvent(c.req.param("id"), parsed.data, deviceToken(c)));
+  } catch (error) {
+    return assignmentRuntimeErrorResponse(c, error);
+  }
+});
+
+mobileRoutes.patch("/task-assignments/:id/progress", async (c) => {
+  const body = mobileBody(c);
+  const parsed = taskAssignmentProgressPayloadSchema.safeParse(body);
+  if (!parsed.success) {
+    logValidationError(`/task-assignments/${c.req.param("id")}/progress`, body, parsed.error);
+    return validationError(c, parsed.error);
+  }
+  try {
+    return c.json(await saveTaskAssignmentProgress(c.req.param("id"), parsed.data, deviceToken(c)));
+  } catch (error) {
+    return assignmentRuntimeErrorResponse(c, error);
+  }
+});
+
+mobileRoutes.post("/task-assignments/:id/complete", async (c) => {
+  const body = mobileBody(c);
+  const parsed = taskAssignmentCompletePayloadSchema.safeParse(body);
+  if (!parsed.success) {
+    logValidationError(`/task-assignments/${c.req.param("id")}/complete`, body, parsed.error);
+    return validationError(c, parsed.error);
+  }
+  try {
+    return c.json(await completeTaskAssignment(c.req.param("id"), parsed.data, deviceToken(c)));
+  } catch (error) {
+    return assignmentRuntimeErrorResponse(c, error);
+  }
+});
+
+mobileRoutes.post("/task-assignments/:id/comment-actions/reserve", async (c) => {
+  const body = mobileBody(c);
+  const parsed = reserveCommerceCardCommentActionSchema.safeParse(body);
+  if (!parsed.success) {
+    logValidationError(`/task-assignments/${c.req.param("id")}/comment-actions/reserve`, body, parsed.error);
+    return validationError(c, parsed.error);
+  }
+  try {
+    return c.json(await reserveCommentAction(c.req.param("id"), parsed.data, deviceToken(c)), 201);
+  } catch (error) {
+    return assignmentRuntimeErrorResponse(c, error);
+  }
+});
+
+mobileRoutes.patch("/task-assignments/:id/comment-actions/:actionId", async (c) => {
+  const body = mobileBody(c);
+  const parsed = updateCommerceCardCommentActionSchema.safeParse(body);
+  if (!parsed.success) {
+    logValidationError(`/task-assignments/${c.req.param("id")}/comment-actions/${c.req.param("actionId")}`, body, parsed.error);
+    return validationError(c, parsed.error);
+  }
+  try {
+    return c.json(await updateCommentAction(
+      c.req.param("id"),
+      c.req.param("actionId"),
+      parsed.data,
+      deviceToken(c)
+    ));
+  } catch (error) {
+    return assignmentRuntimeErrorResponse(c, error);
+  }
+});
+
+mobileRoutes.get("/task-assignments/:id/comment-actions/by-key/:key", async (c) => {
+  const deviceId = c.req.query("deviceId") || "";
+  if (!deviceId) {
+    return c.json({ error: { code: "VALIDATION_ERROR", message: "deviceId is required", details: {} } }, 400);
+  }
+  try {
+    return c.json(await getCommentActionByKey(
+      c.req.param("id"),
+      c.req.param("key"),
+      deviceId,
+      deviceToken(c)
+    ));
+  } catch (error) {
+    return assignmentRuntimeErrorResponse(c, error);
+  }
+});
+
 mobileRoutes.post("/log-files", async (c) => {
   const body = mobileBody(c);
   const parsed = mobileLogFileSchema.safeParse(body);
@@ -224,10 +350,13 @@ mobileRoutes.post("/commands/:id/ack", async (c) => {
     logValidationError(`/commands/${c.req.param("id")}/ack`, body, parsed.error);
     return validationError(c, parsed.error);
   }
-  let command: Awaited<ReturnType<typeof acknowledgeCommand>>;
+  let result: Awaited<ReturnType<typeof acknowledgeCommand>>;
   try {
-    command = await acknowledgeCommand(c.req.param("id"), parsed.data, deviceToken(c));
+    result = await acknowledgeCommand(c.req.param("id"), parsed.data, deviceToken(c));
   } catch (error) {
+    if (error instanceof AssignmentRuntimeError) {
+      return assignmentRuntimeErrorResponse(c, error);
+    }
     const message = String(error instanceof Error ? error.message : error);
     if (message === "COMMAND_NOT_FOUND") {
       return c.json({ error: { code: "COMMAND_NOT_FOUND", message: "Command does not belong to this device or no longer exists", details: {} } }, 404);
@@ -235,13 +364,22 @@ mobileRoutes.post("/commands/:id/ack", async (c) => {
     throw error;
   }
   mobileLog("command_acknowledged", {
-    commandId: command.id,
+    commandId: result.command.id,
     deviceId: parsed.data.deviceId,
     status: parsed.data.status,
-    updatedAt: command.updatedAt,
+    updatedAt: result.command.updatedAt,
     clientIp: clientIp(c)
   });
-  return c.json(savedResponse(command.id, command.updatedAt));
+  return c.json({
+    ...savedResponse(result.command.id, result.command.updatedAt),
+    assignment: result.assignment ? {
+      id: result.assignment.id,
+      state: result.assignment.status,
+      stateVersion: result.assignment.stateVersion,
+      lastEventSeq: result.assignment.lastEventSeq
+    } : null,
+    idempotent: result.idempotent
+  });
 });
 
 mobileRoutes.get("/agent-version", async (c) => {
