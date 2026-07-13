@@ -110,6 +110,7 @@ export const p3ExtensionsConfigSchema = z
         manualExecutionApproved: z.boolean().optional(),
         searchKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
         matchKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+        productKeywords: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
         liveSignals: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
         targetRoom: z
           .object({
@@ -128,6 +129,7 @@ export const p3ExtensionsConfigSchema = z
           .strict()
           .optional(),
         scanMinutesPerRound: z.number().int().min(1).max(60).optional(),
+        productCardDwellSeconds: z.number().int().min(60).max(180).optional(),
         watchMinutesPerLive: z.number().int().min(0).max(120).optional(),
         maxRounds: z.number().int().min(1).max(20).optional(),
         maxCommentsPerRoom: z.number().int().min(0).max(5).optional(),

@@ -124,6 +124,8 @@ describe("live target config service", () => {
           enabled: true,
           searchKeywords: ["夏橙商品卡"],
           matchKeywords: ["秭归", "夏橙"],
+          productKeywords: ["秭归", "夏橙"],
+          productCardDwellSeconds: 120,
           targetRoom: {
             enabled: true,
             targetName: "秭归夏橙直播间",
