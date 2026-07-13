@@ -5,6 +5,7 @@ import { db } from "./db";
 
 export const ACTIVE_ASSIGNMENT_STATUSES = ["PENDING", "DISPATCHED", "RUNNING", "PAUSING", "PAUSED", "RESUMING", "BLOCKED"] as const;
 export const TERMINAL_ASSIGNMENT_STATUSES = ["SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED"] as const;
+const LEGACY_INACTIVE_ASSIGNMENT_STATUSES = ["ACKED"] as const;
 
 type DatabaseTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -56,6 +57,23 @@ export async function createTaskAssignmentRuntimeAtomic(input: {
     if (!device) {
       throw new AssignmentRuntimeError("DEVICE_UNREGISTERED");
     }
+
+    const now = new Date();
+    await transaction
+      .update(deviceTaskAssignments)
+      .set({
+        status: "SUPERSEDED",
+        terminalReason: "legacy_acked_superseded_by_new_start",
+        completedAt: now,
+        updatedAt: now,
+        updatedBy: "task_orchestrator"
+      })
+      .where(and(
+        eq(deviceTaskAssignments.tenantId, config.tenantId),
+        eq(deviceTaskAssignments.deviceId, input.assignment.deviceId),
+        inArray(deviceTaskAssignments.status, [...LEGACY_INACTIVE_ASSIGNMENT_STATUSES]),
+        isNull(deviceTaskAssignments.deletedAt)
+      ));
 
     const [active] = await transaction
       .select({ id: deviceTaskAssignments.id, status: deviceTaskAssignments.status })

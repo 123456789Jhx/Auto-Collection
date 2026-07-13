@@ -13,8 +13,8 @@ import {
 } from "../repositories/feature-rollout.repository";
 
 const activationReadyByFeature: Record<FeatureRolloutKey, boolean> = {
-  commerce_card_workflow_v2: false,
-  commerce_card_real_comment: false
+  commerce_card_workflow_v2: true,
+  commerce_card_real_comment: true
 };
 
 function toIsoString(value: Date | string) {

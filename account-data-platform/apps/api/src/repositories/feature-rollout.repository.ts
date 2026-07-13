@@ -10,8 +10,51 @@ import { config } from "../config";
 import { db } from "./db";
 
 type DatabaseTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type DefaultFeatureRolloutControl = Pick<
+  typeof featureRolloutControls.$inferInsert,
+  "featureKey" | "enabled" | "minAppVersion" | "requiredCapabilitiesJson" | "capabilityTtlSeconds" | "reason"
+>;
+
+const defaultFeatureRolloutControls: DefaultFeatureRolloutControl[] = [
+  {
+    featureKey: "commerce_card_workflow_v2",
+    enabled: true,
+    minAppVersion: "1.0.41",
+    requiredCapabilitiesJson: ["workflow_v2", "checkpoint_v2", "pause_resume", "stable_room_key"],
+    capabilityTtlSeconds: 600,
+    reason: "商品卡 V2 工作流已完成启动链路收敛，默认允许具备 V2 能力的 1.0.41+ 设备启动。"
+  },
+  {
+    featureKey: "commerce_card_real_comment",
+    enabled: false,
+    minAppVersion: "1.0.41",
+    requiredCapabilitiesJson: [
+      "workflow_v2",
+      "checkpoint_v2",
+      "pause_resume",
+      "stable_room_key",
+      "idempotent_comment",
+      "short_lived_comment_permit"
+    ],
+    capabilityTtlSeconds: 600,
+    reason: "真实评论仍默认关闭，需运营明确开启全局开关并在目标配置中开启发送。"
+  }
+];
+
+export async function ensureDefaultFeatureRolloutControls() {
+  await db
+    .insert(featureRolloutControls)
+    .values(defaultFeatureRolloutControls.map((control) => ({
+      tenantId: config.tenantId,
+      ...control,
+      createdBy: "system",
+      updatedBy: "system"
+    })))
+    .onConflictDoNothing();
+}
 
 export async function listFeatureRolloutControlRows() {
+  await ensureDefaultFeatureRolloutControls();
   return db
     .select()
     .from(featureRolloutControls)
@@ -23,6 +66,7 @@ export async function listFeatureRolloutControlRows() {
 }
 
 export async function findFeatureRolloutControlRow(featureKey: FeatureRolloutKey) {
+  await ensureDefaultFeatureRolloutControls();
   const [row] = await db
     .select()
     .from(featureRolloutControls)
@@ -68,6 +112,7 @@ export async function updateFeatureRolloutControlAggregate(input: {
   reason: string;
   actor: string;
 }) {
+  await ensureDefaultFeatureRolloutControls();
   return db.transaction(async (transaction) => {
     const [control] = await transaction
       .select()
