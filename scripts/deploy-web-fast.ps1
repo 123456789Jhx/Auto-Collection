@@ -130,8 +130,8 @@ rsync -a --delete \
   --exclude='public/downloads/' \
   "$work_dir"/ "$deploy_dir"/
 cd "$deploy_dir"
-APP_PULL_POLICY=never docker compose --env-file "$env_file" -f "$compose_file" build web
-APP_PULL_POLICY=never docker compose --env-file "$env_file" -f "$compose_file" up -d --no-deps web
+APP_PULL_POLICY=never docker compose --env-file "$env_file" -f "$compose_file" build --no-cache web
+APP_PULL_POLICY=never docker compose --env-file "$env_file" -f "$compose_file" up -d --no-deps --force-recreate web
 docker compose --env-file "$env_file" -f "$compose_file" ps
 """
 

@@ -110,8 +110,8 @@ test("automation helper scripts cover submit deploy and USB apk install", () => 
   assert(/paramiko/.test(deploySource), "server deploy should use SSH automation");
   assert(/account-data-platform/.test(deploySource), "server deploy should target account-data-platform");
   assert(/docker compose/.test(deploySource), "server deploy should rebuild and restart compose services");
-  assert(/build web/.test(deploySource), "server deploy should rebuild only the web service");
-  assert(/up -d --no-deps web/.test(deploySource), "server deploy should restart only the web service");
+  assert(/build --no-cache web/.test(deploySource), "server deploy should force a fresh web image build");
+  assert(/up -d --no-deps --force-recreate web/.test(deploySource), "server deploy should force recreate only the web service");
   assert(/\/health/.test(deploySource) && /\/ready/.test(deploySource), "server deploy should verify health endpoints");
 
   assert(/adb devices/.test(installSource), "USB install should enumerate attached devices");
