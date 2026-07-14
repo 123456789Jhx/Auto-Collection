@@ -668,6 +668,10 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(start >= 0 && end > start, "douyin adapter must expose a product-card browsing phase");
   assert(body.indexOf("openCommerceCardSearch(searchKeyword)") >= 0, "browse phase must start from mall product-card search");
   assert(body.indexOf("clickCommerceKeywordCard(matchKeywords)") >= 0, "browse phase must open matching product cards");
+  assert(body.indexOf("clickCommerceRelatedProductCard(matchKeywords)") >= 0, "detail browse must continue through related product cards without relying on a heading");
+  assert(body.indexOf("hasCommerceRelatedProductList(detailText, matchKeywords, targetRoom, recommendationSignals)") >= 0, "detail browse must recognize product-card lists even when the related-products heading is absent");
+  assert(source.indexOf("textMatches(\"^(商品|店铺)$\")") < 0, "commerce search must not switch to the 店铺 tab when 商品 is unavailable");
+  assert(source.indexOf("textMatches(\"^(全部|综合)$\")") >= 0, "commerce search should keep usable 全部/综合 product-card results when 商品 tab is absent");
   assert(body.indexOf("liveWatchSeconds") >= 0, "commerce live card watch duration must be configurable");
   assert(body.indexOf("recoverCommerceCardSearch(searchKeyword") >= 0, "browse phase must recover when it leaves mall commerce context");
   assert(body.indexOf("options.pollControlCommands") >= 0, "browse phase must poll backend control commands during long waits");

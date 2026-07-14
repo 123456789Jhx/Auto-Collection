@@ -1184,8 +1184,10 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function clickCommerceResultTabIfVisible() {
     var tabNode =
-      autojsUtils.waitForElement(textMatches("^(商品|店铺)$"), 600, null, null) ||
-      autojsUtils.waitForElement(descMatches("^(商品|店铺)$"), 600, null, null);
+      autojsUtils.waitForElement(textMatches("^商品$"), 600, null, null) ||
+      autojsUtils.waitForElement(descMatches("^商品$"), 600, null, null) ||
+      autojsUtils.waitForElement(textMatches("^(全部|综合)$"), 600, null, null) ||
+      autojsUtils.waitForElement(descMatches("^(全部|综合)$"), 600, null, null);
     if (!tabNode) {
       return false;
     }
@@ -1380,6 +1382,69 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     autojsUtils.axisClick(best, logger);
     autojsUtils.sleepRandom(1800, 2600);
     return true;
+  }
+
+  function clickCommerceRelatedProductCard(matchKeywords) {
+    var keywordRegex = buildContainsRegex(matchKeywords);
+    if (!keywordRegex) {
+      return false;
+    }
+    var nodes = [];
+    pushFoundNodes(nodes, textMatches(keywordRegex));
+    pushFoundNodes(nodes, descMatches(keywordRegex));
+    var screen = autojsUtils.getScreenSize();
+    var best = null;
+    var bestScore = -1;
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var bounds = node && node.bounds && node.bounds();
+      if (!bounds) {
+        continue;
+      }
+      var centerY = bounds.centerY();
+      if (centerY < screen.height * 0.32 || centerY > screen.height * 0.88) {
+        continue;
+      }
+      var value = String((node.text && node.text()) || (node.desc && node.desc()) || "");
+      if (/进店逛逛|进店|客服|加购物车|领券购买|立即购买|专享价/.test(value)) {
+        continue;
+      }
+      var score = 10;
+      if (centerY > screen.height * 0.45) {
+        score += 8;
+      }
+      if (bounds.width && bounds.width() > screen.width * 0.16) {
+        score += 3;
+      }
+      if (node.clickable && node.clickable()) {
+        score += 3;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = node;
+      }
+    }
+    if (!best) {
+      return false;
+    }
+    logger.info("点击详情页后续商品卡片区域", {
+      bounds: autojsUtils.formatBounds(best.bounds && best.bounds()),
+      text: best.text && best.text(),
+      desc: best.desc && best.desc()
+    });
+    autojsUtils.axisClick(best, logger);
+    autojsUtils.sleepRandom(1800, 2600);
+    return true;
+  }
+
+  function hasCommerceRelatedProductList(detailText, matchKeywords, targetRoom, recommendationSignals) {
+    if (!hasTargetTextMatch(detailText, matchKeywords, targetRoom)) {
+      return false;
+    }
+    if (hasAnyTextKeyword(detailText, recommendationSignals)) {
+      return true;
+    }
+    return /¥|券后价|立减|已售|店铺|进店|包邮|现货|退货|发货/.test(String(detailText || ""));
   }
 
   function openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals, targetRoom) {
@@ -1623,9 +1688,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
           detailBrowsedCount < remainingCards &&
           Date.now() - detailStartedAt >= Math.min(60000, Math.floor(dwellSeconds * 500)) &&
           Date.now() + dwellSeconds * 1000 < hardEndAt &&
-          hasAnyTextKeyword(detailText, recommendationSignals) &&
-          hasTargetTextMatch(detailText, matchKeywords, targetRoom) &&
-          clickCommerceKeywordCard(matchKeywords)) {
+          hasCommerceRelatedProductList(detailText, matchKeywords, targetRoom, recommendationSignals) &&
+          clickCommerceRelatedProductCard(matchKeywords)) {
           recommendedClicks += 1;
           detailBrowsedCount += 1;
           detailStartedAt = Date.now();
