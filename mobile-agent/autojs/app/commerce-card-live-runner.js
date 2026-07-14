@@ -202,6 +202,19 @@ function createCommerceCardLiveRunner(context) {
     return false;
   }
 
+  function pollControlCommandsFromRunner(force) {
+    if (!controlLoop) {
+      return;
+    }
+    if (controlLoop.pollControlCommandsAsync) {
+      controlLoop.pollControlCommandsAsync(force === true);
+      return;
+    }
+    if (controlLoop.pollControlCommands) {
+      controlLoop.pollControlCommands(force === true);
+    }
+  }
+
   function persistCheckpoint(extra) {
     if (!taskScheduler || !taskScheduler.recordCheckpoint) {
       return;
@@ -1059,6 +1072,7 @@ function createCommerceCardLiveRunner(context) {
       source: options.source || "target_comment",
       restartBeforeScan: options.restartBeforeScan === true,
       enterLiveFeed: options.enterLiveFeed !== false,
+      pollControlCommands: pollControlCommandsFromRunner,
       shouldStop: shouldStop
     });
     var lastResult = douyin.getLastTargetLiveSearchResult ? douyin.getLastTargetLiveSearchResult() || {} : {};
@@ -1110,6 +1124,7 @@ function createCommerceCardLiveRunner(context) {
         cardCount: Math.max(1, Math.min(20, Math.ceil(cfg.productNurtureRoundMinutes * 60 / cfg.productCardDwellSeconds))),
         dwellSeconds: cfg.productCardDwellSeconds,
         liveWatchSeconds: commerceProductLiveWatchSeconds(cfg),
+        pollControlCommands: pollControlCommandsFromRunner,
         shouldStop: shouldStop
       }) || {};
       if (!result.success) {
@@ -1128,7 +1143,7 @@ function createCommerceCardLiveRunner(context) {
       var gateResult = openV2TargetLiveGate(cfg, workflow, {
         source: "product_nurture",
         restartBeforeScan: true,
-        maxCandidates: cfg.targetLiveMaxRoomsPerRefresh
+        maxCandidates: randomBetween(10, Math.min(20, Math.max(10, cfg.targetLiveMaxRoomsPerRefresh || 20)))
       });
       if (shouldStop()) {
         return { success: false, paused: counters.lastStopReason === "manual_pause", reason: counters.lastStopReason };
@@ -1162,14 +1177,24 @@ function createCommerceCardLiveRunner(context) {
       reportV2Event("product_target_not_found_round", "skipped", {
         stage: "product_nurture",
         reasonCode: "product_target_not_found",
-        retryable: roundIndex < cfg.productNurtureMaxRounds,
+        retryable: false,
         evidence: {
           cycleIndex: roundIndex,
-          maxRounds: cfg.productNurtureMaxRounds,
+          maxCandidates: gateResult.targetResult && gateResult.targetResult.maxCandidates || gateResult.maxCandidates || "",
           liveMissCount: v2State.liveMissCount,
           reason: gateResult.reason || "target_live_room_not_found"
         }
       });
+      reportV2Event("product_target_not_found", "failed", {
+        stage: "product_nurture",
+        reasonCode: "product_target_not_found",
+        evidence: {
+          cycleIndex: roundIndex,
+          liveMissCount: v2State.liveMissCount,
+          reason: gateResult.reason || "target_live_room_not_found"
+        }
+      });
+      return { success: false, reason: "product_target_not_found" };
     }
     reportV2Event("product_target_not_found", "failed", {
       stage: "product_nurture",

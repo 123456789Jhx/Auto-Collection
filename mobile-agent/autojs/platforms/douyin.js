@@ -1223,6 +1223,35 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return true;
   }
 
+  function isCommerceSearchOrDetailText(textValue) {
+    var textValueString = String(textValue || "");
+    if (/商品\s*评价\s*详情|客服|加购物车|立即购买|领券购买|去抢购/.test(textValueString)) {
+      return true;
+    }
+    if (/搜索/.test(textValueString) && /综合|销量|筛选|回头客|产地直供|好评多|商品/.test(textValueString)) {
+      return true;
+    }
+    return false;
+  }
+
+  function isCommerceVideoDriftText(textValue) {
+    var textValueString = String(textValue || "");
+    if (!/赞|评论|收藏|分享/.test(textValueString)) {
+      return false;
+    }
+    return /视频同款|发弹幕|发布时间|音乐|未点赞|喜欢赞/.test(textValueString) &&
+      !/商品\s*评价\s*详情|客服|加购物车|立即购买|领券购买/.test(textValueString);
+  }
+
+  function recoverCommerceCardSearch(searchKeyword, reason, textSample) {
+    logger.warn("商品卡浏览上下文偏离，重新进入商城搜索", {
+      reason: reason || "",
+      searchKeyword: searchKeyword || "",
+      textSample: String(textSample || "").slice(0, 180)
+    });
+    return openCommerceCardSearch(searchKeyword);
+  }
+
   function findCommerceLiveEntryNode(liveSignals) {
     var signalRegex = buildContainsRegex(liveSignals);
     if (!signalRegex) {
@@ -1481,6 +1510,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       };
     }
     function isInterrupted(source) {
+      if (options.pollControlCommands) {
+        options.pollControlCommands(false);
+      }
       if (!options.shouldStop || !options.shouldStop()) {
         return false;
       }
@@ -1604,6 +1636,29 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       }
       var visibleText = extractVisibleText();
       lastTextSample = visibleText.slice(0, 220);
+      if (isCommerceVideoDriftText(visibleText) || !isCommerceSearchOrDetailText(visibleText)) {
+        if (isInterrupted("commerce_browse_context_check_" + attempt)) {
+          return {
+            success: false,
+            reason: "manual_pause",
+            elapsedMs: Date.now() - startedAt,
+            attempt: attempt,
+            browsedCount: browsedCount
+          };
+        }
+        if (!recoverCommerceCardSearch(searchKeyword, "commerce_context_drift", visibleText)) {
+          return {
+            success: false,
+            reason: lastSearchFailureReason || "commerce_context_recover_failed",
+            elapsedMs: Date.now() - startedAt,
+            attempt: attempt,
+            browsedCount: browsedCount,
+            textSample: lastTextSample
+          };
+        }
+        visibleText = extractVisibleText();
+        lastTextSample = visibleText.slice(0, 220);
+      }
       var keywordMatched = hasTargetTextMatch(visibleText, matchKeywords, targetRoom);
       logger.info("commerce card browsing page", {
         attempt: attempt,
@@ -1781,6 +1836,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     var maxCandidates = Math.max(1, Number(options.maxCandidates || options.maxRooms || 25));
     var source = options.source || "live_feed_gate";
     function isInterrupted(sourceName) {
+      if (options.pollControlCommands) {
+        options.pollControlCommands(false);
+      }
       if (!options.shouldStop || !options.shouldStop()) {
         return false;
       }
