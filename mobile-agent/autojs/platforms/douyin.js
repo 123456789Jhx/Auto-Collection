@@ -1676,7 +1676,6 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       var detailEndAt = Math.min(hardEndAt, detailStartedAt + dwellSeconds * 1000);
       var detailBrowsedCount = 1;
       var openedLive = false;
-      var recommendedClicks = 0;
       var nextSwipeAt = detailStartedAt + 15000;
       var sample = "";
       while (Date.now() < detailEndAt && Date.now() < hardEndAt) {
@@ -1708,23 +1707,21 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
             autojsUtils.sleepRandom(700, 1100);
           }
         }
-        if (Date.now() >= nextSwipeAt && Date.now() + 1200 < detailEndAt) {
-          swipeSearchResultsUp();
-          nextSwipeAt = Date.now() + 15000;
-          continue;
-        }
-        if (recommendedClicks < 2 &&
-          detailBrowsedCount < remainingCards &&
-          Date.now() - detailStartedAt >= Math.min(60000, Math.floor(dwellSeconds * 500)) &&
+        if (detailBrowsedCount < remainingCards &&
+          Date.now() - detailStartedAt >= Math.min(15000, Math.floor(dwellSeconds * 300)) &&
           Date.now() + dwellSeconds * 1000 < hardEndAt &&
           hasCommerceRelatedProductList(detailText, matchKeywords, targetRoom, recommendationSignals) &&
           clickCommerceRelatedProductCard(matchKeywords)) {
-          recommendedClicks += 1;
           detailBrowsedCount += 1;
           detailStartedAt = Date.now();
           detailEndAt = Math.min(hardEndAt, detailStartedAt + dwellSeconds * 1000);
           nextSwipeAt = detailStartedAt + 15000;
           openedLive = false;
+          continue;
+        }
+        if (Date.now() >= nextSwipeAt && Date.now() + 1200 < detailEndAt) {
+          swipeSearchResultsUp();
+          nextSwipeAt = Date.now() + 15000;
           continue;
         }
         if (!sleepInterruptible(Math.min(1000, detailEndAt - Date.now()), "commerce_detail_wait_" + attempt)) {

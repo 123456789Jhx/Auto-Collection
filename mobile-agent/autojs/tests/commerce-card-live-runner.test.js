@@ -670,6 +670,8 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(body.indexOf("clickCommerceKeywordCard(matchKeywords)") >= 0, "browse phase must open matching product cards");
   assert(body.indexOf("clickCommerceRelatedProductCard(matchKeywords)") >= 0, "detail browse must continue through related product cards without relying on a heading");
   assert(body.indexOf("hasCommerceRelatedProductList(detailText, matchKeywords, targetRoom, recommendationSignals)") >= 0, "detail browse must recognize product-card lists even when the related-products heading is absent");
+  assert(body.indexOf("hasCommerceRelatedProductList(detailText, matchKeywords, targetRoom, recommendationSignals)") < body.indexOf("swipeSearchResultsUp();"), "detail browse must try related product cards before continuing to swipe or returning to search results");
+  assert.strictEqual(body.indexOf("recommendedClicks < 2"), -1, "detail browse must not stop after only two related product cards");
   assert(source.indexOf("textMatches(\"^(商品|店铺)$\")") < 0, "commerce search must not switch to the 店铺 tab when 商品 is unavailable");
   assert(source.indexOf("textMatches(\"^商品$\")") < 0, "commerce search must not leave 全部/综合 by switching to 商品 tab");
   assert(source.indexOf("descMatches(\"^商品$\")") < 0, "commerce search must not leave 全部/综合 by switching to 商品 desc tab");
