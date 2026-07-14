@@ -1185,9 +1185,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
   function clickCommerceResultTabIfVisible() {
     var tabNode =
       autojsUtils.waitForElement(textMatches("^全部$"), 600, null, null) ||
-      autojsUtils.waitForElement(descMatches("^全部$"), 600, null, null) ||
-      autojsUtils.waitForElement(textMatches("^综合$"), 600, null, null) ||
-      autojsUtils.waitForElement(descMatches("^综合$"), 600, null, null);
+      autojsUtils.waitForElement(descMatches("^全部$"), 600, null, null);
     if (!tabNode) {
       return false;
     }

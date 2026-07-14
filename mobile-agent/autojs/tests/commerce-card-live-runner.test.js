@@ -673,9 +673,8 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(source.indexOf("textMatches(\"^(商品|店铺)$\")") < 0, "commerce search must not switch to the 店铺 tab when 商品 is unavailable");
   assert(source.indexOf("textMatches(\"^商品$\")") < 0, "commerce search must not leave 全部/综合 by switching to 商品 tab");
   assert(source.indexOf("descMatches(\"^商品$\")") < 0, "commerce search must not leave 全部/综合 by switching to 商品 desc tab");
-  assert(source.indexOf("textMatches(\"^全部$\")") >= 0, "commerce search should prefer the 全部 product-card result flow");
-  assert(source.indexOf("textMatches(\"^综合$\")") >= 0, "commerce search should keep 综合 only as a fallback result flow");
-  assert(source.indexOf("textMatches(\"^全部$\")") < source.indexOf("textMatches(\"^综合$\")"), "commerce search must try 全部 before 综合");
+  assert(source.indexOf("textMatches(\"^全部$\")") >= 0, "commerce search should use the 全部 product-card result flow");
+  assert(source.indexOf("textMatches(\"^综合$\")") < 0, "commerce search must not switch to 综合 for product-card nurture");
   assert(source.indexOf("isCommerceProductCandidateNode(node)") >= 0, "commerce card clicks must verify product-card signals before clicking keyword nodes");
   assert(source.indexOf("相关搜索|大家都在搜|最近看过|评论") >= 0, "commerce card clicks must reject related-search, video, and comment nodes");
   assert(source.indexOf("¥|￥|券后价|到手价|已售") >= 0, "commerce card clicks must require commodity signals such as price or sales text");
