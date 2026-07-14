@@ -714,12 +714,13 @@ function testV2ProductNurtureUsesLiveFeedGateAndReusesRoom() {
   assert.strictEqual(browseCalls.length, 1);
   assert.strictEqual(browseCalls[0].dwellSeconds, 120);
   assert.strictEqual(browseCalls[0].liveWatchSeconds, 120);
+  assert.strictEqual(browseCalls[0].requireFullScan, true);
   assert.deepStrictEqual(browseCalls[0].recommendationSignals, ["recommended"]);
   assert.strictEqual(context._v2.liveFeedSearchCalls.length, 1);
   assert.strictEqual(context._v2.liveFeedSearchCalls[0].source, "product_nurture");
   assert.strictEqual(context._v2.liveFeedSearchCalls[0].restartBeforeScan, true);
-  assert(context._v2.liveFeedSearchCalls[0].maxCandidates >= 10);
-  assert(context._v2.liveFeedSearchCalls[0].maxCandidates <= 20);
+  assert(context._v2.liveFeedSearchCalls[0].maxCandidates >= 20);
+  assert(context._v2.liveFeedSearchCalls[0].maxCandidates <= 30);
   assert.strictEqual(typeof context._v2.liveFeedSearchCalls[0].pollControlCommands, "function");
   assert.strictEqual(context._v2.completedAssignments[0].state, "SUCCEEDED");
 }
@@ -747,8 +748,8 @@ function testV2ProductNurtureOnlyDoesNotSendComment() {
   assert.strictEqual(browseCalls.length, 1);
   assert.strictEqual(context._v2.liveFeedSearchCalls.length, 1);
   assert.strictEqual(context._v2.liveFeedSearchCalls[0].source, "product_nurture");
-  assert(context._v2.liveFeedSearchCalls[0].maxCandidates >= 10);
-  assert(context._v2.liveFeedSearchCalls[0].maxCandidates <= 20);
+  assert(context._v2.liveFeedSearchCalls[0].maxCandidates >= 20);
+  assert(context._v2.liveFeedSearchCalls[0].maxCandidates <= 30);
   assert.strictEqual(context.getExitCount(), 1);
   assert.strictEqual(context._v2.completedAssignments[0].state, "SUCCEEDED");
 }
@@ -777,8 +778,9 @@ function testV2ProductNurtureFailsWhenTargetNotFoundAfterRounds() {
 
   assert.strictEqual(result.success, false);
   assert.strictEqual(result.reason, "product_target_not_found");
-  assert.strictEqual(browseCount, 1);
+  assert.strictEqual(browseCount, 2);
   assert.strictEqual(context.comments.length, 0);
+  assert.strictEqual(context._v2.liveFeedSearchCalls.length, 2);
   assert.strictEqual(context._v2.completedAssignments[0].state, "FAILED");
 }
 

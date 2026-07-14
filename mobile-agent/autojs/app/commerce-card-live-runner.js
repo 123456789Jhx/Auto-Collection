@@ -1122,6 +1122,7 @@ function createCommerceCardLiveRunner(context) {
         targetRoom: cfg.targetRoom,
         scanMinutes: cfg.productNurtureRoundMinutes,
         cardCount: Math.max(1, Math.min(20, Math.ceil(cfg.productNurtureRoundMinutes * 60 / cfg.productCardDwellSeconds))),
+        requireFullScan: true,
         dwellSeconds: cfg.productCardDwellSeconds,
         liveWatchSeconds: commerceProductLiveWatchSeconds(cfg),
         pollControlCommands: pollControlCommandsFromRunner,
@@ -1143,7 +1144,7 @@ function createCommerceCardLiveRunner(context) {
       var gateResult = openV2TargetLiveGate(cfg, workflow, {
         source: "product_nurture",
         restartBeforeScan: true,
-        maxCandidates: randomBetween(10, Math.min(20, Math.max(10, cfg.targetLiveMaxRoomsPerRefresh || 20)))
+        maxCandidates: Math.max(20, Math.min(30, cfg.targetLiveMaxRoomsPerRefresh || 25))
       });
       if (shouldStop()) {
         return { success: false, paused: counters.lastStopReason === "manual_pause", reason: counters.lastStopReason };
@@ -1177,7 +1178,7 @@ function createCommerceCardLiveRunner(context) {
       reportV2Event("product_target_not_found_round", "skipped", {
         stage: "product_nurture",
         reasonCode: "product_target_not_found",
-        retryable: false,
+        retryable: roundIndex < cfg.productNurtureMaxRounds,
         evidence: {
           cycleIndex: roundIndex,
           maxCandidates: gateResult.targetResult && gateResult.targetResult.maxCandidates || gateResult.maxCandidates || "",
@@ -1185,6 +1186,9 @@ function createCommerceCardLiveRunner(context) {
           reason: gateResult.reason || "target_live_room_not_found"
         }
       });
+      if (roundIndex < cfg.productNurtureMaxRounds) {
+        continue;
+      }
       reportV2Event("product_target_not_found", "failed", {
         stage: "product_nurture",
         reasonCode: "product_target_not_found",

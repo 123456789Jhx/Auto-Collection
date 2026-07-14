@@ -1537,6 +1537,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     var targetRoom = options.targetRoom || {};
     var scanMinutes = Math.max(1, Number(options.scanMinutes || 15));
     var cardCount = Math.max(1, Number(options.cardCount || 4));
+    var requireFullScan = options.requireFullScan === true;
     var dwellSeconds = Math.max(1, Number(options.dwellSeconds || 120));
     var liveWatchSeconds = Math.max(1, Math.min(dwellSeconds, Number(options.liveWatchSeconds || dwellSeconds)));
     if (!searchKeyword) {
@@ -1659,7 +1660,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     var attempt = 0;
     var browsedCount = 0;
     var lastTextSample = "";
-    while (Date.now() < endAt && browsedCount < cardCount) {
+    while (Date.now() < endAt && (requireFullScan || browsedCount < cardCount)) {
       attempt += 1;
       if (isInterrupted("commerce_browse_attempt_" + attempt)) {
         return {
@@ -1704,7 +1705,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         textSample: visibleText.slice(0, 180)
       });
       if (keywordMatched && clickCommerceKeywordCard(matchKeywords)) {
-        var detailResult = browseOpenedCommerceDetail(attempt, endAt, cardCount - browsedCount);
+        var remainingCards = requireFullScan ? Math.max(1, cardCount - browsedCount) : cardCount - browsedCount;
+        var detailResult = browseOpenedCommerceDetail(attempt, endAt, remainingCards);
         browsedCount += Math.max(1, Number(detailResult.browsedCount || 1));
         lastTextSample = detailResult.textSample || lastTextSample;
         logger.info("commerce card detail browsed", {
@@ -1735,7 +1737,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
           browsedCount: browsedCount
         };
       }
-      if (browsedCount < cardCount) {
+      if (requireFullScan || browsedCount < cardCount) {
         swipeSearchResultsUp();
       }
     }
