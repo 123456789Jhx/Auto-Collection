@@ -1199,12 +1199,39 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return true;
   }
 
+  function tryReuseCommerceCardSearchResult(keyword, source) {
+    var visibleText = extractVisibleText();
+    if (!isSearchResultForKeyword(keyword, visibleText)) {
+      return false;
+    }
+    if (!isCommerceSearchOrDetailText(visibleText)) {
+      clickCommerceResultTabIfVisible();
+      visibleText = extractVisibleText();
+    }
+    if (!isCommerceSearchOrDetailText(visibleText)) {
+      return false;
+    }
+    activeSearchKeyword = keyword || activeSearchKeyword;
+    logger.info("reuse current commerce card search result", {
+      keyword: keyword,
+      source: source || "",
+      textSample: visibleText.slice(0, 180)
+    });
+    return true;
+  }
+
   function openCommerceCardSearch(keyword) {
     keyword = String(keyword || "").replace(/\s+/g, " ").trim();
     if (!keyword) {
       return false;
     }
+    if (tryReuseCommerceCardSearchResult(keyword, "before_enter_mall")) {
+      return true;
+    }
     if (!enterMall()) {
+      if (tryReuseCommerceCardSearchResult(keyword, "after_enter_mall_failed")) {
+        return true;
+      }
       return false;
     }
     if (!openSearch(keyword)) {

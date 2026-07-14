@@ -673,6 +673,8 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(body.indexOf("options.pollControlCommands") >= 0, "browse phase must poll backend control commands during long waits");
   assert(source.indexOf("销量|筛选|回头客|产地直供|好评多|直播") >= 0, "commerce result tabs like 综合/销量/直播/筛选 must be treated as valid commerce context");
   assert(source.indexOf("isCommerceSearchOrDetailText(textValueString)") >= 0, "valid commerce pages must not be treated as video drift");
+  assert(source.indexOf("tryReuseCommerceCardSearchResult(keyword, \"before_enter_mall\")") >= 0, "commerce search should reuse a restored target search result before looking for mall entry");
+  assert(source.indexOf("tryReuseCommerceCardSearchResult(keyword, \"after_enter_mall_failed\")") >= 0, "commerce search should reuse current target result when mall entry is unavailable");
   assert(source.indexOf("isSearchResultPageText(textSample) && clickCommerceResultTabIfVisible()") >= 0, "commerce context recovery should reuse the current search result page before reopening mall");
   assert.strictEqual(body.indexOf("sleepInterruptible(1800"), -1, "commerce live cards must not be a fixed short flash-open");
   assert.strictEqual(body.indexOf("openTargetLiveRoomFromSearch"), -1, "target live room search must stay outside the card browsing phase");
