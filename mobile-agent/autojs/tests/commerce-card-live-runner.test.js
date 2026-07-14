@@ -671,9 +671,22 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(body.indexOf("liveWatchSeconds") >= 0, "commerce live card watch duration must be configurable");
   assert(body.indexOf("recoverCommerceCardSearch(searchKeyword") >= 0, "browse phase must recover when it leaves mall commerce context");
   assert(body.indexOf("options.pollControlCommands") >= 0, "browse phase must poll backend control commands during long waits");
+  assert(source.indexOf("销量|筛选|回头客|产地直供|好评多|直播") >= 0, "commerce result tabs like 综合/销量/直播/筛选 must be treated as valid commerce context");
+  assert(source.indexOf("isCommerceSearchOrDetailText(textValueString)") >= 0, "valid commerce pages must not be treated as video drift");
+  assert(source.indexOf("isSearchResultPageText(textSample) && clickCommerceResultTabIfVisible()") >= 0, "commerce context recovery should reuse the current search result page before reopening mall");
   assert.strictEqual(body.indexOf("sleepInterruptible(1800"), -1, "commerce live cards must not be a fixed short flash-open");
   assert.strictEqual(body.indexOf("openTargetLiveRoomFromSearch"), -1, "target live room search must stay outside the card browsing phase");
   assert(source.indexOf("browseCommerceCards: browseCommerceCards") >= 0, "douyin adapter must export browseCommerceCards");
+}
+
+function testMobileLogsPreferVisibleStorage() {
+  var mainSource = fs.readFileSync(path.join(__dirname, "../main.module.js"), "utf8");
+  var watchdogSource = fs.readFileSync(path.join(__dirname, "../watchdog.js"), "utf8");
+
+  assert(mainSource.indexOf("/storage/emulated/0/燎原星火") >= 0, "main script should prefer visible internal storage for logs");
+  assert(mainSource.indexOf("ensureWritableDir(visibleBaseDir)") >= 0, "main script should verify visible log storage before using it");
+  assert(watchdogSource.indexOf("/storage/emulated/0/燎原星火") >= 0, "watchdog should use the same visible log storage resolver");
+  assert(watchdogSource.indexOf("ensureWritableDir(visibleBaseDir)") >= 0, "watchdog should verify visible log storage before using it");
 }
 
 function testV2ProductNurtureUsesLiveFeedGateAndReusesRoom() {
@@ -974,6 +987,7 @@ testCommerceCardLiveIsDisabledByDefault();
 testCommerceCardLiveRequiresExplicitSendApproval();
 testCollectorKeepsCommerceLiveSeparateFromOrdinaryLivePhase();
 testDouyinProvidesDedicatedCommerceCardBrowseAdapter();
+testMobileLogsPreferVisibleStorage();
 testV2ProductNurtureUsesLiveFeedGateAndReusesRoom();
 testV2ProductNurtureOnlyDoesNotSendComment();
 testV2ProductNurtureFailsWhenTargetNotFoundAfterRounds();

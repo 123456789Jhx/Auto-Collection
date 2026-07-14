@@ -1228,7 +1228,10 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     if (/商品\s*评价\s*详情|客服|加购物车|立即购买|领券购买|去抢购/.test(textValueString)) {
       return true;
     }
-    if (/搜索/.test(textValueString) && /综合|销量|筛选|回头客|产地直供|好评多|商品/.test(textValueString)) {
+    if (/搜索/.test(textValueString) && /综合/.test(textValueString) && /销量|筛选|回头客|产地直供|好评多|直播/.test(textValueString)) {
+      return true;
+    }
+    if (/综合/.test(textValueString) && /销量|筛选|好评多|直播/.test(textValueString)) {
       return true;
     }
     return false;
@@ -1236,6 +1239,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function isCommerceVideoDriftText(textValue) {
     var textValueString = String(textValue || "");
+    if (isCommerceSearchOrDetailText(textValueString)) {
+      return false;
+    }
     if (!/赞|评论|收藏|分享/.test(textValueString)) {
       return false;
     }
@@ -1249,6 +1255,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       searchKeyword: searchKeyword || "",
       textSample: String(textSample || "").slice(0, 180)
     });
+    if (isSearchResultPageText(textSample) && clickCommerceResultTabIfVisible()) {
+      return true;
+    }
     return openCommerceCardSearch(searchKeyword);
   }
 

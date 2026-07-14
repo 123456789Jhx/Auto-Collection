@@ -53,8 +53,41 @@ function localRequire(path) {
 
 var config = localRequire("config.js");
 config.runtime.scriptDir = SCRIPT_DIR;
+
+function ensureWritableDir(dirPath) {
+  try {
+    files.createWithDirs(files.join(dirPath, ".write-test"));
+    files.remove(files.join(dirPath, ".write-test"));
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function resolveOutputBaseDir() {
+  if (config.output.fixedBaseDir) {
+    return config.output.fixedBaseDir;
+  }
+  var folderName = config.output.folderName || "datasource";
+  var visibleRoots = [
+    "/storage/emulated/0/燎原星火",
+    "/sdcard/燎原星火",
+    "/storage/emulated/0/Download/燎原星火",
+    "/sdcard/Download/燎原星火",
+    "/storage/emulated/0/AgriVideoCollector",
+    "/sdcard/AgriVideoCollector"
+  ];
+  for (var i = 0; i < visibleRoots.length; i++) {
+    var visibleBaseDir = files.join(visibleRoots[i], folderName);
+    if (ensureWritableDir(visibleBaseDir)) {
+      return visibleBaseDir;
+    }
+  }
+  return files.join(SCRIPT_DIR, folderName);
+}
+
 if (config.output.useProjectDir) {
-  config.output.baseDir = config.output.fixedBaseDir || files.join(SCRIPT_DIR, config.output.folderName || "datasource");
+  config.output.baseDir = resolveOutputBaseDir();
   config.output.cacheDir = files.join(config.output.baseDir, "候选记录");
   config.output.screenshotDir = files.join(config.output.baseDir, "截图");
   config.output.logDir = files.join(config.output.baseDir, "运行日志");
