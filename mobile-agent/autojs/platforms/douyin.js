@@ -1184,8 +1184,6 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function clickCommerceResultTabIfVisible() {
     var tabNode =
-      autojsUtils.waitForElement(textMatches("^商品$"), 600, null, null) ||
-      autojsUtils.waitForElement(descMatches("^商品$"), 600, null, null) ||
       autojsUtils.waitForElement(textMatches("^(全部|综合)$"), 600, null, null) ||
       autojsUtils.waitForElement(descMatches("^(全部|综合)$"), 600, null, null);
     if (!tabNode) {
@@ -1603,6 +1601,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     var scanMinutes = Math.max(1, Number(options.scanMinutes || 15));
     var cardCount = Math.max(1, Number(options.cardCount || 4));
     var requireFullScan = options.requireFullScan === true;
+    var skipLiveCards = options.skipLiveCards === true;
     var dwellSeconds = Math.max(1, Number(options.dwellSeconds || 120));
     var liveWatchSeconds = Math.max(1, Math.min(dwellSeconds, Number(options.liveWatchSeconds || dwellSeconds)));
     if (!searchKeyword) {
@@ -1661,7 +1660,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         }
         var detailText = extractVisibleText();
         sample = detailText.slice(0, 220);
-        if (!openedLive && hasAnyTextKeyword(detailText, liveSignals) && openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals, targetRoom)) {
+        if (!skipLiveCards && !openedLive && hasAnyTextKeyword(detailText, liveSignals) && openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals, targetRoom)) {
           openedLive = true;
           var liveWatchMs = Math.min(liveWatchSeconds * 1000, Math.max(0, detailEndAt - Date.now()));
           if (liveWatchMs > 0 && !sleepInterruptible(liveWatchMs, "commerce_detail_live_watch_" + attempt)) {

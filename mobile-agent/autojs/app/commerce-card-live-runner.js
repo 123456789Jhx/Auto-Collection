@@ -1123,6 +1123,7 @@ function createCommerceCardLiveRunner(context) {
         scanMinutes: cfg.productNurtureRoundMinutes,
         cardCount: Math.max(1, Math.min(20, Math.ceil(cfg.productNurtureRoundMinutes * 60 / cfg.productCardDwellSeconds))),
         requireFullScan: true,
+        skipLiveCards: true,
         dwellSeconds: cfg.productCardDwellSeconds,
         liveWatchSeconds: commerceProductLiveWatchSeconds(cfg),
         pollControlCommands: pollControlCommandsFromRunner,
