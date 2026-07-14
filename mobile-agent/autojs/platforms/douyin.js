@@ -1184,8 +1184,10 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
 
   function clickCommerceResultTabIfVisible() {
     var tabNode =
-      autojsUtils.waitForElement(textMatches("^(全部|综合)$"), 600, null, null) ||
-      autojsUtils.waitForElement(descMatches("^(全部|综合)$"), 600, null, null);
+      autojsUtils.waitForElement(textMatches("^全部$"), 600, null, null) ||
+      autojsUtils.waitForElement(descMatches("^全部$"), 600, null, null) ||
+      autojsUtils.waitForElement(textMatches("^综合$"), 600, null, null) ||
+      autojsUtils.waitForElement(descMatches("^综合$"), 600, null, null);
     if (!tabNode) {
       return false;
     }
@@ -1253,6 +1255,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
   function isCommerceSearchOrDetailText(textValue) {
     var textValueString = String(textValue || "");
     if (/商品\s*评价\s*详情|客服|加购物车|立即购买|领券购买|去抢购/.test(textValueString)) {
+      return true;
+    }
+    if (/搜索/.test(textValueString) && /全部/.test(textValueString) && /综合|销量|筛选|回头客|产地直供|好评多|直播/.test(textValueString)) {
       return true;
     }
     if (/搜索/.test(textValueString) && /综合/.test(textValueString) && /销量|筛选|回头客|产地直供|好评多|直播/.test(textValueString)) {
@@ -1337,6 +1342,27 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return best;
   }
 
+  function isCommerceProductSignalText(value) {
+    return /¥|￥|券后价|到手价|已售|销量|立减|优惠|包邮|发货|现货|进店|店铺|购物车|领券|水果|新鲜|现摘|斤|箱|应季|产地/.test(String(value || ""));
+  }
+
+  function isCommerceNonProductCardText(value) {
+    return /相关搜索|大家都在搜|最近看过|评论\d*|相关推荐|关注|回复|首评|全屏观看|识别图片|#|@|发布时间|音乐|点赞|收藏|分享/.test(String(value || ""));
+  }
+
+  function isCommerceProductCandidateNode(node) {
+    if (!node) {
+      return false;
+    }
+    var ownText = getNodeOwnText(node);
+    var contextText = collectNodeContextText(node, 2);
+    var combinedText = [ownText, contextText].join("\n");
+    if (isCommerceNonProductCardText(ownText) || isCommerceNonProductCardText(contextText)) {
+      return false;
+    }
+    return isCommerceProductSignalText(ownText) || isCommerceProductSignalText(combinedText);
+  }
+
   function clickCommerceKeywordCard(matchKeywords) {
     var keywordRegex = buildContainsRegex(matchKeywords);
     if (!keywordRegex) {
@@ -1352,6 +1378,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       var node = nodes[i];
       var bounds = node && node.bounds && node.bounds();
       if (!bounds || !isTargetSearchBoundsAllowed(bounds, screen)) {
+        continue;
+      }
+      if (!isCommerceProductCandidateNode(node)) {
         continue;
       }
       var score = 10;
@@ -1404,7 +1433,10 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         continue;
       }
       var value = String((node.text && node.text()) || (node.desc && node.desc()) || "");
-      if (/进店逛逛|进店|客服|加购物车|领券购买|立即购买|专享价/.test(value)) {
+      if (/进店逛逛|客服|加购物车|领券购买|立即购买|专享价/.test(value)) {
+        continue;
+      }
+      if (!isCommerceProductCandidateNode(node)) {
         continue;
       }
       var score = 10;
