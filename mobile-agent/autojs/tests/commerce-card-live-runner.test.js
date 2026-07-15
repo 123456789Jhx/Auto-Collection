@@ -669,6 +669,8 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(body.indexOf("openCommerceCardSearch(searchKeyword)") >= 0, "browse phase must start from mall product-card search");
   assert(body.indexOf("clickCommerceKeywordCard(matchKeywords)") >= 0, "browse phase must open matching product cards");
   assert(body.indexOf("clickCommerceRelatedProductCard(matchKeywords, skippedRelatedBounds)") >= 0, "detail browse must continue through related product cards without relying on a heading");
+  assert(source.indexOf("findCommerceRelatedProductCardCandidate(node, keywordRegex, skippedBounds, screen)") >= 0, "related product clicks must promote keyword nodes to their product-card container");
+  assert(source.indexOf("isCommerceRelatedCardBoundsAllowed(bounds, screen)") >= 0, "related product clicks must reject oversized detail containers and tiny keyword fragments");
   assert(body.indexOf("buildCommerceDetailSignature(detailText)") >= 0, "detail browse must snapshot the current product detail before clicking a related card");
   assert(body.indexOf("afterRelatedSignature !== beforeRelatedSignature") >= 0, "detail browse must verify that a related-card click opened a different product before counting it");
   assert(body.indexOf("skippedRelatedBounds[relatedClick.bounds] = true") >= 0, "detail browse must skip a related-card bounds when clicking it does not navigate");
