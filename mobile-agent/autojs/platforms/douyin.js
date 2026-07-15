@@ -1671,14 +1671,15 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       }
       return true;
     }
-    function browseOpenedCommerceDetail(attempt, hardEndAt, remainingCards) {
+    function browseOpenedCommerceDetail(attempt, hardEndAt, remainingCards, stayUntilHardEnd) {
       var detailStartedAt = Date.now();
       var detailEndAt = Math.min(hardEndAt, detailStartedAt + dwellSeconds * 1000);
       var detailBrowsedCount = 1;
       var openedLive = false;
       var nextSwipeAt = detailStartedAt + 15000;
+      var extendedSearchLogged = false;
       var sample = "";
-      while (Date.now() < detailEndAt && Date.now() < hardEndAt) {
+      while (Date.now() < hardEndAt && (stayUntilHardEnd || detailBrowsedCount < remainingCards)) {
         if (isInterrupted("commerce_detail_browse_" + attempt)) {
           return {
             success: false,
@@ -1691,7 +1692,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         sample = detailText.slice(0, 220);
         if (!skipLiveCards && !openedLive && hasAnyTextKeyword(detailText, liveSignals) && openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals, targetRoom)) {
           openedLive = true;
-          var liveWatchMs = Math.min(liveWatchSeconds * 1000, Math.max(0, detailEndAt - Date.now()));
+          var liveWatchMs = Math.min(liveWatchSeconds * 1000, Math.max(0, Math.min(detailEndAt, hardEndAt) - Date.now()));
           if (liveWatchMs > 0 && !sleepInterruptible(liveWatchMs, "commerce_detail_live_watch_" + attempt)) {
             return {
               success: false,
@@ -1707,24 +1708,37 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
             autojsUtils.sleepRandom(700, 1100);
           }
         }
-        if (detailBrowsedCount < remainingCards &&
+        if ((stayUntilHardEnd || detailBrowsedCount < remainingCards) &&
           Date.now() - detailStartedAt >= Math.min(15000, Math.floor(dwellSeconds * 300)) &&
-          Date.now() + dwellSeconds * 1000 < hardEndAt &&
+          Date.now() + 15000 < hardEndAt &&
           hasCommerceRelatedProductList(detailText, matchKeywords, targetRoom, recommendationSignals) &&
           clickCommerceRelatedProductCard(matchKeywords)) {
           detailBrowsedCount += 1;
           detailStartedAt = Date.now();
           detailEndAt = Math.min(hardEndAt, detailStartedAt + dwellSeconds * 1000);
           nextSwipeAt = detailStartedAt + 15000;
+          extendedSearchLogged = false;
           openedLive = false;
           continue;
         }
-        if (Date.now() >= nextSwipeAt && Date.now() + 1200 < detailEndAt) {
+        if (Date.now() >= detailEndAt && Date.now() + 1200 < hardEndAt) {
+          if (!extendedSearchLogged) {
+            logger.info("商品详情页未点到后续商品卡，继续在详情页下滑查找", {
+              attempt: attempt,
+              browsedCount: detailBrowsedCount,
+              targetCount: remainingCards,
+              textSample: sample
+            });
+            extendedSearchLogged = true;
+          }
+          detailEndAt = Math.min(hardEndAt, Date.now() + 15000);
+        }
+        if (Date.now() >= nextSwipeAt && Date.now() + 1200 < hardEndAt) {
           swipeSearchResultsUp();
           nextSwipeAt = Date.now() + 15000;
           continue;
         }
-        if (!sleepInterruptible(Math.min(1000, detailEndAt - Date.now()), "commerce_detail_wait_" + attempt)) {
+        if (!sleepInterruptible(Math.min(1000, hardEndAt - Date.now()), "commerce_detail_wait_" + attempt)) {
           return {
             success: false,
             reason: "manual_pause",
@@ -1787,6 +1801,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         lastTextSample = visibleText.slice(0, 220);
       }
       var keywordMatched = hasTargetTextMatch(visibleText, matchKeywords, targetRoom);
+      var openedDetailThisAttempt = false;
       logger.info("commerce card browsing page", {
         attempt: attempt,
         browsedCount: browsedCount,
@@ -1796,7 +1811,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       });
       if (keywordMatched && clickCommerceKeywordCard(matchKeywords)) {
         var remainingCards = requireFullScan ? Math.max(1, cardCount - browsedCount) : cardCount - browsedCount;
-        var detailResult = browseOpenedCommerceDetail(attempt, endAt, remainingCards);
+        openedDetailThisAttempt = true;
+        var detailResult = browseOpenedCommerceDetail(attempt, endAt, remainingCards, requireFullScan);
         browsedCount += Math.max(1, Number(detailResult.browsedCount || 1));
         lastTextSample = detailResult.textSample || lastTextSample;
         logger.info("commerce card detail browsed", {
@@ -1815,8 +1831,6 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
             textSample: lastTextSample
           };
         }
-        back();
-        autojsUtils.sleepRandom(700, 1100);
       }
       if (isInterrupted("commerce_browse_before_swipe_" + attempt)) {
         return {
@@ -1827,7 +1841,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
           browsedCount: browsedCount
         };
       }
-      if (requireFullScan || browsedCount < cardCount) {
+      if (!openedDetailThisAttempt && (requireFullScan || browsedCount < cardCount)) {
         swipeSearchResultsUp();
       }
     }
