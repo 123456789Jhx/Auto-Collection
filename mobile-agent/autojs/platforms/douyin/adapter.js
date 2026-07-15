@@ -1205,7 +1205,7 @@
         isSearchResultForKeyword: isSearchResultForKeyword,
         isCommerceSearchOrDetailText: isCommerceSearchOrDetailText,
         isCommerceVideoDriftText: isCommerceVideoDriftText,
-        isSearchResultPageText: isSearchResultPageText,
+        isSearchResultPageText: isSearchResultPage,
         hasTargetTextMatch: hasTargetTextMatch,
         hasAnyTextKeyword: hasAnyTextKeyword,
         buildContainsRegex: buildContainsRegex,

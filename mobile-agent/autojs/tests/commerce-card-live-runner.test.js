@@ -714,6 +714,7 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(commerceCardBrowserSource.indexOf("tryReuseCommerceCardSearchResult(keyword, \"before_enter_mall\")") >= 0, "commerce search should reuse a restored target search result before looking for mall entry");
   assert(commerceCardBrowserSource.indexOf("tryReuseCommerceCardSearchResult(keyword, \"after_enter_mall_failed\")") >= 0, "commerce search should reuse current target result when mall entry is unavailable");
   assert(commerceCardBrowserSource.indexOf("context.isSearchResultPageText(textSample) && clickCommerceResultTabIfVisible()") >= 0, "commerce context recovery should reuse the current search result page before reopening mall");
+  assert(source.indexOf("isSearchResultPageText: isSearchResultPage") >= 0, "commerce browser context must bind search-result page detection to an existing adapter method");
   assert.strictEqual(body.indexOf("sleepInterruptible(1800"), -1, "commerce live cards must not be a fixed short flash-open");
   assert.strictEqual(body.indexOf("openTargetLiveRoomFromSearch"), -1, "target live room search must stay outside the card browsing phase");
   assert(runnerSource.indexOf("isV2TargetGateBusinessMiss(gateResult.reason)") >= 0, "product nurture should only continue to the next round for a real target-live miss");
