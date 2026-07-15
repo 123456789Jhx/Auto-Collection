@@ -1094,26 +1094,41 @@ function createCommerceCardLiveRunner(context) {
     });
   }
 
+  // V2 任务里的“商品卡养号”阶段入口。
+  // 这个方法不直接操作抖音 UI，而是负责：
+  // 1. 检查后台配置是否启用 product_nurture 阶段；
+  // 2. 从任务配置里取搜索词、商品关键词、推荐区信号、停留时长；
+  // 3. 调用 douyin.browseCommerceCards() 执行真实的商城搜索和商品卡浏览；
+  // 4. 浏览完成后再尝试进入目标直播间做门禁校验，为后续直播评论阶段准备上下文。
   function runV2ProductNurture(cfg, workflow) {
+    // enabledStages 来自后台任务配置；没启用时直接跳过，不算失败。
     if (cfg.enabledStages.indexOf("product_nurture") < 0) {
       return { success: true, skipped: true };
     }
+    // setV2Stage()/reportV2Event() 会更新本地状态并向后台上报阶段开始事件。
     setV2Stage("product_nurture");
     if (!reportV2Event("stage_product_nurture_started", "started", { stage: "product_nurture" })) {
       return { success: false, reason: counters.lastStopReason };
     }
+    // searchKeyword 是商城搜索框输入词；通常取 cfg.searchKeywords 的第一个。
     var searchKeyword = pickFirst(cfg.searchKeywords, []);
     if (!searchKeyword) {
       return { success: false, reason: "commerce_search_keyword_empty" };
     }
+    // productNurtureMaxRounds 控制最多跑几轮商品卡浏览；cycleIndex 会持久化，便于暂停恢复。
     for (var roundIndex = Number(v2State.cycleIndex || 0) + 1; roundIndex <= cfg.productNurtureMaxRounds; roundIndex++) {
       if (shouldStop()) {
         return { success: false, paused: counters.lastStopReason === "manual_pause", reason: counters.lastStopReason };
       }
       v2State.cycleIndex = roundIndex;
+      // checkpoint 写入本地/后台，记录当前轮即将开始商品浏览；失败通常表示暂停或上传失败。
       if (!persistV2Checkpoint("product_nurture", { cycleIndex: roundIndex, action: "before_product_browse" })) {
         return { success: false, reason: counters.lastStopReason };
       }
+      // 真实 UI 操作交给 douyin.browseCommerceCards()：
+      // - 先打开商城搜索 searchKeyword；
+      // - 在“全部”列表点击 matchKeywords 命中的商品卡；
+      // - 进入详情页后继续滑到推荐商品卡并循环点击。
       var result = douyin.browseCommerceCards({
         searchKeyword: searchKeyword,
         matchKeywords: cfg.matchKeywords,
@@ -1132,16 +1147,21 @@ function createCommerceCardLiveRunner(context) {
       if (!result.success) {
         return { success: false, reason: result.reason || "product_nurture_failed" };
       }
+      // browsedCount 是本轮实际浏览的商品卡数量；cardIndex 用于任务进度和日志。
       v2State.cardIndex += Number(result.browsedCount || 0);
+      // 用搜索词、轮次和页面文本样本做轻量指纹，避免保存完整商品标题/页面文本。
       v2State.browsedCardFingerprints.push(uploader.sha256Hex(searchKeyword + ":" + roundIndex + ":" + String(result.textSample || "").slice(0, 120)));
       if (v2State.browsedCardFingerprints.length > 200) {
         v2State.browsedCardFingerprints = v2State.browsedCardFingerprints.slice(-200);
       }
+      // 这里按配置时长累加活跃时间；不是精确秒表，主要用于后台阶段进度展示。
       v2State.stageActiveElapsedMs += cfg.productNurtureRoundMinutes * 60 * 1000;
       v2State.taskActiveElapsedMs += cfg.productNurtureRoundMinutes * 60 * 1000;
       if (!persistV2Checkpoint("product_nurture", { cycleIndex: roundIndex, browsedCount: result.browsedCount || 0 })) {
         return { success: false, reason: counters.lastStopReason };
       }
+      // 商品卡养号结束后，重新扫描目标直播间。
+      // 只有目标直播间验证成功，才结束本阶段并把上下文交给后续直播评论阶段。
       var gateResult = openV2TargetLiveGate(cfg, workflow, {
         source: "product_nurture",
         restartBeforeScan: true,
@@ -1153,6 +1173,7 @@ function createCommerceCardLiveRunner(context) {
       if (gateResult.success) {
         var roomKey = stableTargetRoomKey(workflow, gateResult);
         v2State.currentRoomKey = roomKey;
+        // targetFingerprint 用目标码、房间名、主播名和页面样本生成，避免保存过多原始文本。
         v2State.targetFingerprint = uploader.sha256Hex([
           workflow.selectedTarget.targetCode,
           gateResult.roomName || "",
@@ -1168,6 +1189,7 @@ function createCommerceCardLiveRunner(context) {
         });
         return { success: true, targetGate: gateResult };
       }
+      // 这一轮商品卡浏览完成，但没有找到/验证目标直播间；记录失败次数，下一轮继续尝试。
       v2State.liveMissCount += 1;
       if (!persistV2Checkpoint("product_nurture", {
         cycleIndex: roundIndex,

@@ -1,11 +1,11 @@
 ﻿function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedScreenRecognizer, injectedLiveTargetMatcher) {
   var autojsUtils = require(files.join(config.runtime.scriptDir, "utils/autojs-utils.js"));
-  var liveCardGeometry = require(files.join(config.runtime.scriptDir, "platforms/live-card-geometry.js"));
+  var liveCardGeometry = require(files.join(config.runtime.scriptDir, "platforms/douyin/live-card-geometry.js"));
   var createScreenRecognizer = require(files.join(config.runtime.scriptDir, "core/screen-recognizer.js")).createScreenRecognizer;
   var liveTargetMatcher = injectedLiveTargetMatcher || require(files.join(config.runtime.scriptDir, "domain/live-target-matcher.js"));
-  var commerceCardDetector = require(files.join(config.runtime.scriptDir, "domain/commerce-card/candidate-detector.js"));
-  var commerceCardSignature = require(files.join(config.runtime.scriptDir, "domain/commerce-card/card-signature.js"));
-  var createDouyinCommerceCardBrowser = require(files.join(config.runtime.scriptDir, "platforms/douyin-commerce-card-browser.js")).createDouyinCommerceCardBrowser;
+  var commerceCardDetector = require(files.join(config.runtime.scriptDir, "platforms/douyin/commerce-card/candidate-detector.js"));
+  var commerceCardSignature = require(files.join(config.runtime.scriptDir, "platforms/douyin/commerce-card/card-signature.js"));
+  var createDouyinCommerceCardBrowser = require(files.join(config.runtime.scriptDir, "platforms/douyin/commerce-card-browser.js")).createDouyinCommerceCardBrowser;
   var packageName = "com.ss.android.ugc.aweme";
   var activeSearchKeyword = "";
   var lastSearchFailureReason = "";

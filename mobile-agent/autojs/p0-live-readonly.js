@@ -55,7 +55,7 @@ if (config.output.useProjectDir) {
 }
 
 var createLogger = localRequire("core/logger.js").createLogger;
-var createDouyinAdapter = localRequire("platforms/douyin.js").createDouyinAdapter;
+var createDouyinAdapter = localRequire("platforms/douyin/adapter.js").createDouyinAdapter;
 var createLiveRoomDetector = localRequire("domain/live-room-detector.js").createLiveRoomDetector;
 var createLiveCommentReader = localRequire("domain/live-comment-reader.js").createLiveCommentReader;
 var createLiveCommentReadonlyProbe = localRequire("domain/live-comment-readonly-probe.js").createLiveCommentReadonlyProbe;

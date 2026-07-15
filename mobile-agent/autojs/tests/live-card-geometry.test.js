@@ -1,5 +1,5 @@
 const assert = require("assert");
-const geometry = require("../platforms/live-card-geometry.js");
+const geometry = require("../platforms/douyin/live-card-geometry.js");
 
 function rect(left, top, right, bottom) {
   return {

@@ -1,7 +1,7 @@
 var assert = require("assert");
 var fs = require("fs");
 var path = require("path");
-var createCommerceCardLiveRunner = require("../app/commerce-card-live-runner.js").createCommerceCardLiveRunner;
+var createCommerceCardLiveRunner = require("../features/commerce-card-live/runner.js").createCommerceCardLiveRunner;
 
 function createLogger(logs) {
   return {
@@ -660,9 +660,9 @@ function testCollectorKeepsCommerceLiveSeparateFromOrdinaryLivePhase() {
 }
 
 function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
-  var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin.js"), "utf8");
-  var commerceCardBrowserSource = fs.readFileSync(path.join(__dirname, "../platforms/douyin-commerce-card-browser.js"), "utf8");
-  var commerceCardDetectorSource = fs.readFileSync(path.join(__dirname, "../domain/commerce-card/candidate-detector.js"), "utf8");
+  var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin/adapter.js"), "utf8");
+  var commerceCardBrowserSource = fs.readFileSync(path.join(__dirname, "../platforms/douyin/commerce-card-browser.js"), "utf8");
+  var commerceCardDetectorSource = fs.readFileSync(path.join(__dirname, "../platforms/douyin/commerce-card/candidate-detector.js"), "utf8");
   var commerceCardSource = source + "\n" + commerceCardBrowserSource + "\n" + commerceCardDetectorSource;
   var start = commerceCardBrowserSource.indexOf("function browseCommerceCards(options)");
   var end = commerceCardBrowserSource.indexOf("\n  return {\n    openCommerceCardSearch", start);

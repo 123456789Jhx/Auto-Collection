@@ -1,7 +1,7 @@
 var assert = require("assert");
 var fs = require("fs");
 var path = require("path");
-var createLiveCommentRunner = require("../app/live-comment-runner.js").createLiveCommentRunner;
+var createLiveCommentRunner = require("../features/live-comment/runner.js").createLiveCommentRunner;
 var createLiveRoomSampler = require("../domain/live-room-sampler.js").createLiveRoomSampler;
 var riskDetector = require("../domain/risk-detector.js");
 
@@ -169,7 +169,7 @@ function testCollectorDoesNotRouteLiveCommentThroughLivePhase() {
 }
 
 function testTargetUserLiveEntryPrecedesGenericLiveBadgeCard() {
-  var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin.js"), "utf8");
+  var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin/adapter.js"), "utf8");
   var start = source.indexOf("function openTargetLiveRoomFromSearch(options)");
   var end = source.indexOf("function clickTargetUserLiveEntryFromSearch", start);
   var body = source.slice(start, end);
@@ -186,7 +186,7 @@ function testTargetUserLiveEntryPrecedesGenericLiveBadgeCard() {
 }
 
 function testKeywordUserLiveEntryPrecedesGenericLiveBadgeCard() {
-  var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin.js"), "utf8");
+  var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin/adapter.js"), "utf8");
   var start = source.indexOf("function openTargetLiveRoomFromSearch(options)");
   var end = source.indexOf("function clickTargetUserLiveEntryFromSearch", start);
   var body = source.slice(start, end);
@@ -203,7 +203,7 @@ function testKeywordUserLiveEntryPrecedesGenericLiveBadgeCard() {
 }
 
 function testSearchKeywordVisibilityReadsInputNodeText() {
-  var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin.js"), "utf8");
+  var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin/adapter.js"), "utf8");
   var start = source.indexOf("function isSearchKeywordVisible(keyword)");
   var end = source.indexOf("function isSearchResultForKeyword", start);
   var body = source.slice(start, end);
