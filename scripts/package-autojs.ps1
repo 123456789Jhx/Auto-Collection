@@ -108,7 +108,22 @@ if (Test-Path $manifestPath) {
   Remove-Item -LiteralPath $manifestPath -Force
 }
 
-Compress-Archive -Path (Join-Path $stageRoot "AgriVideoCollector") -DestinationPath $zipPath -Force
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zipArchive = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Create)
+try {
+  Get-ChildItem -LiteralPath $stageDir -Recurse -File | ForEach-Object {
+    $entryName = $_.FullName.Substring($stageRoot.Length).TrimStart("\", "/").Replace("\", "/")
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+      $zipArchive,
+      $_.FullName,
+      $entryName,
+      [System.IO.Compression.CompressionLevel]::Optimal
+    ) | Out-Null
+  }
+} finally {
+  $zipArchive.Dispose()
+}
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
 $fileName = Split-Path -Leaf $zipPath
 Set-Content -LiteralPath $shaPath -Encoding ASCII -Value "$hash  $fileName"

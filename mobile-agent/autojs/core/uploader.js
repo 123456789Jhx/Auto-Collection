@@ -1070,13 +1070,19 @@ function createUploader(config, logger, storage) {
           throw new Error("unsafe zip entry: " + entryName);
         }
         var outputPath = files.join(targetDir, entryName);
-        if (entry.isDirectory()) {
+        if (entry.isDirectory() || /\/$/.test(entryName)) {
           ensureDir(outputPath);
         } else {
           var outputFile = new java.io.File(outputPath);
           var parent = outputFile.getParentFile();
+          if (parent && parent.exists() && !parent.isDirectory()) {
+            deletePath(String(parent.getAbsolutePath()));
+          }
           if (parent && !parent.exists()) {
             parent.mkdirs();
+          }
+          if (outputFile.exists() && outputFile.isDirectory()) {
+            deletePath(outputPath);
           }
           var output = new java.io.BufferedOutputStream(new java.io.FileOutputStream(outputFile));
           try {
