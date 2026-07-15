@@ -134,8 +134,8 @@ const stageOptions: Array<{ value: CommerceCardWorkflowStage; label: string }> =
 ];
 
 const capabilityOptions = [
-  { value: "workflow_v2", label: "组合流程 V2" },
-  { value: "checkpoint_v2", label: "检查点 V2" },
+  { value: "workflow_v2", label: "商品卡养号流程" },
+  { value: "checkpoint_v2", label: "断点续跑" },
   { value: "pause_resume", label: "原任务暂停恢复" },
   { value: "stable_room_key", label: "稳定直播间标识" },
   { value: "idempotent_comment", label: "评论幂等" },
@@ -169,7 +169,7 @@ function aliasesToText(aliases?: LiveTargetAlias[]) {
 }
 
 function featureTitle(featureType: LiveTargetFeatureType) {
-  return featureType === "commerce_card_live_comment" ? "商品卡组合任务" : "搜索直播评论";
+  return featureType === "commerce_card_live_comment" ? "商品卡养号" : "搜索直播评论";
 }
 
 function numberValue(value: unknown, fallback: number) {
@@ -523,7 +523,7 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
       <div className="ops-topbar">
         <div>
           <h1>直播目标配置</h1>
-          <p>维护目标身份、组合任务阶段、设备范围和运行门禁。</p>
+          <p>维护目标身份、商品卡养号与目标直播评论阶段、设备范围和运行门禁。</p>
         </div>
         <div className="ops-toolbar">
           <Button icon={<ReloadOutlined />} onClick={() => void Promise.all([targetQuery.refetch(), rolloutQuery.refetch(), approvalQuery.refetch()])}>刷新</Button>
@@ -563,7 +563,7 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
                       <Space wrap>
                         {target.featureConfigs?.map((item) => (
                           <Tag key={item.featureType} color={item.configValidationError ? "red" : item.enabled ? "blue" : "default"}>
-                            {featureTitle(item.featureType)}{item.storedWorkflowVersion === 2 ? " V2" : ""}
+                            {featureTitle(item.featureType)}
                           </Tag>
                         ))}
                       </Space>
@@ -616,7 +616,7 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
                 },
                 {
                   key: "commerce_card_live_comment",
-                  label: "商品卡组合任务",
+                  label: "商品卡养号",
                   children: (
                     <>
                       <FeatureForm form={commerceForm} featureType="commerce_card_live_comment" loading={featureMutation.isPending} onSave={(values) => saveFeature("commerce_card_live_comment", values)} />
@@ -653,7 +653,7 @@ export function LiveTargetsPage({ embedded = false, activeTab }: { embedded?: bo
                       <Alert type="info" showIcon message="未指定设备时仅作为公共候选；指定后只对所选设备可用。" style={{ marginBottom: 12 }} />
                       <div className="workflow-field-grid two-columns">
                         <Form.Item label="绑定功能" name="featureType">
-                          <Select options={[{ value: "live_comment", label: "搜索直播评论" }, { value: "commerce_card_live_comment", label: "商品卡组合任务" }]} />
+                          <Select options={[{ value: "live_comment", label: "搜索直播评论" }, { value: "commerce_card_live_comment", label: "商品卡养号" }]} />
                         </Form.Item>
                         <Form.Item label="公共候选" name="defaultEnabled" valuePropName="checked"><Switch /></Form.Item>
                       </div>
@@ -901,7 +901,7 @@ function RolloutControlForm({
   onSave: (featureKey: FeatureRolloutKey, payload: FeatureRolloutControlUpdate) => void;
 }) {
   const [form] = Form.useForm<RolloutFormValues>();
-  const title = control.featureKey === "commerce_card_workflow_v2" ? "组合流程 V2" : "真实评论";
+  const title = control.featureKey === "commerce_card_workflow_v2" ? "商品卡养号流程" : "真实评论";
   return (
     <Form<RolloutFormValues>
       form={form}
@@ -950,10 +950,10 @@ function RolloutControlForm({
 
 function CommercePreview({ preview, loading, error }: { preview?: CommerceCardFeaturePreview; loading: boolean; error: string | null }) {
   if (loading) return <Skeleton active paragraph={{ rows: 3 }} />;
-  if (!preview) return <Alert type={error ? "warning" : "info"} showIcon message={error || "保存商品卡组合任务后生成 V2 预览"} />;
+  if (!preview) return <Alert type={error ? "warning" : "info"} showIcon message={error || "保存商品卡养号配置后生成预览"} />;
   return (
     <div className="commerce-preview-band">
-      <div className="commerce-preview-heading"><strong>配置预览</strong><Tag color="blue">V2</Tag><Tag>{preview.rollout.enabled ? "门禁开启" : "门禁关闭"}</Tag></div>
+      <div className="commerce-preview-heading"><strong>配置预览</strong><Tag>{preview.rollout.enabled ? "门禁开启" : "门禁关闭"}</Tag></div>
       <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }}>
         <Descriptions.Item label="配置来源">直播目标中心</Descriptions.Item>
         <Descriptions.Item label="配置版本">第 {preview.revision} 版</Descriptions.Item>

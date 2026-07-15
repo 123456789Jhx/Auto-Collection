@@ -230,7 +230,7 @@ export const createTaskAssignmentSchema = z
   .superRefine((value, context) => {
     if (value.commandType === "START" && value.workflowVersion === 2) {
       if (value.taskType !== "commerce_card_live_comment") {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: "V2 只支持商品卡组合任务", path: ["taskType"] });
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "该工作流只支持商品卡养号", path: ["taskType"] });
       }
     }
     if (value.commandType !== "START") {

@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Dropdown, Form, Input, InputNumber, Modal, Popconfirm, Select, Skeleton, Space, Switch, message } from "antd";
 import { useState } from "react";
 import { createMobileCommand, getDeviceTaskConfig, getDevices, updateDevice, updateDeviceTaskConfig } from "../lib/api-client";
-import { deviceDisplayName, deviceSubTitle, statusText } from "../lib/display-maps";
+import { deviceDisplayName, deviceSubTitle, normalizeTaskDisplayText, statusText } from "../lib/display-maps";
 import { defaultLiveCommentBotConfig, parseLiveCommentConfig, parseP3ExtensionsConfig, stringifyLiveCommentConfig, stringifyP3ExtensionsConfig } from "../lib/live-comment-config";
 
 type DeviceRow = {
@@ -115,8 +115,8 @@ function taskText(value?: string | null) {
   if (value === "video") return "视频";
   if (value === "live") return "直播";
   if (value === "live_comment") return "搜索直播间评论";
-  if (value === "commerce_card_live_comment") return "商品卡直播评论";
-  return "待命";
+  if (value === "commerce_card_live_comment") return "商品卡养号";
+  return value ? normalizeTaskDisplayText(value) : "待命";
 }
 
 function statusTone(value?: string | null) {

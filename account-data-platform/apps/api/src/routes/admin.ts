@@ -216,10 +216,10 @@ adminRoutes.get("/live-targets/:id/feature-configs/commerce-card/preview", async
     getFeatureRolloutControl("commerce_card_workflow_v2")
   ]);
   if (!preview) {
-    return c.json({ error: { code: "COMMERCE_CARD_FEATURE_NOT_FOUND", message: "商品卡组合任务配置不存在", details: {} } }, 404);
+    return c.json({ error: { code: "COMMERCE_CARD_FEATURE_NOT_FOUND", message: "商品卡养号配置不存在", details: {} } }, 404);
   }
   if (!rollout) {
-    return c.json({ error: { code: "FEATURE_ROLLOUT_CONTROL_NOT_FOUND", message: "V2 运行门禁尚未初始化", details: {} } }, 503);
+    return c.json({ error: { code: "FEATURE_ROLLOUT_CONTROL_NOT_FOUND", message: "商品卡养号运行门禁尚未初始化", details: {} } }, 503);
   }
   return c.json({
     source: "target_center_v2" as const,
@@ -265,7 +265,7 @@ adminRoutes.post("/task-assignments/:id/commands", async (c) => {
     return c.json(await createTaskAssignmentCommandFromAdmin(c.req.param("id"), parsed.data), 201);
   } catch (error) {
     if (error instanceof FeatureRolloutRejectedError) {
-      return c.json({ error: { code: error.message, message: "当前设备不满足商品卡 V2 恢复条件", details: { reasons: error.reasons } } }, 409);
+      return c.json({ error: { code: error.message, message: "当前设备不满足商品卡养号恢复条件", details: { reasons: error.reasons } } }, 409);
     }
     return assignmentRuntimeErrorResponse(c, error);
   }
@@ -279,7 +279,7 @@ adminRoutes.post("/task-assignments", async (c) => {
     return c.json(await createTaskAssignmentFromAdmin(parsed.data), 201);
   } catch (error) {
     if (error instanceof FeatureRolloutRejectedError) {
-      return c.json({ error: { code: error.message, message: "当前设备不满足商品卡 V2 启动条件", details: { reasons: error.reasons } } }, 409);
+      return c.json({ error: { code: error.message, message: "当前设备不满足商品卡养号启动条件", details: { reasons: error.reasons } } }, 409);
     }
     return assignmentRuntimeErrorResponse(c, error);
   }

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createTaskAssignmentSchema, featureRolloutControlUpdateSchema, mobileHeartbeatSchema } from "@pkg/types";
 
 describe("task assignment types", () => {
-  test("商品卡直播评论使用独立任务类型", () => {
+  test("商品卡养号使用独立任务类型", () => {
     const parsed = createTaskAssignmentSchema.safeParse({
       deviceId: "device-001",
       taskType: "commerce_card_live_comment",
@@ -13,7 +13,7 @@ describe("task assignment types", () => {
     expect(parsed.success).toBe(true);
   });
 
-  test("商品卡 V2 启动可以携带阶段启动模式", () => {
+  test("商品卡养号启动可以携带阶段启动模式", () => {
     const parsed = createTaskAssignmentSchema.safeParse({
       deviceId: "device-001",
       taskType: "commerce_card_live_comment",

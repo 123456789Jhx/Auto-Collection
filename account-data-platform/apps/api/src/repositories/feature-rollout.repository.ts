@@ -22,7 +22,7 @@ const defaultFeatureRolloutControls: DefaultFeatureRolloutControl[] = [
     minAppVersion: "1.0.41",
     requiredCapabilitiesJson: ["workflow_v2", "checkpoint_v2", "pause_resume", "stable_room_key"],
     capabilityTtlSeconds: 600,
-    reason: "商品卡 V2 工作流已完成启动链路收敛，默认允许具备 V2 能力的 1.0.41+ 设备启动。"
+    reason: "商品卡养号启动链路已收敛，默认允许具备运行能力的 1.0.41+ 设备启动。"
   },
   {
     featureKey: "commerce_card_real_comment",

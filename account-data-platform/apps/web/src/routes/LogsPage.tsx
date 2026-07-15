@@ -4,7 +4,7 @@ import { Alert, Button, Empty, Input, Select, Skeleton, message } from "antd";
 import { useMemo, useState } from "react";
 import { createMobileCommand, getLogDates, getLogDeviceSummary, getLogFileDetail, getLogFiles, getLogs } from "../lib/api-client";
 import { deviceDisplayName, deviceSubTitle } from "../lib/display-maps";
-import { levelText, statusText, stopReasonText } from "../lib/display-maps";
+import { levelText, normalizeTaskDisplayText, statusText, stopReasonText } from "../lib/display-maps";
 
 type LogDeviceSummary = {
   deviceCode?: string;
@@ -124,7 +124,33 @@ function dayBoundary(value?: string) {
 function reasonText(log: RuntimeLog) {
   const context = log.contextJson || {};
   const reason = log.stopReason || String(context.reason || context.message || context.error || "");
-  return reason ? stopReasonText(reason) : "-";
+  return reason ? normalizeTaskDisplayText(stopReasonText(reason)) : "-";
+}
+
+function commerceLogPhase(log: RuntimeLog) {
+  const context = log.contextJson || {};
+  return String(context.phase || context.sceneType || context.currentTask || "");
+}
+
+function isTargetCommentCommercePhase(phase: string) {
+  return [
+    "commerce_card_live_before_comment",
+    "commerce_card_live_comment_send",
+    "commerce_card_live_comment_result"
+  ].includes(phase);
+}
+
+function normalizeRuntimeLogMessage(log: RuntimeLog) {
+  const message = log.message || "";
+  if (!message) return "";
+  if (isTargetCommentCommercePhase(commerceLogPhase(log))) {
+    return message
+      .replace(/商品卡直播评论/g, "目标直播评论")
+      .replace(/目标直播间评论（商品卡片养号）/g, "目标直播评论")
+      .replace(/目标直播间评论/g, "目标直播评论")
+      .replace(/目标评论/g, "目标直播评论");
+  }
+  return normalizeTaskDisplayText(message);
 }
 
 function phaseText(log: RuntimeLog) {
@@ -137,17 +163,17 @@ function phaseText(log: RuntimeLog) {
     live_readonly: "直播采集",
     live_comment_task_start: "搜索直播间评论启动",
     live_comment_target_search: "搜索目标直播间",
-    commerce_card_live_start: "商品卡直播评论启动",
-    commerce_card_live_task_start: "商品卡直播评论启动",
-    commerce_card_live_config: "商品卡直播评论配置",
+    commerce_card_live_start: "商品卡养号启动",
+    commerce_card_live_task_start: "商品卡养号启动",
+    commerce_card_live_config: "商品卡养号配置",
     commerce_card_scan_start: "商品卡扫描",
     commerce_card_live_before_scan: "商品卡扫描",
-    commerce_card_live_before_comment: "商品卡直播评论",
-    commerce_card_live_comment: "商品卡直播评论",
-    commerce_card_live_comment_send: "商品卡直播评论发送",
-    commerce_card_live_comment_result: "商品卡直播评论结果",
-    commerce_card_live_watch: "商品卡直播观看",
-    commerce_card_live_finish: "商品卡直播评论完成",
+    commerce_card_live_before_comment: "目标直播评论",
+    commerce_card_live_comment: "商品卡养号",
+    commerce_card_live_comment_send: "目标直播评论发送",
+    commerce_card_live_comment_result: "目标直播评论结果",
+    commerce_card_live_watch: "目标直播评论观看",
+    commerce_card_live_finish: "商品卡养号完成",
     task_switch: "任务切换",
     search: "搜索入口",
     search_open: "搜索入口",
@@ -159,26 +185,29 @@ function phaseText(log: RuntimeLog) {
   if (phase === "video") return "视频采集";
   if (phase === "live") return "直播采集";
   if (phase === "live_comment") return "搜索直播间评论";
-  if (phase === "commerce_card_live_comment") return "商品卡直播评论";
+  if (phase === "commerce_card_live_comment") return "商品卡养号";
   if (phase) return "运行事件";
-  if (/直播评论/.test(log.message || "")) return "直播评论";
-  if (/直播/.test(log.message || "")) return "直播采集";
-  if (/视频/.test(log.message || "")) return "视频采集";
-  if (/心跳/.test(log.message || "")) return "手机状态上报";
-  if (/上传|同步/.test(log.message || "")) return "完整日志同步";
-  if (/搜索/.test(log.message || "")) return "搜索入口";
+  const message = normalizeRuntimeLogMessage(log);
+  if (/商品卡养号/.test(message)) return "商品卡养号";
+  if (/目标直播评论/.test(message)) return "目标直播评论";
+  if (/直播评论/.test(message)) return "直播评论";
+  if (/直播/.test(message)) return "直播采集";
+  if (/视频/.test(message)) return "视频采集";
+  if (/心跳/.test(message)) return "手机状态上报";
+  if (/上传|同步/.test(message)) return "完整日志同步";
+  if (/搜索/.test(message)) return "搜索入口";
   return "-";
 }
 
 function eventStatus(log: RuntimeLog) {
   if (log.level === "ERROR") return { text: "异常", kind: "error" };
   if (log.level === "WARN") return { text: "需要关注", kind: "warn" };
-  if (/成功|完成|已执行|已应用|结束|上传完成|写入/.test(log.message || "")) return { text: "已完成", kind: "ok" };
+  if (/成功|完成|已执行|已应用|结束|上传完成|写入/.test(normalizeRuntimeLogMessage(log))) return { text: "已完成", kind: "ok" };
   return { text: "正常", kind: "info" };
 }
 
 function eventTitle(log: RuntimeLog) {
-  const message = log.message || "";
+  const message = normalizeRuntimeLogMessage(log);
   const context = log.contextJson || {};
   const reason = String(context.reason || log.stopReason || "");
   if (/candidate_upload|候选/.test(message) || reason === "candidate_upload") return "候选采集结果已上传到后台";
@@ -200,7 +229,9 @@ function eventSub(log: RuntimeLog) {
 function involvedText(log: RuntimeLog) {
   const context = log.contextJson || {};
   const value = context.keyword || context.searchKeyword || context.targetRoom || context.roomName || context.anchorName || context.taskType;
-  return value ? String(value) : "无";
+  if (value === "commerce_card_live_comment") return "商品卡养号";
+  if (value === "live_comment") return "搜索直播间评论";
+  return value ? normalizeTaskDisplayText(String(value)) : "无";
 }
 
 function impactText(log: RuntimeLog) {
@@ -211,7 +242,7 @@ function impactText(log: RuntimeLog) {
 
 function suggestionText(log: RuntimeLog) {
   const reason = reasonText(log);
-  const text = `${reason} ${log.message || ""}`.toLowerCase();
+  const text = `${reason} ${normalizeRuntimeLogMessage(log)}`.toLowerCase();
   if (log.level === "ERROR" && /权限|permission/.test(text)) return "检查手机权限";
   if (/直播间|target|room|search/.test(text)) return "确认直播间或关键词";
   if (/connect|timeout|网络|上传/.test(text)) return "检查网络和后台地址";

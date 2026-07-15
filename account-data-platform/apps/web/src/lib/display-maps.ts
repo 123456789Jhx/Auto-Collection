@@ -27,9 +27,23 @@ export function sceneText(value?: string | null) {
     video: "视频",
     live: "直播",
     live_comment: "搜索直播间评论",
-    commerce_card_live_comment: "商品卡直播评论"
+    commerce_card_live_comment: "商品卡养号"
   };
   return value ? (map[value] ?? value) : "-";
+}
+
+export function normalizeTaskDisplayText(value?: string | null) {
+  if (!value) return value || "";
+  return value
+    .replace(/目标直播间评论（商品卡片养号）/g, "目标直播评论")
+    .replace(/目标直播间评论/g, "目标直播评论")
+    .replace(/目标评论/g, "目标直播评论")
+    .replace(/商品卡直播评论任务/g, "商品卡养号任务")
+    .replace(/商品卡直播评论启动流程/g, "商品卡养号启动流程")
+    .replace(/商品卡直播评论配置/g, "商品卡养号配置")
+    .replace(/商品卡直播评论/g, "商品卡养号")
+    .replace(/商品卡组合任务/g, "商品卡养号")
+    .replace(/组合任务/g, "商品卡养号");
 }
 
 export function levelText(value?: string | null) {

@@ -281,7 +281,7 @@ async function saveWorkbenchCommerceTarget(device: ConfigurableDevice, targets: 
     platform: device.platform || "douyin",
     similarityThreshold: 0.9,
     enabled: true,
-    remark: "工作台商品卡组合任务配置",
+    remark: "工作台商品卡养号配置",
     aliases: uniqueTextList([targetName, ...aliases]).map((aliasText, index) => ({
       aliasText,
       aliasType: "room_name",
@@ -499,7 +499,7 @@ export function DeviceLiveCommentConfigModal({ open, device, onClose, onSaved }:
             },
             {
               key: "target-comment",
-              label: "目标直播间评论配置",
+              label: "目标直播评论配置",
               children: (
                 <div className="scheduler-config-grid">
                   <Form.Item label="目标直播间名称" name="targetCommentRoomName" rules={[{ required: true, message: "请输入目标直播间名称" }]}>
