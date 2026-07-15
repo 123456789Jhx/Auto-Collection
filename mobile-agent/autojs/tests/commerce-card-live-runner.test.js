@@ -668,7 +668,10 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(start >= 0 && end > start, "douyin adapter must expose a product-card browsing phase");
   assert(body.indexOf("openCommerceCardSearch(searchKeyword)") >= 0, "browse phase must start from mall product-card search");
   assert(body.indexOf("clickCommerceKeywordCard(matchKeywords)") >= 0, "browse phase must open matching product cards");
-  assert(body.indexOf("clickCommerceRelatedProductCard(matchKeywords)") >= 0, "detail browse must continue through related product cards without relying on a heading");
+  assert(body.indexOf("clickCommerceRelatedProductCard(matchKeywords, skippedRelatedBounds)") >= 0, "detail browse must continue through related product cards without relying on a heading");
+  assert(body.indexOf("buildCommerceDetailSignature(detailText)") >= 0, "detail browse must snapshot the current product detail before clicking a related card");
+  assert(body.indexOf("afterRelatedSignature !== beforeRelatedSignature") >= 0, "detail browse must verify that a related-card click opened a different product before counting it");
+  assert(body.indexOf("skippedRelatedBounds[relatedClick.bounds] = true") >= 0, "detail browse must skip a related-card bounds when clicking it does not navigate");
   assert(body.indexOf("hasCommerceRelatedProductList(detailText, matchKeywords, targetRoom, recommendationSignals)") >= 0, "detail browse must recognize product-card lists even when the related-products heading is absent");
   assert(body.indexOf("hasCommerceRelatedProductList(detailText, matchKeywords, targetRoom, recommendationSignals)") < body.indexOf("swipeSearchResultsUp();"), "detail browse must try related product cards before continuing to swipe or returning to search results");
   assert.strictEqual(body.indexOf("recommendedClicks < 2"), -1, "detail browse must not stop after only two related product cards");

@@ -1409,11 +1409,12 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return true;
   }
 
-  function clickCommerceRelatedProductCard(matchKeywords) {
+  function clickCommerceRelatedProductCard(matchKeywords, skippedBounds) {
     var keywordRegex = buildContainsRegex(matchKeywords);
     if (!keywordRegex) {
-      return false;
+      return null;
     }
+    skippedBounds = skippedBounds || {};
     var nodes = [];
     pushFoundNodes(nodes, textMatches(keywordRegex));
     pushFoundNodes(nodes, descMatches(keywordRegex));
@@ -1424,6 +1425,10 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       var node = nodes[i];
       var bounds = node && node.bounds && node.bounds();
       if (!bounds) {
+        continue;
+      }
+      var boundsKey = autojsUtils.formatBounds(bounds);
+      if (boundsKey && skippedBounds[boundsKey]) {
         continue;
       }
       var centerY = bounds.centerY();
@@ -1453,7 +1458,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       }
     }
     if (!best) {
-      return false;
+      return null;
     }
     logger.info("点击详情页后续商品卡片区域", {
       bounds: autojsUtils.formatBounds(best.bounds && best.bounds()),
@@ -1462,7 +1467,12 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     });
     autojsUtils.axisClick(best, logger);
     autojsUtils.sleepRandom(1800, 2600);
-    return true;
+    return {
+      clicked: true,
+      bounds: autojsUtils.formatBounds(best.bounds && best.bounds()),
+      text: best.text && best.text(),
+      desc: best.desc && best.desc()
+    };
   }
 
   function hasCommerceRelatedProductList(detailText, matchKeywords, targetRoom, recommendationSignals) {
@@ -1473,6 +1483,13 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       return true;
     }
     return /¥|券后价|立减|已售|店铺|进店|包邮|现货|退货|发货/.test(String(detailText || ""));
+  }
+
+  function buildCommerceDetailSignature(textValue) {
+    return String(textValue || "")
+      .replace(/\d+/g, "#")
+      .replace(/\s+/g, " ")
+      .slice(0, 360);
   }
 
   function openCommerceLiveFromCurrentScreen(matchKeywords, liveSignals, targetRoom) {
@@ -1678,6 +1695,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       var openedLive = false;
       var nextSwipeAt = detailStartedAt + 15000;
       var extendedSearchLogged = false;
+      var skippedRelatedBounds = {};
       var sample = "";
       while (Date.now() < hardEndAt && (stayUntilHardEnd || detailBrowsedCount < remainingCards)) {
         if (isInterrupted("commerce_detail_browse_" + attempt)) {
@@ -1711,15 +1729,36 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         if ((stayUntilHardEnd || detailBrowsedCount < remainingCards) &&
           Date.now() - detailStartedAt >= Math.min(15000, Math.floor(dwellSeconds * 300)) &&
           Date.now() + 15000 < hardEndAt &&
-          hasCommerceRelatedProductList(detailText, matchKeywords, targetRoom, recommendationSignals) &&
-          clickCommerceRelatedProductCard(matchKeywords)) {
-          detailBrowsedCount += 1;
-          detailStartedAt = Date.now();
-          detailEndAt = Math.min(hardEndAt, detailStartedAt + dwellSeconds * 1000);
-          nextSwipeAt = detailStartedAt + 15000;
-          extendedSearchLogged = false;
-          openedLive = false;
-          continue;
+          hasCommerceRelatedProductList(detailText, matchKeywords, targetRoom, recommendationSignals)) {
+          var beforeRelatedSignature = buildCommerceDetailSignature(detailText);
+          var relatedClick = clickCommerceRelatedProductCard(matchKeywords, skippedRelatedBounds);
+          if (relatedClick && relatedClick.clicked) {
+            var afterRelatedText = extractVisibleText();
+            var afterRelatedSignature = buildCommerceDetailSignature(afterRelatedText);
+            if (afterRelatedSignature !== beforeRelatedSignature &&
+              hasTargetTextMatch(afterRelatedText, matchKeywords, targetRoom) &&
+              isCommerceSearchOrDetailText(afterRelatedText)) {
+              detailBrowsedCount += 1;
+              detailStartedAt = Date.now();
+              detailEndAt = Math.min(hardEndAt, detailStartedAt + dwellSeconds * 1000);
+              nextSwipeAt = detailStartedAt + 15000;
+              extendedSearchLogged = false;
+              skippedRelatedBounds = {};
+              openedLive = false;
+              continue;
+            }
+            if (relatedClick.bounds) {
+              skippedRelatedBounds[relatedClick.bounds] = true;
+            }
+            logger.warn("commerce related product click did not open a new product, skip this bounds and continue swiping", {
+              attempt: attempt,
+              bounds: relatedClick.bounds || "",
+              text: String(relatedClick.text || relatedClick.desc || "").slice(0, 80),
+              textSample: afterRelatedText.slice(0, 180)
+            });
+            nextSwipeAt = Date.now();
+            continue;
+          }
         }
         if (Date.now() >= detailEndAt && Date.now() + 1200 < hardEndAt) {
           if (!extendedSearchLogged) {
