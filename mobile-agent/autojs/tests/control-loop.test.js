@@ -1,4 +1,6 @@
 var assert = require("assert");
+var fs = require("fs");
+var path = require("path");
 var createControlLoop = require("../app/control-loop.js").createControlLoop;
 
 function createLogger(logs) {
@@ -579,6 +581,17 @@ function testDuplicateV2CommandReplaysFinalAck() {
   });
 }
 
+function testLauncherStopsDuplicateInstancesBeforeLayout() {
+  var source = fs.readFileSync(path.join(__dirname, "../launcher.js"), "utf8");
+  var cleanupCall = source.indexOf("stopDuplicateLaunchers();");
+  var layoutCall = source.indexOf("ui.layout(");
+
+  assert(cleanupCall >= 0, "launcher should stop duplicate launcher engines");
+  assert(layoutCall >= 0, "launcher should still render the startup UI");
+  assert(cleanupCall < layoutCall, "duplicate launcher cleanup must happen before UI layout");
+  assert(source.indexOf('stopEngines("launcher.js")') >= 0, "launcher cleanup should target launcher instances");
+}
+
 testPollAsyncDoesNotStartThreadBeforeInterval();
 testUnregisteredPollAttemptsAreThrottled();
 testLiveCommentPauseRequestsInterrupt();
@@ -589,5 +602,6 @@ testUnsupportedExplicitStartTaskDoesNotFallbackToVideo();
 testV2PauseWaitsForSafeCheckpoint();
 testV2StopWaitsForSafeCheckpoint();
 testDuplicateV2CommandReplaysFinalAck();
+testLauncherStopsDuplicateInstancesBeforeLayout();
 
 console.log("control-loop tests passed");

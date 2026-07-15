@@ -169,6 +169,16 @@ function stopEngines(fileName) {
   return list.length;
 }
 
+function stopDuplicateLaunchers() {
+  var count = stopEngines("launcher.js");
+  if (count > 0) {
+    try {
+      console.log("launcher stopped duplicate instances: " + count);
+    } catch (error) {
+    }
+  }
+}
+
 function canDrawOverlays() {
   try {
     if (typeof floaty !== "undefined" && floaty.checkPermission) {
@@ -323,6 +333,8 @@ function stopAllScripts() {
   setMessage("\u5df2\u505c\u6b62\u8fd0\u884c");
   refreshStatusDelayed();
 }
+
+stopDuplicateLaunchers();
 
 ui.layout(
   <vertical bg="#f6f8fb" padding="24">
