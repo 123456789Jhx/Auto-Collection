@@ -1361,27 +1361,121 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return isCommerceProductSignalText(ownText) || isCommerceProductSignalText(combinedText);
   }
 
+  function isCommerceRelatedZoneText(value) {
+    return /你可能|你可能想看|你可能还会喜欢|猜你喜欢|推荐商品|相关商品|同类好物|看了又看|还会买/.test(String(value || ""));
+  }
+
+  function isCommerceProductTitleLikeText(value) {
+    value = String(value || "").replace(/\s+/g, "");
+    if (value.length < 8) {
+      return false;
+    }
+    if (isCommerceNonProductCardText(value)) {
+      return false;
+    }
+    return /水果|新鲜|现摘|应季|产地|包邮|发货|现货|斤|箱|橙|柑|瓜|桃|梨|苹果|农家|基地|直发|采摘/.test(value);
+  }
+
   function isCommerceRelatedCardBoundsAllowed(bounds, screen) {
     if (!bounds) {
       return false;
     }
     var centerY = bounds.centerY();
-    if (centerY < screen.height * 0.32 || centerY > screen.height * 0.9) {
+    if (centerY < screen.height * 0.28 || centerY > screen.height * 0.96) {
       return false;
     }
     if (bounds.width && (bounds.width() < screen.width * 0.16 || bounds.width() > screen.width * 0.96)) {
       return false;
     }
-    if (bounds.height && (bounds.height() < 36 || bounds.height() > screen.height * 0.36)) {
+    if (bounds.height && (bounds.height() < 32 || bounds.height() > screen.height * 0.45)) {
       return false;
     }
     return true;
+  }
+
+  function isCommerceSearchCardBoundsAllowed(bounds, screen) {
+    if (!bounds || !isTargetSearchBoundsAllowed(bounds, screen)) {
+      return false;
+    }
+    if (bounds.width && bounds.width() > screen.width * 0.98) {
+      return false;
+    }
+    if (bounds.height && bounds.height() > screen.height * 0.50) {
+      return false;
+    }
+    return true;
+  }
+
+  function scoreCommerceProductCardCandidate(bounds, screen, combinedText, depth, relatedZoneVisible) {
+    var score = 10 + Math.max(0, Number(depth || 0));
+    if (depth > 0) {
+      score += 5;
+    }
+    if (/¥|￥|券后价|到手价|已售|销量/.test(combinedText)) {
+      score += 12;
+    }
+    if (/水果|新鲜|现摘|应季|产地|包邮|发货|现货/.test(combinedText)) {
+      score += 5;
+    }
+    if (relatedZoneVisible && isCommerceProductTitleLikeText(combinedText)) {
+      score += 8;
+    }
+    if (bounds.width && bounds.width() > screen.width * 0.40) {
+      score += 4;
+    }
+    if (bounds.height && bounds.height() >= 56) {
+      score += 4;
+    }
+    if (bounds.centerY() > screen.height * 0.40) {
+      score += 3;
+    }
+    return score;
+  }
+
+  function findCommerceKeywordProductCardCandidate(keywordNode, keywordRegex, screen) {
+    var best = null;
+    var bestScore = -1;
+    var matchedText = getNodeOwnText(keywordNode);
+    var current = keywordNode;
+    for (var depth = 0; current && depth <= 4; depth++) {
+      var bounds = current.bounds && current.bounds();
+      if (bounds && isCommerceSearchCardBoundsAllowed(bounds, screen)) {
+        var ownText = getNodeOwnText(current);
+        var contextText = collectNodeContextText(current, 1);
+        var combinedText = [ownText, contextText, matchedText].join("\n");
+        if (keywordRegex.test(combinedText) &&
+          !isCommerceNonProductCardText(ownText) &&
+          (isCommerceProductSignalText(combinedText) || isCommerceProductTitleLikeText(combinedText))) {
+          var score = scoreCommerceProductCardCandidate(bounds, screen, combinedText, depth, false);
+          if (current.clickable && current.clickable()) {
+            score += 2;
+          }
+          if (score > bestScore) {
+            bestScore = score;
+            best = {
+              node: current,
+              score: score,
+              bounds: autojsUtils.formatBounds(bounds),
+              text: combinedText,
+              matchedText: matchedText
+            };
+          }
+        }
+      }
+      try {
+        current = current.parent && current.parent();
+      } catch (error) {
+        current = null;
+      }
+    }
+    return best;
   }
 
   function findCommerceRelatedProductCardCandidate(keywordNode, keywordRegex, skippedBounds, screen) {
     var best = null;
     var bestScore = -1;
     var matchedText = getNodeOwnText(keywordNode);
+    var relatedZoneVisible = isCommerceRelatedZoneText(extractVisibleText());
     var current = keywordNode;
     for (var depth = 0; current && depth <= 4; depth++) {
       var bounds = current.bounds && current.bounds();
@@ -1393,26 +1487,8 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         if (keywordRegex.test(combinedText) &&
           !/进店逛逛|客服|加购物车|领券购买|立即购买|专享价/.test(combinedText) &&
           !isCommerceNonProductCardText(ownText) &&
-          (isCommerceProductSignalText(combinedText) || /你可能|推荐|猜你喜欢/.test(combinedText))) {
-          var score = 10 + depth;
-          if (depth > 0) {
-            score += 5;
-          }
-          if (/¥|￥|券后价|到手价|已售|销量/.test(combinedText)) {
-            score += 10;
-          }
-          if (/水果|新鲜|现摘|应季|产地|包邮/.test(combinedText)) {
-            score += 4;
-          }
-          if (bounds.width && bounds.width() > screen.width * 0.45) {
-            score += 4;
-          }
-          if (bounds.height && bounds.height() >= 64) {
-            score += 4;
-          }
-          if (bounds.centerY() > screen.height * 0.45) {
-            score += 3;
-          }
+          (isCommerceProductSignalText(combinedText) || isCommerceRelatedZoneText(combinedText) || (relatedZoneVisible && isCommerceProductTitleLikeText(combinedText)))) {
+          var score = scoreCommerceProductCardCandidate(bounds, screen, combinedText, depth, relatedZoneVisible);
           if (current.clickable && current.clickable()) {
             score += 2;
           }
@@ -1450,37 +1526,40 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     var bestScore = -1;
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i];
-      var bounds = node && node.bounds && node.bounds();
-      if (!bounds || !isTargetSearchBoundsAllowed(bounds, screen)) {
+      if (!node) {
         continue;
       }
-      if (!isCommerceProductCandidateNode(node)) {
+      var candidate = findCommerceKeywordProductCardCandidate(node, keywordRegex, screen);
+      if (!candidate && isCommerceProductCandidateNode(node)) {
+        var bounds = node.bounds && node.bounds();
+        if (bounds && isCommerceSearchCardBoundsAllowed(bounds, screen)) {
+          var value = String((node.text && node.text()) || (node.desc && node.desc()) || "");
+          candidate = {
+            node: node,
+            score: 10,
+            bounds: autojsUtils.formatBounds(bounds),
+            text: value,
+            matchedText: value
+          };
+        }
+      }
+      if (!candidate) {
         continue;
       }
-      var score = 10;
-      if (bounds.centerY() > screen.height * 0.18 && bounds.centerY() < screen.height * 0.82) {
-        score += 8;
-      }
-      if (bounds.width && bounds.width() > screen.width * 0.18) {
-        score += 3;
-      }
-      if (node.clickable && node.clickable()) {
-        score += 3;
-      }
-      if (score > bestScore) {
-        bestScore = score;
-        best = node;
+      if (candidate.score > bestScore) {
+        bestScore = candidate.score;
+        best = candidate;
       }
     }
     if (!best) {
       return false;
     }
     logger.info("点击命中关键词的商品卡片区域", {
-      bounds: autojsUtils.formatBounds(best.bounds && best.bounds()),
-      text: best.text && best.text(),
-      desc: best.desc && best.desc()
+      bounds: best.bounds,
+      text: String(best.text || "").slice(0, 160),
+      matchedText: String(best.matchedText || "").slice(0, 80)
     });
-    autojsUtils.axisClick(best, logger);
+    autojsUtils.axisClick(best.node, logger);
     autojsUtils.sleepRandom(1800, 2600);
     return true;
   }
@@ -1548,6 +1627,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       return false;
     }
     if (hasAnyTextKeyword(detailText, recommendationSignals)) {
+      return true;
+    }
+    if (isCommerceRelatedZoneText(detailText)) {
       return true;
     }
     return /¥|券后价|立减|已售|店铺|进店|包邮|现货|退货|发货/.test(String(detailText || ""));
