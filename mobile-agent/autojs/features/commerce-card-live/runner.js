@@ -1094,12 +1094,14 @@ function createCommerceCardLiveRunner(context) {
     });
   }
 
+  // 只有直播板块正常扫完但没命中目标，才进入下一轮商品卡养号。
+  // 入口缺失、关键词为空、适配器缺失、暂停停止等都属于异常或控制中止。
+  function isV2TargetGateBusinessMiss(reason) {
+    return String(reason || "") === "target_live_room_not_found";
+  }
+
   // V2 任务里的“商品卡养号”阶段入口。
-  // 这个方法不直接操作抖音 UI，而是负责：
-  // 1. 检查后台配置是否启用 product_nurture 阶段；
-  // 2. 从任务配置里取搜索词、商品关键词、推荐区信号、停留时长；
-  // 3. 调用 douyin.browseCommerceCards() 执行真实的商城搜索和商品卡浏览；
-  // 4. 浏览完成后再尝试进入目标直播间做门禁校验，为后续直播评论阶段准备上下文。
+  // 这个方法负责任务状态、轮次和直播门禁判定；真实抖音 UI 操作交给 douyin.browseCommerceCards()。
   function runV2ProductNurture(cfg, workflow) {
     // enabledStages 来自后台任务配置；没启用时直接跳过，不算失败。
     if (cfg.enabledStages.indexOf("product_nurture") < 0) {
@@ -1188,6 +1190,22 @@ function createCommerceCardLiveRunner(context) {
           evidence: { cycleIndex: roundIndex, roomKey: roomKey }
         });
         return { success: true, targetGate: gateResult };
+      }
+      if (!isV2TargetGateBusinessMiss(gateResult.reason)) {
+        reportV2Event("product_target_gate_aborted", "failed", {
+          stage: "product_nurture",
+          reasonCode: gateResult.reason || "target_live_gate_aborted",
+          evidence: {
+            cycleIndex: roundIndex,
+            reason: gateResult.reason || "",
+            textSample: String(gateResult.textSample || "").slice(0, 160)
+          }
+        });
+        return {
+          success: false,
+          paused: gateResult.reason === "manual_pause",
+          reason: gateResult.reason || "target_live_gate_aborted"
+        };
       }
       // 这一轮商品卡浏览完成，但没有找到/验证目标直播间；记录失败次数，下一轮继续尝试。
       v2State.liveMissCount += 1;

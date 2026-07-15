@@ -184,6 +184,7 @@ function createV2Context(options) {
   var accountReadCount = 0;
   var liveFeedSearchCalls = [];
   var liveFeedRefreshes = [];
+  var lastLiveFeedGateSuccess = true;
   var workflow = {
     assignmentId: "assignment-v2",
     workflowVersion: 2,
@@ -379,17 +380,23 @@ function createV2Context(options) {
   context.douyin.openTargetLiveRoomFromLiveFeed = function (gateOptions) {
     liveFeedSearchCalls.push(gateOptions);
     if (Array.isArray(options.targetGateResults) && options.targetGateResults.length) {
-      return options.targetGateResults.shift() === true;
+      lastLiveFeedGateSuccess = options.targetGateResults.shift() === true;
+      return lastLiveFeedGateSuccess;
     }
     if (options.targetGateResult !== undefined) {
-      return options.targetGateResult === true;
+      lastLiveFeedGateSuccess = options.targetGateResult === true;
+      return lastLiveFeedGateSuccess;
     }
+    lastLiveFeedGateSuccess = true;
     return true;
   };
   context.douyin.openTargetLiveRoomFromSearch = function () {
     throw new Error("V2 target comment must use live feed gate");
   };
   context.douyin.getLastTargetLiveSearchResult = function () {
+    if (!lastLiveFeedGateSuccess) {
+      return { reason: "target_live_room_not_found", textSample: "live feed miss" };
+    }
     return { reason: "room_verified", roomKey: "target:target-code", roomName: "target room", anchorName: "anchor" };
   };
   context.douyin.refreshLiveFeedFromHome = function (refreshOptions) {
@@ -661,6 +668,7 @@ function testCollectorKeepsCommerceLiveSeparateFromOrdinaryLivePhase() {
 
 function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin/adapter.js"), "utf8");
+  var runnerSource = fs.readFileSync(path.join(__dirname, "../features/commerce-card-live/runner.js"), "utf8");
   var commerceCardBrowserSource = fs.readFileSync(path.join(__dirname, "../platforms/douyin/commerce-card-browser.js"), "utf8");
   var commerceCardDetectorSource = fs.readFileSync(path.join(__dirname, "../platforms/douyin/commerce-card/candidate-detector.js"), "utf8");
   var commerceCardSource = source + "\n" + commerceCardBrowserSource + "\n" + commerceCardDetectorSource;
@@ -671,8 +679,10 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(start >= 0 && end > start, "douyin adapter must expose a product-card browsing phase");
   assert(body.indexOf("openCommerceCardSearch(searchKeyword)") >= 0, "browse phase must start from mall product-card search");
   assert(body.indexOf("clickCommerceKeywordCard(matchKeywords)") >= 0, "browse phase must open matching product cards");
-  assert(body.indexOf("clickCommerceRelatedProductCard(matchKeywords, skippedRelatedBounds)") >= 0, "detail browse must continue through related product cards without relying on a heading");
-  assert(commerceCardBrowserSource.indexOf("findCommerceRelatedProductCardCandidate(node, keywordRegex, skippedBounds, screen)") >= 0, "related product clicks must promote keyword nodes to their product-card container");
+  assert(body.indexOf("detectRelatedProductListState(detailText, matchKeywords, recommendationSignals, targetRoom)") >= 0, "detail browse must locate the related product list before matching product keywords");
+  assert(body.indexOf("clickCommerceRelatedProductCard(matchKeywords, skippedRelatedBounds, relatedZoneState)") >= 0, "detail browse must click related product cards only inside the detected product-list area");
+  assert(commerceCardBrowserSource.indexOf("findCommerceRelatedProductCardCandidateInZone") >= 0, "related product clicks must promote keyword nodes within the detected product-card list area");
+  assert(commerceCardBrowserSource.indexOf("findCommerceRelatedProductCardCandidateInZone(keywordNode, keywordRegex, skippedBounds, screen, relatedZoneState)") >= 0, "related product clicks must promote keyword nodes to their product-card container inside the detected product-list area");
   assert(commerceCardBrowserSource.indexOf("findCommerceKeywordProductCardCandidate(node, keywordRegex, screen)") >= 0, "search-result product clicks must promote keyword nodes to their product-card container");
   assert(commerceCardBrowserSource.indexOf("detector.isRelatedCardBoundsAllowed(bounds, screen)") >= 0, "related product clicks must reject oversized detail containers and tiny keyword fragments");
   assert(commerceCardSource.indexOf("isRelatedZoneText(detailText)") >= 0 || commerceCardSource.indexOf("isCommerceRelatedZoneText(detailText)") >= 0, "detail browse must recognize built-in related-product headings such as 你可能想看");
@@ -680,8 +690,8 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(body.indexOf("signature.buildDetailSignature(detailText)") >= 0, "detail browse must snapshot the current product detail before clicking a related card");
   assert(body.indexOf("afterRelatedSignature !== beforeRelatedSignature") >= 0, "detail browse must verify that a related-card click opened a different product before counting it");
   assert(body.indexOf("skippedRelatedBounds[relatedClick.bounds] = true") >= 0, "detail browse must skip a related-card bounds when clicking it does not navigate");
-  assert(body.indexOf("detector.isRelatedProductListText(") >= 0, "detail browse must recognize product-card lists even when the related-products heading is absent");
-  assert(body.indexOf("detector.isRelatedProductListText(") < body.indexOf("context.swipeSearchResultsUp();"), "detail browse must try related product cards before continuing to swipe or returning to search results");
+  assert(commerceCardBrowserSource.indexOf("detector.isRelatedProductListText(") >= 0, "detail browse must recognize product-card lists even when the related-products heading is absent");
+  assert(body.indexOf("relatedZoneState.active") < body.indexOf("context.swipeSearchResultsUp();"), "detail browse must try related product cards before continuing to swipe or returning to search results");
   assert.strictEqual(body.indexOf("recommendedClicks < 2"), -1, "detail browse must not stop after only two related product cards");
   assert(body.indexOf("browseOpenedCommerceDetail(attempt, endAt, remainingCards, requireFullScan)") >= 0, "full-scan product nurture must stay in the opened product detail chain");
   assert(body.indexOf("var openedDetailThisAttempt = false") >= 0, "browse phase must track whether the current loop already opened a product detail");
@@ -706,6 +716,7 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(commerceCardBrowserSource.indexOf("context.isSearchResultPageText(textSample) && clickCommerceResultTabIfVisible()") >= 0, "commerce context recovery should reuse the current search result page before reopening mall");
   assert.strictEqual(body.indexOf("sleepInterruptible(1800"), -1, "commerce live cards must not be a fixed short flash-open");
   assert.strictEqual(body.indexOf("openTargetLiveRoomFromSearch"), -1, "target live room search must stay outside the card browsing phase");
+  assert(runnerSource.indexOf("isV2TargetGateBusinessMiss(gateResult.reason)") >= 0, "product nurture should only continue to the next round for a real target-live miss");
   assert(source.indexOf("browseCommerceCards: browseCommerceCards") >= 0, "douyin adapter must export browseCommerceCards");
 }
 
@@ -811,6 +822,41 @@ function testV2ProductNurtureFailsWhenTargetNotFoundAfterRounds() {
   assert.strictEqual(browseCount, 2);
   assert.strictEqual(context.comments.length, 0);
   assert.strictEqual(context._v2.liveFeedSearchCalls.length, 2);
+  assert.strictEqual(context._v2.completedAssignments[0].state, "FAILED");
+}
+
+function testV2ProductNurtureAbortsOnTargetGateException() {
+  var context = createV2Context({
+    enabledStages: ["product_nurture"],
+    runtimeConfig: {
+      productNurtureMaxRounds: 3
+    }
+  });
+  var browseCount = 0;
+  context.douyin.browseCommerceCards = function () {
+    browseCount += 1;
+    return {
+      success: true,
+      reason: "commerce_cards_browsed",
+      browsedCount: 4,
+      textSample: "product only"
+    };
+  };
+  context.douyin.openTargetLiveRoomFromLiveFeed = function (gateOptions) {
+    context._v2.liveFeedSearchCalls.push(gateOptions);
+    return false;
+  };
+  context.douyin.getLastTargetLiveSearchResult = function () {
+    return { reason: "target_keyword_empty", textSample: "target config missing" };
+  };
+  var runner = createCommerceCardLiveRunner(context);
+
+  var result = runner.runCommerceCardLiveCommentTask();
+
+  assert.strictEqual(result.success, false);
+  assert.strictEqual(result.reason, "target_keyword_empty");
+  assert.strictEqual(browseCount, 1);
+  assert.strictEqual(context._v2.liveFeedSearchCalls.length, 1);
   assert.strictEqual(context._v2.completedAssignments[0].state, "FAILED");
 }
 
@@ -1025,6 +1071,7 @@ testMobileLogsPreferVisibleStorage();
 testV2ProductNurtureUsesLiveFeedGateAndReusesRoom();
 testV2ProductNurtureOnlyDoesNotSendComment();
 testV2ProductNurtureFailsWhenTargetNotFoundAfterRounds();
+testV2ProductNurtureAbortsOnTargetGateException();
 testV2TargetCommentMissRefreshesAndFailsClosed();
 testV2StopBeforeSendFailsClosed();
 testV2ExpiredPermitDoesNotSend();

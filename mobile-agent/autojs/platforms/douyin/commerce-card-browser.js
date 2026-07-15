@@ -153,24 +153,129 @@ function createDouyinCommerceCardBrowser(context) {
     return best;
   }
 
-  function findCommerceRelatedProductCardCandidate(keywordNode, keywordRegex, skippedBounds, screen) {
+  function isBottomCommerceActionText(value) {
+    return /进店|逛逛|客服|购物车|加入购物车|领券购买|立即购买|去抢购|杩涘簵|瀹㈡湇|璐墿杞|鍔犲叆璐墿杞|棰嗗埜璐拱|绔嬪嵆璐拱|涓撲韩浠/.test(String(value || ""));
+  }
+
+  function isBottomCommerceActionBounds(bounds, screen) {
+    if (!bounds || !screen) {
+      return false;
+    }
+    return bounds.centerY() > screen.height * 0.82 &&
+      bounds.width && bounds.width() > screen.width * 0.55;
+  }
+
+  function findRelatedHeadingBoundary(screen, recommendationSignals) {
+    var signalRegex = context.buildContainsRegex(recommendationSignals || []);
+    if (!signalRegex) {
+      return null;
+    }
+    var nodes = [];
+    context.pushFoundNodes(nodes, textMatches(signalRegex));
+    context.pushFoundNodes(nodes, descMatches(signalRegex));
+    var best = null;
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var bounds = node && node.bounds && node.bounds();
+      var value = context.getNodeOwnText(node);
+      if (!bounds || !detector.isRelatedZoneText(value)) {
+        continue;
+      }
+      if (bounds.centerY() < screen.height * 0.15 || bounds.centerY() > screen.height * 0.86) {
+        continue;
+      }
+      if (!best || bounds.top < best.top) {
+        best = {
+          top: bounds.top,
+          bottom: bounds.bottom,
+          text: value
+        };
+      }
+    }
+    return best;
+  }
+
+  function detectRelatedProductListState(detailText, matchKeywords, recommendationSignals, targetRoom) {
+    var screen = autojsUtils.getScreenSize();
+    var heading = findRelatedHeadingBoundary(screen, recommendationSignals);
+    if (heading) {
+      return {
+        active: true,
+        strategy: "heading",
+        topY: heading.bottom,
+        headingText: heading.text || ""
+      };
+    }
+    if (/商品[\s\S]{0,20}评价[\s\S]{0,20}详情[\s\S]{0,20}推荐/.test(String(detailText || "")) &&
+      detector.isProductSignalText(detailText)) {
+      return {
+        active: true,
+        strategy: "recommend_tab",
+        topY: Math.floor(screen.height * 0.14),
+        headingText: "推荐"
+      };
+    }
+    if (detector.isRelatedProductListText(
+      detailText,
+      context.hasTargetTextMatch(detailText, matchKeywords, targetRoom),
+      context.hasAnyTextKeyword(detailText, recommendationSignals)
+    )) {
+      return {
+        active: true,
+        strategy: "structure",
+        topY: Math.floor(screen.height * 0.30),
+        headingText: ""
+      };
+    }
+    return {
+      active: false,
+      strategy: "none",
+      topY: Math.floor(screen.height * 0.40),
+      headingText: ""
+    };
+  }
+
+  function isRelatedCandidateAreaAllowed(bounds, screen, relatedZoneState) {
+    if (!bounds || !detector.isRelatedCardBoundsAllowed(bounds, screen)) {
+      return false;
+    }
+    if (isBottomCommerceActionBounds(bounds, screen)) {
+      return false;
+    }
+    relatedZoneState = relatedZoneState || {};
+    if (!relatedZoneState.active) {
+      return false;
+    }
+    if (bounds.centerY() <= Number(relatedZoneState.topY || 0) + 8) {
+      return false;
+    }
+    return true;
+  }
+
+  function findCommerceRelatedProductCardCandidateInZone(keywordNode, keywordRegex, skippedBounds, screen, relatedZoneState) {
     var best = null;
     var bestScore = -1;
     var matchedText = context.getNodeOwnText(keywordNode);
-    var relatedZoneVisible = detector.isRelatedZoneText(extractVisibleText());
     var current = keywordNode;
     for (var depth = 0; current && depth <= 4; depth++) {
       var bounds = current.bounds && current.bounds();
       var boundsKey = autojsUtils.formatBounds(bounds);
-      if (bounds && !skippedBounds[boundsKey] && detector.isRelatedCardBoundsAllowed(bounds, screen)) {
+      if (bounds && !skippedBounds[boundsKey] && isRelatedCandidateAreaAllowed(bounds, screen, relatedZoneState)) {
         var ownText = context.getNodeOwnText(current);
         var contextText = context.collectNodeContextText(current, 1);
         var combinedText = [ownText, contextText, matchedText].join("\n");
         if (keywordRegex.test(combinedText) &&
-          !/进店逛逛|客服|加购物车|领券购买|立即购买|专享价/.test(combinedText) &&
+          !isBottomCommerceActionText(combinedText) &&
           !detector.isNonProductCardText(ownText) &&
-          (detector.isProductSignalText(combinedText) || detector.isRelatedZoneText(combinedText) || (relatedZoneVisible && detector.isProductTitleLikeText(combinedText)))) {
-          var score = detector.scoreProductCardCandidate(bounds, screen, combinedText, depth, relatedZoneVisible);
+          (detector.isProductSignalText(combinedText) || detector.isProductTitleLikeText(combinedText))) {
+          var score = detector.scoreProductCardCandidate(bounds, screen, combinedText, depth, relatedZoneState.strategy !== "none");
+          if (relatedZoneState.strategy === "heading") {
+            score += 8;
+          } else if (relatedZoneState.strategy === "recommend_tab") {
+            score += 6;
+          } else if (relatedZoneState.strategy === "structure") {
+            score += 3;
+          }
           if (current.clickable && current.clickable()) {
             score += 2;
           }
@@ -181,7 +286,8 @@ function createDouyinCommerceCardBrowser(context) {
               score: score,
               bounds: boundsKey,
               text: combinedText,
-              matchedText: matchedText
+              matchedText: matchedText,
+              strategy: relatedZoneState.strategy
             };
           }
         }
@@ -243,12 +349,20 @@ function createDouyinCommerceCardBrowser(context) {
     return true;
   }
 
-  function clickCommerceRelatedProductCard(matchKeywords, skippedBounds) {
+  function clickCommerceRelatedProductCard(matchKeywords, skippedBounds, relatedZoneState) {
     var keywordRegex = context.buildContainsRegex(matchKeywords);
     if (!keywordRegex) {
       return null;
     }
     skippedBounds = skippedBounds || {};
+    relatedZoneState = relatedZoneState || detectRelatedProductListState(extractVisibleText(), matchKeywords, [], {});
+    if (!relatedZoneState.active) {
+      logger.info("详情页尚未识别到推荐商品卡列表，继续下滑", {
+        strategy: relatedZoneState.strategy || "none",
+        topY: relatedZoneState.topY || 0
+      });
+      return null;
+    }
     var nodes = [];
     context.pushFoundNodes(nodes, textMatches(keywordRegex));
     context.pushFoundNodes(nodes, descMatches(keywordRegex));
@@ -264,17 +378,21 @@ function createDouyinCommerceCardBrowser(context) {
       if (/进店逛逛|客服|加购物车|领券购买|立即购买|专享价/.test(value)) {
         continue;
       }
-      var candidate = findCommerceRelatedProductCardCandidate(node, keywordRegex, skippedBounds, screen);
+      if (isBottomCommerceActionText(value)) {
+        continue;
+      }
+      var candidate = findCommerceRelatedProductCardCandidateInZone(node, keywordRegex, skippedBounds, screen, relatedZoneState);
       if (!candidate && isCommerceProductCandidateNode(node)) {
         var bounds = node.bounds && node.bounds();
         var boundsKey = autojsUtils.formatBounds(bounds);
-        if (bounds && !skippedBounds[boundsKey] && detector.isRelatedCardBoundsAllowed(bounds, screen)) {
+        if (bounds && !skippedBounds[boundsKey] && isRelatedCandidateAreaAllowed(bounds, screen, relatedZoneState)) {
           candidate = {
             node: node,
             score: 10,
             bounds: boundsKey,
             text: value,
-            matchedText: value
+            matchedText: value,
+            strategy: relatedZoneState.strategy
           };
         }
       }
@@ -584,16 +702,19 @@ function createDouyinCommerceCardBrowser(context) {
             autojsUtils.sleepRandom(700, 1100);
           }
         }
+        var relatedZoneState = detectRelatedProductListState(detailText, matchKeywords, recommendationSignals, targetRoom);
         if ((stayUntilHardEnd || detailBrowsedCount < remainingCards) &&
           Date.now() - detailStartedAt >= Math.min(15000, Math.floor(dwellSeconds * 300)) &&
           Date.now() + 15000 < hardEndAt &&
-          detector.isRelatedProductListText(
-            detailText,
-            context.hasTargetTextMatch(detailText, matchKeywords, targetRoom),
-            context.hasAnyTextKeyword(detailText, recommendationSignals)
-          )) {
+          relatedZoneState.active) {
           var beforeRelatedSignature = signature.buildDetailSignature(detailText);
-          var relatedClick = clickCommerceRelatedProductCard(matchKeywords, skippedRelatedBounds);
+          logger.info("识别到详情页推荐商品卡列表，准备按商品关键词匹配", {
+            attempt: attempt,
+            strategy: relatedZoneState.strategy,
+            topY: relatedZoneState.topY,
+            headingText: String(relatedZoneState.headingText || "").slice(0, 40)
+          });
+          var relatedClick = clickCommerceRelatedProductCard(matchKeywords, skippedRelatedBounds, relatedZoneState);
           if (relatedClick && relatedClick.clicked) {
             var afterRelatedText = extractVisibleText();
             var afterRelatedSignature = signature.buildDetailSignature(afterRelatedText);
