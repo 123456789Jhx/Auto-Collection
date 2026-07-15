@@ -661,6 +661,8 @@ function testCollectorKeepsCommerceLiveSeparateFromOrdinaryLivePhase() {
 
 function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   var source = fs.readFileSync(path.join(__dirname, "../platforms/douyin.js"), "utf8");
+  var commerceCardDetectorSource = fs.readFileSync(path.join(__dirname, "../domain/commerce-card/candidate-detector.js"), "utf8");
+  var commerceCardSource = source + "\n" + commerceCardDetectorSource;
   var start = source.indexOf("function browseCommerceCards(options)");
   var end = source.indexOf("function setTargetLiveSearchResult", start);
   var body = source.slice(start, end);
@@ -672,8 +674,8 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(source.indexOf("findCommerceRelatedProductCardCandidate(node, keywordRegex, skippedBounds, screen)") >= 0, "related product clicks must promote keyword nodes to their product-card container");
   assert(source.indexOf("findCommerceKeywordProductCardCandidate(node, keywordRegex, screen)") >= 0, "search-result product clicks must promote keyword nodes to their product-card container");
   assert(source.indexOf("isCommerceRelatedCardBoundsAllowed(bounds, screen)") >= 0, "related product clicks must reject oversized detail containers and tiny keyword fragments");
-  assert(source.indexOf("isCommerceRelatedZoneText(detailText)") >= 0, "detail browse must recognize built-in related-product headings such as 你可能想看");
-  assert(source.indexOf("isCommerceProductTitleLikeText(combinedText)") >= 0, "related product clicks must allow title-like product cards when the related zone is visible");
+  assert(commerceCardSource.indexOf("isRelatedZoneText(detailText)") >= 0 || commerceCardSource.indexOf("isCommerceRelatedZoneText(detailText)") >= 0, "detail browse must recognize built-in related-product headings such as 你可能想看");
+  assert(commerceCardSource.indexOf("isProductTitleLikeText(combinedText)") >= 0 || commerceCardSource.indexOf("isCommerceProductTitleLikeText(combinedText)") >= 0, "related product clicks must allow title-like product cards when the related zone is visible");
   assert(body.indexOf("buildCommerceDetailSignature(detailText)") >= 0, "detail browse must snapshot the current product detail before clicking a related card");
   assert(body.indexOf("afterRelatedSignature !== beforeRelatedSignature") >= 0, "detail browse must verify that a related-card click opened a different product before counting it");
   assert(body.indexOf("skippedRelatedBounds[relatedClick.bounds] = true") >= 0, "detail browse must skip a related-card bounds when clicking it does not navigate");
@@ -689,8 +691,8 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(source.indexOf("textMatches(\"^全部$\")") >= 0, "commerce search should use the 全部 product-card result flow");
   assert(source.indexOf("textMatches(\"^综合$\")") < 0, "commerce search must not switch to 综合 for product-card nurture");
   assert(source.indexOf("isCommerceProductCandidateNode(node)") >= 0, "commerce card clicks must verify product-card signals before clicking keyword nodes");
-  assert(source.indexOf("相关搜索|大家都在搜|最近看过|评论") >= 0, "commerce card clicks must reject related-search, video, and comment nodes");
-  assert(source.indexOf("¥|￥|券后价|到手价|已售") >= 0, "commerce card clicks must require commodity signals such as price or sales text");
+  assert(commerceCardSource.indexOf("相关搜索|大家都在搜|最近看过|评论") >= 0, "commerce card clicks must reject related-search, video, and comment nodes");
+  assert(commerceCardSource.indexOf("¥|￥|券后价|到手价|已售") >= 0, "commerce card clicks must require commodity signals such as price or sales text");
   assert(body.indexOf("options.skipLiveCards === true") >= 0, "browse phase must support ignoring live cards during product-card nurture");
   assert(body.indexOf("!skipLiveCards && !openedLive") >= 0, "product-card browsing must not enter live cards when skipLiveCards is enabled");
   assert(body.indexOf("liveWatchSeconds") >= 0, "commerce live card watch duration must be configurable");
