@@ -423,11 +423,15 @@ async function createControlCommand(
     ? "PAUSING"
     : commandType === "RESUME"
       ? "RESUMING"
-      : null;
+      : "CANCELLED";
   const assignmentPatch = commandType === "RESUME"
     ? { blockReason: null }
     : commandType === "STOP"
-      ? { blockReason: "stop_requested" }
+      ? {
+        blockReason: null,
+        terminalReason: reason,
+        completedAt: new Date()
+      }
       : {};
   const commandPayload = {
     ...(payload.payload || {}),

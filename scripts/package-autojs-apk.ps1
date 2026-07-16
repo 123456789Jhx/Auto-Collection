@@ -73,6 +73,40 @@ function Write-Utf8NoBom([string]$Path, [string]$Value) {
   [System.IO.File]::WriteAllText($Path, $Value, $encoding)
 }
 
+function Get-RegistrationSecretFromConfig([string]$Path) {
+  if (-not (Test-Path $Path)) {
+    return ""
+  }
+  $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $Path
+  if ($text -match 'registrationSecret\s*:\s*"([^"]+)"') {
+    $value = [string]$Matches[1]
+    if (-not [string]::IsNullOrWhiteSpace($value) -and $value -ne "change_this_mobile_registration_secret") {
+      return $value
+    }
+  }
+  return ""
+}
+
+function Resolve-MobileRegistrationSecret([string]$RepoRoot, [string]$PreviousTargetProject) {
+  $value = [string]$env:MOBILE_REGISTRATION_SECRET
+  if (-not [string]::IsNullOrWhiteSpace($value)) {
+    return $value
+  }
+
+  $candidatePaths = @(
+    (Join-Path $RepoRoot "dist\stage\AgriVideoCollector\config.js"),
+    (Join-Path $PreviousTargetProject "config.js")
+  )
+  foreach ($path in $candidatePaths) {
+    $value = Get-RegistrationSecretFromConfig -Path $path
+    if (-not [string]::IsNullOrWhiteSpace($value)) {
+      Write-Host "Registration secret loaded from local packaged config."
+      return $value
+    }
+  }
+  return ""
+}
+
 function Add-NativeLibrariesToApk([string]$ApkPath, [string]$NativeLibRoot, [string[]]$Abis, [string[]]$ExcludedNames) {
   if (-not (Test-Path $NativeLibRoot)) {
     Write-Host "Native lib root not found, skip injection: $NativeLibRoot"
@@ -585,7 +619,7 @@ Get-ChildItem -LiteralPath $projectSource -Force | ForEach-Object {
   Copy-Item -LiteralPath $_.FullName -Destination $targetProject -Recurse -Force
 }
 
-$registrationSecret = [string]$env:MOBILE_REGISTRATION_SECRET
+$registrationSecret = Resolve-MobileRegistrationSecret -RepoRoot $repoRoot -PreviousTargetProject $targetProject
 if ([string]::IsNullOrWhiteSpace($registrationSecret)) {
   throw "MOBILE_REGISTRATION_SECRET is required for mobile agent APK packages."
 }

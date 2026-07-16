@@ -33,11 +33,48 @@ function Get-ConfigBoolean([object]$Value, [string]$Name, [bool]$DefaultValue) {
   return [System.Convert]::ToBoolean($property.Value)
 }
 
+function Get-RegistrationSecretFromConfig([string]$Path) {
+  if (-not (Test-Path $Path)) {
+    return ""
+  }
+  $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $Path
+  if ($text -match 'registrationSecret\s*:\s*"([^"]+)"') {
+    $value = [string]$Matches[1]
+    if (-not [string]::IsNullOrWhiteSpace($value) -and $value -ne "change_this_mobile_registration_secret") {
+      return $value
+    }
+  }
+  return ""
+}
+
+function Resolve-MobileRegistrationSecret([string]$RepoRoot, [string]$StageDir) {
+  $value = [string]$env:MOBILE_REGISTRATION_SECRET
+  if (-not [string]::IsNullOrWhiteSpace($value)) {
+    return $value
+  }
+
+  $value = Get-RegistrationSecretFromConfig -Path (Join-Path $StageDir "config.js")
+  if (-not [string]::IsNullOrWhiteSpace($value)) {
+    Write-Host "Registration secret loaded from local packaged config."
+    return $value
+  }
+
+  $latestApkStageConfig = Join-Path $RepoRoot "dist\stage\AgriVideoCollector\config.js"
+  $value = Get-RegistrationSecretFromConfig -Path $latestApkStageConfig
+  if (-not [string]::IsNullOrWhiteSpace($value)) {
+    Write-Host "Registration secret loaded from local packaged config."
+    return $value
+  }
+  return ""
+}
+
 $excludeTests = Get-ConfigBoolean -Value $projectConfig.optimization -Name "excludeTests" -DefaultValue $true
 
 $zipPath = Join-Path $distDir ("AgriVideoCollector-autojs-" + $Version + ".zip")
 $shaPath = $zipPath + ".sha256"
 $manifestPath = Join-Path $distDir ("AgriVideoCollector-autojs-" + $Version + ".json")
+
+$registrationSecret = Resolve-MobileRegistrationSecret -RepoRoot $repoRoot -StageDir $stageDir
 
 if (Test-Path $stageRoot) {
   Remove-Item -LiteralPath $stageRoot -Recurse -Force
@@ -63,7 +100,6 @@ Get-ChildItem -Path $sourceDir -Force | ForEach-Object {
   Copy-Item -LiteralPath $_.FullName -Destination $stageDir -Recurse -Force
 }
 
-$registrationSecret = [string]$env:MOBILE_REGISTRATION_SECRET
 if ([string]::IsNullOrWhiteSpace($registrationSecret)) {
   throw "MOBILE_REGISTRATION_SECRET is required for mobile agent packages."
 }
