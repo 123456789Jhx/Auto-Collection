@@ -1191,6 +1191,7 @@
       commerceCardBrowser = createDouyinCommerceCardBrowser({
         logger: logger,
         autojsUtils: autojsUtils,
+        ocrEngine: ocrEngine,
         commerceCardDetector: commerceCardDetector,
         commerceCardSignature: commerceCardSignature,
         enterMall: enterMall,

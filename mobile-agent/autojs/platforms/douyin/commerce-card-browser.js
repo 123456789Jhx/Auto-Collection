@@ -1,6 +1,7 @@
 function createDouyinCommerceCardBrowser(context) {
   var logger = context.logger;
   var autojsUtils = context.autojsUtils;
+  var ocrEngine = context.ocrEngine || null;
   var detector = context.commerceCardDetector;
   var signature = context.commerceCardSignature;
 
@@ -306,6 +307,128 @@ function createDouyinCommerceCardBrowser(context) {
     return best;
   }
 
+  function buildRelatedOcrCardRegions(screen, relatedZoneState) {
+    relatedZoneState = relatedZoneState || {};
+    var topY = Math.max(
+      Math.floor(screen.height * 0.14),
+      Math.floor(Number(relatedZoneState.topY || 0)) + 12
+    );
+    var bottomY = Math.min(screen.height - 220, Math.floor(screen.height * 0.90));
+    if (bottomY <= topY + 80) {
+      return {};
+    }
+    var marginX = Math.max(16, Math.floor(screen.width * 0.018));
+    var gapX = Math.max(10, Math.floor(screen.width * 0.012));
+    var columnW = Math.floor((screen.width - marginX * 2 - gapX) / 2);
+    var rowH = Math.max(300, Math.min(560, Math.floor(screen.height * 0.24)));
+    var regions = {};
+    var rowIndex = 0;
+    for (var y = topY; y + 120 < bottomY && rowIndex < 4; y += rowH + 12) {
+      var h = Math.min(rowH, bottomY - y);
+      if (h < 120) {
+        break;
+      }
+      regions["r" + rowIndex + "_left"] = {
+        x: marginX,
+        y: y,
+        w: columnW,
+        h: h
+      };
+      regions["r" + rowIndex + "_right"] = {
+        x: marginX + columnW + gapX,
+        y: y,
+        w: columnW,
+        h: h
+      };
+      rowIndex += 1;
+    }
+    return regions;
+  }
+
+  function hasOcrKeywordMatch(textValue, matchKeywords, keywordRegex) {
+    textValue = String(textValue || "");
+    if (keywordRegex && keywordRegex.test(textValue)) {
+      return true;
+    }
+    var compactText = textValue.replace(/\s+/g, "");
+    matchKeywords = matchKeywords || [];
+    for (var i = 0; i < matchKeywords.length; i++) {
+      var keyword = String(matchKeywords[i] || "").replace(/\s+/g, "");
+      if (keyword && compactText.indexOf(keyword) >= 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function ocrRelatedProductCardFallback(matchKeywords, keywordRegex, skippedBounds, screen, relatedZoneState) {
+    if (!ocrEngine || !ocrEngine.captureRegions) {
+      logger.warn("推荐商品卡无障碍关键词为空，OCR 兜底不可用", {
+        reason: "ocr_engine_missing",
+        strategy: relatedZoneState && relatedZoneState.strategy || "none"
+      });
+      return null;
+    }
+    var regions = buildRelatedOcrCardRegions(screen, relatedZoneState);
+    var names = Object.keys(regions);
+    if (!names.length) {
+      logger.warn("推荐商品卡无障碍关键词为空，OCR 兜底区域为空", {
+        strategy: relatedZoneState && relatedZoneState.strategy || "none",
+        topY: relatedZoneState && relatedZoneState.topY || 0
+      });
+      return null;
+    }
+    logger.info("推荐商品卡无障碍关键词为空，启动 OCR 兜底", {
+      strategy: relatedZoneState && relatedZoneState.strategy || "none",
+      topY: relatedZoneState && relatedZoneState.topY || 0,
+      regionCount: names.length
+    });
+    var ocrResult;
+    try {
+      ocrResult = ocrEngine.captureRegions(regions) || {};
+    } catch (error) {
+      logger.warn("推荐商品卡 OCR 兜底失败", { message: String(error) });
+      return null;
+    }
+    var ocrRegions = ocrResult.regions || {};
+    for (var i = 0; i < names.length; i++) {
+      var name = names[i];
+      var region = regions[name];
+      var textValue = String(ocrRegions[name] || "");
+      var boundsKey = "ocr:[" + region.x + "," + region.y + "][" + (region.x + region.w) + "," + (region.y + region.h) + "]";
+      if (skippedBounds && skippedBounds[boundsKey]) {
+        continue;
+      }
+      if (!hasOcrKeywordMatch(textValue, matchKeywords, keywordRegex)) {
+        continue;
+      }
+      var x = region.x + Math.floor(region.w / 2);
+      var y = region.y + Math.floor(region.h * 0.58);
+      logger.info("推荐商品卡 OCR 命中关键词", {
+        region: name,
+        bounds: boundsKey,
+        text: textValue.slice(0, 160)
+      });
+      if (!autojsUtils.clickPoint(x, y, logger, "commerce_related_ocr_card_" + name)) {
+        return null;
+      }
+      autojsUtils.sleepRandom(1800, 2600);
+      return {
+        clicked: true,
+        bounds: boundsKey,
+        text: textValue,
+        matchedText: textValue,
+        source: "ocr"
+      };
+    }
+    logger.info("推荐商品卡 OCR 未命中关键词", {
+      strategy: relatedZoneState && relatedZoneState.strategy || "none",
+      regionCount: names.length,
+      textSample: String(ocrResult.text || "").slice(0, 180)
+    });
+    return null;
+  }
+
   function clickCommerceKeywordCard(matchKeywords) {
     var keywordRegex = context.buildContainsRegex(matchKeywords);
     if (!keywordRegex) {
@@ -412,6 +535,9 @@ function createDouyinCommerceCardBrowser(context) {
         topY: relatedZoneState.topY || 0,
         keywordNodeCount: nodes.length
       });
+      if (nodes.length === 0) {
+        return ocrRelatedProductCardFallback(matchKeywords, keywordRegex, skippedBounds, screen, relatedZoneState);
+      }
       return null;
     }
     logger.info("点击详情页后续商品卡片区域", {
