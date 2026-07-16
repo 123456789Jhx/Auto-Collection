@@ -691,6 +691,10 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(body.indexOf("afterRelatedSignature !== beforeRelatedSignature") >= 0, "detail browse must verify that a related-card click opened a different product before counting it");
   assert(body.indexOf("skippedRelatedBounds[relatedClick.bounds] = true") >= 0, "detail browse must skip a related-card bounds when clicking it does not navigate");
   assert(commerceCardBrowserSource.indexOf("detector.isRelatedProductListText(") >= 0, "detail browse must recognize product-card lists even when the related-products heading is absent");
+  assert(commerceCardBrowserSource.indexOf("function isRecommendTabSelected(detailText)") >= 0, "detail browse must only treat the top recommend tab as active when it is selected");
+  assert(commerceCardBrowserSource.indexOf("isRecommendTabSelected(detailText) &&") >= 0, "recommend tab detection must not match an unselected recommend tab");
+  assert.strictEqual(commerceCardDetectorSource.indexOf("return /¥|券后价|立减|已售|店铺|进店|包邮|现货|退货|发货/.test"), -1, "related-list structure fallback must not treat the current product detail as a recommendation list");
+  assert(commerceCardBrowserSource.indexOf("keywordNodeCount: nodes.length") >= 0, "related product matching must log when the recommendation area has no keyword card candidate");
   assert(body.indexOf("relatedZoneState.active") < body.indexOf("context.swipeSearchResultsUp();"), "detail browse must try related product cards before continuing to swipe or returning to search results");
   assert.strictEqual(body.indexOf("recommendedClicks < 2"), -1, "detail browse must not stop after only two related product cards");
   assert(body.indexOf("browseOpenedCommerceDetail(attempt, endAt, remainingCards, requireFullScan)") >= 0, "full-scan product nurture must stay in the opened product detail chain");

@@ -195,6 +195,11 @@ function createDouyinCommerceCardBrowser(context) {
     return best;
   }
 
+  function isRecommendTabSelected(detailText) {
+    var compactText = String(detailText || "").replace(/\s+/g, "");
+    return /推荐已选中/.test(compactText);
+  }
+
   function detectRelatedProductListState(detailText, matchKeywords, recommendationSignals, targetRoom) {
     var screen = autojsUtils.getScreenSize();
     var heading = findRelatedHeadingBoundary(screen, recommendationSignals);
@@ -206,7 +211,7 @@ function createDouyinCommerceCardBrowser(context) {
         headingText: heading.text || ""
       };
     }
-    if (/商品[\s\S]{0,20}评价[\s\S]{0,20}详情[\s\S]{0,20}推荐/.test(String(detailText || "")) &&
+    if (isRecommendTabSelected(detailText) &&
       detector.isProductSignalText(detailText)) {
       return {
         active: true,
@@ -218,7 +223,7 @@ function createDouyinCommerceCardBrowser(context) {
     if (detector.isRelatedProductListText(
       detailText,
       context.hasTargetTextMatch(detailText, matchKeywords, targetRoom),
-      context.hasAnyTextKeyword(detailText, recommendationSignals)
+      context.hasAnyTextKeyword(detailText, recommendationSignals) || isRecommendTabSelected(detailText)
     )) {
       return {
         active: true,
@@ -402,6 +407,11 @@ function createDouyinCommerceCardBrowser(context) {
       }
     }
     if (!best) {
+      logger.info("推荐商品卡列表已识别，但当前屏未找到关键词匹配商品卡候选", {
+        strategy: relatedZoneState.strategy || "none",
+        topY: relatedZoneState.topY || 0,
+        keywordNodeCount: nodes.length
+      });
       return null;
     }
     logger.info("点击详情页后续商品卡片区域", {

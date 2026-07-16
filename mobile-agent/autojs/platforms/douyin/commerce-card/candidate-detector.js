@@ -74,7 +74,7 @@ function isRelatedProductListText(detailText, targetMatched, recommendationMatch
   if (isRelatedZoneText(detailText)) {
     return true;
   }
-  return /¥|券后价|立减|已售|店铺|进店|包邮|现货|退货|发货/.test(String(detailText || ""));
+  return false;
 }
 
 module.exports = {
