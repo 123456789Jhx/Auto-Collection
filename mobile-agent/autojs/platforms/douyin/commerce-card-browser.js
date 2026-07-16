@@ -61,7 +61,10 @@ function createDouyinCommerceCardBrowser(context) {
       }
       return false;
     }
-    if (!context.openSearch(keyword)) {
+    var opened = context.openCommerceSearch ?
+      context.openCommerceSearch(keyword) :
+      context.openSearch(keyword);
+    if (!opened) {
       logger.warn("商城商品卡搜索失败", {
         keyword: keyword,
         reason: context.getLastSearchFailureReason() || "",
@@ -307,6 +310,71 @@ function createDouyinCommerceCardBrowser(context) {
     return best;
   }
 
+  function findCommerceRelatedProductCardByStructure(skippedBounds, screen, relatedZoneState) {
+    skippedBounds = skippedBounds || {};
+    var nodes = [];
+    context.pushFoundNodes(nodes, textMatches(".+"));
+    context.pushFoundNodes(nodes, descMatches(".+"));
+    var best = null;
+    var bestScore = -1;
+    var samples = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      var current = node;
+      for (var depth = 0; current && depth <= 4; depth++) {
+        var bounds = current.bounds && current.bounds();
+        var boundsKey = autojsUtils.formatBounds(bounds);
+        if (bounds && !skippedBounds[boundsKey] && isRelatedCandidateAreaAllowed(bounds, screen, relatedZoneState)) {
+          var ownText = context.getNodeOwnText(current);
+          var contextText = context.collectNodeContextText(current, 1);
+          var combinedText = [ownText, contextText].join("\n");
+          if (samples.length < 8 && combinedText) {
+            samples.push({
+              bounds: boundsKey,
+              text: combinedText.slice(0, 80)
+            });
+          }
+          if (!isBottomCommerceActionText(combinedText) &&
+            !detector.isNonProductCardText(ownText) &&
+            (detector.isProductSignalText(combinedText) || detector.isProductTitleLikeText(combinedText))) {
+            var score = detector.scoreProductCardCandidate(bounds, screen, combinedText, depth, true);
+            if (relatedZoneState.strategy === "heading") {
+              score += 8;
+            } else if (relatedZoneState.strategy === "recommend_tab") {
+              score += 6;
+            }
+            if (current.clickable && current.clickable()) {
+              score += 2;
+            }
+            if (score > bestScore) {
+              bestScore = score;
+              best = {
+                node: current,
+                score: score,
+                bounds: boundsKey,
+                text: combinedText,
+                matchedText: "structure_fallback",
+                strategy: relatedZoneState.strategy
+              };
+            }
+          }
+        }
+        try {
+          current = current.parent && current.parent();
+        } catch (error) {
+          current = null;
+        }
+      }
+    }
+    logger.info("推荐商品卡结构兜底候选扫描完成", {
+      selected: !!best,
+      bestScore: bestScore,
+      sampleCount: samples.length,
+      samples: samples
+    });
+    return best;
+  }
+
   function buildRelatedOcrCardRegions(screen, relatedZoneState) {
     relatedZoneState = relatedZoneState || {};
     var topY = Math.max(
@@ -429,6 +497,40 @@ function createDouyinCommerceCardBrowser(context) {
     return null;
   }
 
+  function clickRelatedProductCardLayoutFallback(skippedBounds, screen, relatedZoneState) {
+    var regions = buildRelatedOcrCardRegions(screen, relatedZoneState);
+    var names = Object.keys(regions);
+    for (var i = 0; i < names.length; i++) {
+      var name = names[i];
+      var region = regions[name];
+      var boundsKey = "layout:[" + region.x + "," + region.y + "][" + (region.x + region.w) + "," + (region.y + region.h) + "]";
+      if (skippedBounds && skippedBounds[boundsKey]) {
+        continue;
+      }
+      var x = region.x + Math.floor(region.w / 2);
+      var y = region.y + Math.floor(region.h * 0.58);
+      logger.warn("推荐商品卡关键词与 OCR 不可用，按推荐区卡片布局兜底点击", {
+        strategy: relatedZoneState && relatedZoneState.strategy || "none",
+        region: name,
+        bounds: boundsKey,
+        x: x,
+        y: y
+      });
+      if (!autojsUtils.clickPoint(x, y, logger, "commerce_related_layout_card_" + name)) {
+        return null;
+      }
+      autojsUtils.sleepRandom(1800, 2600);
+      return {
+        clicked: true,
+        bounds: boundsKey,
+        text: "",
+        matchedText: "layout_fallback",
+        source: "layout"
+      };
+    }
+    return null;
+  }
+
   function clickCommerceKeywordCard(matchKeywords) {
     var keywordRegex = context.buildContainsRegex(matchKeywords);
     if (!keywordRegex) {
@@ -536,9 +638,17 @@ function createDouyinCommerceCardBrowser(context) {
         keywordNodeCount: nodes.length
       });
       if (nodes.length === 0) {
-        return ocrRelatedProductCardFallback(matchKeywords, keywordRegex, skippedBounds, screen, relatedZoneState);
+        var ocrCandidate = ocrRelatedProductCardFallback(matchKeywords, keywordRegex, skippedBounds, screen, relatedZoneState);
+        if (ocrCandidate) {
+          return ocrCandidate;
+        }
+        best = findCommerceRelatedProductCardByStructure(skippedBounds, screen, relatedZoneState);
+        if (!best) {
+          return clickRelatedProductCardLayoutFallback(skippedBounds, screen, relatedZoneState);
+        }
+      } else {
+        return null;
       }
-      return null;
     }
     logger.info("点击详情页后续商品卡片区域", {
       bounds: best.bounds,

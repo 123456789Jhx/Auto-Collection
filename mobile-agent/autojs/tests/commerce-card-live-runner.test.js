@@ -695,9 +695,15 @@ function testDouyinProvidesDedicatedCommerceCardBrowseAdapter() {
   assert(commerceCardBrowserSource.indexOf("isRecommendTabSelected(detailText) &&") >= 0, "recommend tab detection must not match an unselected recommend tab");
   assert.strictEqual(commerceCardDetectorSource.indexOf("return /¥|券后价|立减|已售|店铺|进店|包邮|现货|退货|发货/.test"), -1, "related-list structure fallback must not treat the current product detail as a recommendation list");
   assert(commerceCardBrowserSource.indexOf("keywordNodeCount: nodes.length") >= 0, "related product matching must log when the recommendation area has no keyword card candidate");
+  assert(source.indexOf("openCommerceSearch: openCommerceSearch") >= 0, "commerce card search must use the mall search box entry");
+  assert(commerceCardBrowserSource.indexOf("context.openCommerceSearch ?") >= 0, "commerce card browser must prefer commerce-specific search over global search");
+  assert(source.indexOf("function isCommerceMallSearchBoxBounds") >= 0, "commerce search must filter the mall search box instead of the top-right global search icon");
+  assert(source.indexOf("/搜索/.test(textValueString) && /综合/.test") === -1, "commerce search context must not accept comprehensive/video search pages as product-card results");
   assert(source.indexOf("ocrEngine: ocrEngine") >= 0, "commerce browser must receive the shared OCR engine");
   assert(commerceCardBrowserSource.indexOf("ocrRelatedProductCardFallback(matchKeywords, keywordRegex, skippedBounds, screen, relatedZoneState)") >= 0, "related product matching must fall back to OCR when accessibility exposes no keyword nodes");
   assert(commerceCardBrowserSource.indexOf("if (nodes.length === 0)") >= 0, "OCR related-card fallback should only run when accessibility keyword nodes are absent");
+  assert(commerceCardBrowserSource.indexOf("findCommerceRelatedProductCardByStructure(skippedBounds, screen, relatedZoneState)") >= 0, "related product matching must fall back to visible product-card structure when keywords and OCR are unavailable");
+  assert(commerceCardBrowserSource.indexOf("clickRelatedProductCardLayoutFallback(skippedBounds, screen, relatedZoneState)") >= 0, "related product matching must finally click the visible recommendation card layout instead of scrolling forever");
   assert(body.indexOf("relatedZoneState.active") < body.indexOf("context.swipeSearchResultsUp();"), "detail browse must try related product cards before continuing to swipe or returning to search results");
   assert.strictEqual(body.indexOf("recommendedClicks < 2"), -1, "detail browse must not stop after only two related product cards");
   assert(body.indexOf("browseOpenedCommerceDetail(attempt, endAt, remainingCards, requireFullScan)") >= 0, "full-scan product nurture must stay in the opened product detail chain");

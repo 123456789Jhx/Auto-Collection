@@ -180,6 +180,123 @@
     return false;
   }
 
+  function isCommerceMallSearchBoxBounds(bounds, screen) {
+    if (!bounds || !screen) {
+      return false;
+    }
+    var centerX = bounds.centerX();
+    var centerY = bounds.centerY();
+    if (centerY < screen.height * 0.035 || centerY > Math.max(260, screen.height * 0.16)) {
+      return false;
+    }
+    if (centerX < screen.width * 0.12 || centerX > screen.width * 0.76) {
+      return false;
+    }
+    if (bounds.width && bounds.width() < screen.width * 0.30) {
+      return false;
+    }
+    if (bounds.right > screen.width * 0.90) {
+      return false;
+    }
+    return true;
+  }
+
+  function findCommerceMallSearchBox() {
+    var selectors = [
+      className("android.widget.EditText"),
+      descContains("搜索"),
+      textContains("搜索")
+    ];
+    var nodes = [];
+    for (var i = 0; i < selectors.length; i++) {
+      pushFoundNodes(nodes, selectors[i]);
+    }
+    var screen = autojsUtils.getScreenSize();
+    var best = null;
+    var bestScore = -1;
+    for (var j = 0; j < nodes.length; j++) {
+      var node = nodes[j];
+      var bounds = node && node.bounds && node.bounds();
+      if (!isCommerceMallSearchBoxBounds(bounds, screen)) {
+        continue;
+      }
+      var value = readNodeTextValue(node);
+      var score = 0;
+      if (/搜索|搜商品|搜你想买/.test(value)) {
+        score += 12;
+      }
+      if (node.className && String(node.className()).indexOf("EditText") >= 0) {
+        score += 10;
+      }
+      if (bounds.left < screen.width * 0.12) {
+        score += 6;
+      }
+      if (bounds.width && bounds.width() > screen.width * 0.55) {
+        score += 4;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = node;
+      }
+    }
+    return best;
+  }
+
+  function clickCommerceMallSearchBox(keyword) {
+    var node = findCommerceMallSearchBox();
+    if (node) {
+      logger.info("点击商城页内搜索框", {
+        keyword: keyword,
+        text: readNodeTextValue(node).slice(0, 80),
+        bounds: autojsUtils.formatBounds(node.bounds && node.bounds()),
+        screen: autojsUtils.describeScreenSize(node.bounds && node.bounds())
+      });
+      return autojsUtils.safeClick(node, 3, logger);
+    }
+    var screen = autojsUtils.getScreenSize();
+    var x = Math.floor(screen.width * 0.36);
+    var y = Math.floor(Math.max(120, Math.min(220, screen.height * 0.075)));
+    logger.warn("未找到商城页内搜索框节点，使用商城搜索框坐标兜底", {
+      keyword: keyword,
+      x: x,
+      y: y,
+      textSample: extractVisibleText().slice(0, 180)
+    });
+    return autojsUtils.clickPoint(x, y, logger, "commerce_mall_search_box_fallback");
+  }
+
+  function openCommerceSearch(keyword) {
+    logger.info("尝试进入商城页内搜索", { keyword: keyword });
+    lastSearchFailureReason = "";
+    if (!ensureDouyinForeground()) {
+      openApp();
+      if (!ensureDouyinForeground()) {
+        lastSearchFailureReason = "douyin_not_foreground";
+        return false;
+      }
+    }
+    avoidFloaty("commerce_mall_search");
+    var previousSearchKeyword = activeSearchKeyword;
+    var initialText = extractVisibleText();
+    logger.info("商城搜索流程诊断：初始屏幕状态", {
+      keyword: keyword,
+      screen: autojsUtils.describeScreenSize(),
+      textSample: initialText.slice(0, 220)
+    });
+    if (!clickCommerceMallSearchBox(keyword)) {
+      activeSearchKeyword = previousSearchKeyword;
+      lastSearchFailureReason = "commerce_mall_search_box_not_found";
+      return false;
+    }
+    autojsUtils.sleepRandom(600, 1000);
+    if (!completeSearchKeyword(keyword, previousSearchKeyword, "commerce_mall_search_box")) {
+      activeSearchKeyword = previousSearchKeyword;
+      lastSearchFailureReason = lastSearchFailureReason || "commerce_search_keyword_set_failed";
+      return false;
+    }
+    return true;
+  }
+
   function completeSearchKeyword(keyword, previousSearchKeyword, source) {
     if (!enterSearchKeyword(keyword, source)) {
       activeSearchKeyword = previousSearchKeyword;
@@ -1195,6 +1312,7 @@
         commerceCardDetector: commerceCardDetector,
         commerceCardSignature: commerceCardSignature,
         enterMall: enterMall,
+        openCommerceSearch: openCommerceSearch,
         openSearch: openSearch,
         getLastSearchFailureReason: function () {
           return lastSearchFailureReason;
@@ -1237,12 +1355,6 @@
       return true;
     }
     if (/搜索/.test(textValueString) && /全部/.test(textValueString) && /综合|销量|筛选|回头客|产地直供|好评多|直播/.test(textValueString)) {
-      return true;
-    }
-    if (/搜索/.test(textValueString) && /综合/.test(textValueString) && /销量|筛选|回头客|产地直供|好评多|直播/.test(textValueString)) {
-      return true;
-    }
-    if (/综合/.test(textValueString) && /销量|筛选|好评多|直播/.test(textValueString)) {
       return true;
     }
     return false;
@@ -3932,6 +4044,7 @@
     openSearch: openSearch,
     openLiveSearch: openLiveSearch,
     enterMall: enterMall,
+    openCommerceSearch: openCommerceSearch,
     openCommerceCardSearch: openCommerceCardSearch,
     browseCommerceCards: browseCommerceCards,
     openMatchingCommerceLiveFromCards: openMatchingCommerceLiveFromCards,
