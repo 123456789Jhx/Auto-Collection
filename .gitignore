@@ -1,0 +1,40 @@
+.idea/
+dist/
+docs/materials/
+docs/runtime.log
+docs/error
+scripts/__pycache__/
+
+# Backend/frontend local dependencies and build outputs
+account-data-platform/node_modules/
+account-data-platform/**/node_modules/
+account-data-platform/**/dist/
+account-data-platform/**/dist-types/
+account-data-platform/**/*.tsbuildinfo
+
+# Local environment files
+account-data-platform/.env
+account-data-platform/.env.*
+account-data-platform/**/.env
+account-data-platform/**/.env.*
+!account-data-platform/.env.example
+!account-data-platform/.env.development.example
+!account-data-platform/.env.production.example
+!account-data-platform/**/.env.example
+!account-data-platform/**/.env.development.example
+!account-data-platform/**/.env.production.example
+
+# Runtime collection outputs
+mobile-agent/autojs/datasource/*
+!mobile-agent/autojs/datasource/.gitkeep
+
+# Local UI/debug captures
+current-state.png
+live-after-click.png
+live-click-verified.png
+live-search-current.png
+tmp-window*.xml
+
+# Local OS/editor noise
+Thumbs.db
+.DS_Store

@@ -1,0 +1,18 @@
+COMMENT ON TABLE "device_task_configs" IS '设备级任务参数表，保存每台手机对同一采集任务的个性化脚本执行参数';
+COMMENT ON COLUMN "device_task_configs"."id" IS '设备级任务参数主键 UUID';
+COMMENT ON COLUMN "device_task_configs"."device_id" IS '关联采集设备主键';
+COMMENT ON COLUMN "device_task_configs"."task_id" IS '关联采集任务主键';
+COMMENT ON COLUMN "device_task_configs"."video_minutes_min" IS '视频阶段随机执行最小时长，单位分钟';
+COMMENT ON COLUMN "device_task_configs"."video_minutes_max" IS '视频阶段随机执行最大时长，单位分钟';
+COMMENT ON COLUMN "device_task_configs"."live_minutes_min" IS '直播阶段随机执行最小时长，单位分钟';
+COMMENT ON COLUMN "device_task_configs"."live_minutes_max" IS '直播阶段随机执行最大时长，单位分钟';
+COMMENT ON COLUMN "device_task_configs"."auto_start" IS '手机 Agent 拉取配置后是否自动开始执行任务';
+COMMENT ON COLUMN "device_task_configs"."collect_comments" IS '是否采集视频评论';
+COMMENT ON COLUMN "device_task_configs"."comment_limit" IS '每条视频最多采集评论数';
+COMMENT ON COLUMN "device_task_configs"."heartbeat_minutes" IS '手机 Agent 任务心跳间隔，单位分钟';
+COMMENT ON COLUMN "device_task_configs"."tenant_id" IS '租户编号，当前默认 default';
+COMMENT ON COLUMN "device_task_configs"."created_at" IS '记录创建时间';
+COMMENT ON COLUMN "device_task_configs"."updated_at" IS '记录更新时间';
+COMMENT ON COLUMN "device_task_configs"."created_by" IS '创建人或创建来源';
+COMMENT ON COLUMN "device_task_configs"."updated_by" IS '更新人或更新来源';
+COMMENT ON COLUMN "device_task_configs"."deleted_at" IS '软删除时间';

@@ -1,0 +1,65 @@
+export type DynamicFieldType = "string" | "integer" | "number" | "boolean" | "array";
+
+export type DynamicFieldSchema = {
+  type: DynamicFieldType;
+  description?: string;
+  enum?: Array<string | number>;
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  maxItems?: number;
+  items?: { type: "string" };
+};
+
+export type DynamicObjectSchema = {
+  type: "object";
+  properties: Record<string, DynamicFieldSchema>;
+  required: string[];
+};
+
+export type DynamicFieldProps = {
+  fieldKey: string;
+  schema: DynamicFieldSchema;
+  required: boolean;
+  namePrefix: string;
+};
+
+const fieldTypes = new Set<DynamicFieldType>([
+  "string",
+  "integer",
+  "number",
+  "boolean",
+  "array"
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function normalizeFieldSchema(value: unknown): DynamicFieldSchema | null {
+  if (!isRecord(value) || typeof value.type !== "string" || !fieldTypes.has(value.type as DynamicFieldType)) {
+    return null;
+  }
+  return value as DynamicFieldSchema;
+}
+
+export function normalizeObjectSchema(value?: Record<string, unknown>): DynamicObjectSchema | null {
+  if (!value || value.type !== "object" || !isRecord(value.properties)) return null;
+  const properties: Record<string, DynamicFieldSchema> = {};
+  for (const [fieldKey, fieldSchema] of Object.entries(value.properties)) {
+    const normalized = normalizeFieldSchema(fieldSchema);
+    if (normalized) properties[fieldKey] = normalized;
+  }
+  return {
+    type: "object",
+    properties,
+    required: Array.isArray(value.required)
+      ? value.required.filter((item): item is string => typeof item === "string")
+      : []
+  };
+}
+
+export function fieldLabel(fieldKey: string, schema: DynamicFieldSchema) {
+  return schema.description?.trim() || fieldKey;
+}
