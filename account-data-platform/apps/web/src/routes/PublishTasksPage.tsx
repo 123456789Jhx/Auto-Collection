@@ -44,7 +44,7 @@ function formatSlot(value: string | null) {
     : `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
-export function PublishTasksPage() {
+export function PublishTasksContent() {
   const queryClient = useQueryClient();
   const [topicTask, setTopicTask] = useState<PublishTaskRow | null>(null);
   const dashboard = useQuery({
@@ -112,7 +112,7 @@ export function PublishTasksPage() {
   ];
 
   return (
-    <div className="ops-page publish-tasks-page">
+    <>
       <div className="ops-page-header">
         <div>
           <Typography.Title level={3}>发布任务</Typography.Title>
@@ -153,6 +153,14 @@ export function PublishTasksPage() {
         onCancel={() => setTopicTask(null)}
         onSubmit={(description) => topicTask && topicMutation.mutate({ id: topicTask.id, description })}
       />
+    </>
+  );
+}
+
+export function PublishTasksPage() {
+  return (
+    <div className="ops-page publish-tasks-page">
+      <PublishTasksContent />
     </div>
   );
 }

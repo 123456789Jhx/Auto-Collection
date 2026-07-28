@@ -46,9 +46,17 @@ function formatDate(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-export function RemoteScriptsPage() {
+type RemoteScriptsContentProps = {
+  fixedScriptKey?: string;
+  title?: string;
+};
+
+export function RemoteScriptsContent({
+  fixedScriptKey,
+  title = "远程脚本"
+}: RemoteScriptsContentProps) {
   const queryClient = useQueryClient();
-  const [scriptKey, setScriptKey] = useState<string>();
+  const [selectedScriptKey, setSelectedScriptKey] = useState<string>();
   const [status, setStatus] = useState<RemoteScriptStatus>();
   const [keywordInput, setKeywordInput] = useState("");
   const [keyword, setKeyword] = useState("");
@@ -62,16 +70,21 @@ export function RemoteScriptsPage() {
     queryKey: ["remoteScriptDefinitions"],
     queryFn: getRemoteScriptDefinitions
   });
+  const effectiveScriptKey = fixedScriptKey ?? selectedScriptKey;
   const configsQuery = useQuery({
-    queryKey: ["remoteScriptConfigs", scriptKey, status, keyword, page, pageSize],
-    queryFn: () => getRemoteScriptConfigs({ scriptKey, status, keyword, page, pageSize })
+    queryKey: ["remoteScriptConfigs", effectiveScriptKey, status, keyword, page, pageSize],
+    queryFn: () => getRemoteScriptConfigs({ scriptKey: effectiveScriptKey, status, keyword, page, pageSize })
   });
+  const definitions = useMemo(
+    () => (definitionsQuery.data ?? []).filter((item) => !fixedScriptKey || item.scriptKey === fixedScriptKey),
+    [definitionsQuery.data, fixedScriptKey]
+  );
   const definitionNames = useMemo(
-    () => new Map((definitionsQuery.data ?? []).map((item) => [
+    () => new Map(definitions.map((item) => [
       item.scriptKey,
       item.scriptName || item.displayName || item.scriptKey
     ])),
-    [definitionsQuery.data]
+    [definitions]
   );
 
   async function refreshList() {
@@ -185,13 +198,11 @@ export function RemoteScriptsPage() {
     }
   ];
 
-  const definitions = definitionsQuery.data ?? [];
-
   return (
-    <div className="ops-page">
+    <>
       <div className="ops-page-header">
         <div>
-          <Typography.Title level={3}>远程脚本</Typography.Title>
+          <Typography.Title level={3}>{title}</Typography.Title>
           <Typography.Text type="secondary">共 {configsQuery.data?.total ?? 0} 条配置</Typography.Text>
         </div>
         <Space>
@@ -213,21 +224,23 @@ export function RemoteScriptsPage() {
       <section className="ops-panel">
         <div className="ops-panel-body">
           <Space wrap style={{ marginBottom: 16 }}>
-            <Select
-              allowClear
-              placeholder="全部脚本类型"
-              style={{ width: 220 }}
-              loading={definitionsQuery.isLoading}
-              value={scriptKey}
-              options={definitions.map((item) => ({
-                value: item.scriptKey,
-                label: item.scriptName || item.displayName || item.scriptKey
-              }))}
-              onChange={(value) => {
-                setScriptKey(value);
-                setPage(1);
-              }}
-            />
+            {!fixedScriptKey ? (
+              <Select
+                allowClear
+                placeholder="全部脚本类型"
+                style={{ width: 220 }}
+                loading={definitionsQuery.isLoading}
+                value={selectedScriptKey}
+                options={definitions.map((item) => ({
+                  value: item.scriptKey,
+                  label: item.scriptName || item.displayName || item.scriptKey
+                }))}
+                onChange={(value) => {
+                  setSelectedScriptKey(value);
+                  setPage(1);
+                }}
+              />
+            ) : null}
             <Select
               allowClear
               placeholder="全部状态"
@@ -288,6 +301,14 @@ export function RemoteScriptsPage() {
         config={bindingConfig}
         onCancel={() => setBindingConfig(null)}
       />
+    </>
+  );
+}
+
+export function RemoteScriptsPage() {
+  return (
+    <div className="ops-page">
+      <RemoteScriptsContent />
     </div>
   );
 }

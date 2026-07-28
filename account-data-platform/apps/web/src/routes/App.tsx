@@ -1,4 +1,4 @@
-import { BarChartOutlined, CloudUploadOutlined, CodeOutlined, DatabaseOutlined, FileTextOutlined, LockOutlined, LoginOutlined, LogoutOutlined, MobileOutlined, UserOutlined } from "@ant-design/icons";
+import { BarChartOutlined, DatabaseOutlined, FileTextOutlined, LockOutlined, LoginOutlined, LogoutOutlined, MobileOutlined, UserOutlined, VideoCameraAddOutlined } from "@ant-design/icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Form, Input, Layout, Menu, Space, Spin, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
@@ -9,6 +9,7 @@ import { LogsPage } from "./LogsPage";
 import { RecordsPage } from "./RecordsPage";
 import { RemoteScriptsPage } from "./RemoteScriptsPage";
 import { PublishTasksPage } from "./PublishTasksPage";
+import { PublishVideoModulePage } from "./PublishVideoModulePage";
 import { TaskSchedulerPage } from "./TaskSchedulerPage";
 import { TasksPage } from "./TasksPage";
 
@@ -16,6 +17,7 @@ const { Header, Sider, Content } = Layout;
 
 const pages = {
   dashboard: { title: "工作台" },
+  publishVideo: { title: "视频发布" },
   scheduler: { title: "任务调度" },
   tasks: { title: "配置" },
   devices: { title: "设备" },
@@ -30,6 +32,7 @@ type AuthStatus = "checking" | "authenticated" | "unauthenticated";
 
 function renderPage(page: PageKey) {
   if (page === "dashboard") return <DashboardPage />;
+  if (page === "publishVideo") return <PublishVideoModulePage />;
   if (page === "scheduler") return <TaskSchedulerPage />;
   if (page === "tasks") return <TasksPage />;
   if (page === "devices") return <DevicesPage />;
@@ -45,6 +48,7 @@ type LoginFormValues = {
 };
 
 function pageFromPath(): PageKey {
+  if (window.location.pathname === "/publish-video") return "publishVideo";
   if (window.location.pathname === "/publish-tasks") return "publishTasks";
   if (window.location.pathname === "/devices") return "devices";
   return window.location.pathname === "/remote-scripts" ? "remoteScripts" : "dashboard";
@@ -102,7 +106,9 @@ export function App() {
 
   function navigateToPage(nextPage: PageKey) {
     setPage(nextPage);
-    const nextPath = nextPage === "remoteScripts"
+    const nextPath = nextPage === "publishVideo"
+      ? "/publish-video"
+      : nextPage === "remoteScripts"
       ? "/remote-scripts"
       : nextPage === "publishTasks" ? "/publish-tasks"
       : nextPage === "devices" ? "/devices" : "/";
@@ -175,10 +181,10 @@ export function App() {
           onClick={(item) => navigateToPage(item.key as PageKey)}
           items={[
             { key: "dashboard", icon: <BarChartOutlined />, label: "工作台" },
+            { key: "publishVideo", icon: <VideoCameraAddOutlined />, label: "视频发布" },
             // LEGACY_FREEZE: 保留调度与配置页面代码，恢复业务时再放回两个菜单项。
             { key: "devices", icon: <MobileOutlined />, label: "设备" },
-            { key: "remoteScripts", icon: <CodeOutlined />, label: "远程脚本" },
-            { key: "publishTasks", icon: <CloudUploadOutlined />, label: "发布任务" },
+            // LEGACY_FREEZE: 远程脚本与发布任务保留旧 URL，只隐藏独立菜单入口。
             { key: "records", icon: <DatabaseOutlined />, label: "采集记录" },
             { key: "logs", icon: <FileTextOutlined />, label: "日志中心" }
           ]}

@@ -3,30 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Dropdown, Form, Input, InputNumber, Modal, Select, Skeleton, Space, Switch, message } from "antd";
 import { useState } from "react";
 import { createMobileCommand, getDeviceTaskConfig, getDevices, updateDevice, updateDeviceTaskConfig } from "../lib/api-client";
-import { deviceDisplayName, deviceSubTitle, normalizeTaskDisplayText, statusText } from "../lib/display-maps";
 import { defaultLiveCommentBotConfig, parseLiveCommentConfig, parseP3ExtensionsConfig, stringifyLiveCommentConfig, stringifyP3ExtensionsConfig } from "../lib/live-comment-config";
 import { DeviceAccountBindingControl } from "./DeviceAccountBindingControl";
-
-type DeviceRow = {
-  id: string;
-  deviceCode: string;
-  deviceName?: string;
-  douyinAccountName?: string | null;
-  platform?: string;
-  status: string;
-  reportedStatus?: string;
-  currentTask?: "video" | "live" | "live_comment" | "commerce_card_live_comment" | "none";
-  effectiveStatus: string;
-  lastHeartbeatAt?: string;
-  heartbeatAgeMinutes?: number | null;
-  appVersion?: string | null;
-  targetVersion?: string | null;
-  enabled?: boolean;
-  lastIp?: string | null;
-  lastRegion?: string | null;
-  remark?: string | null;
-  accountProfile?: Record<string, unknown> | null;
-};
+import { DeviceList, deviceDisplayName, enabledText, formatDateTime, statusText, statusTone, taskText, taskTone, type DeviceRow } from "./DeviceList";
 
 type TaskRow = {
   taskId?: string;
@@ -94,40 +73,6 @@ type DevicePayload = {
 };
 
 type MaintenanceCommandType = "REFRESH_CONFIG" | "RESTART_APP" | "CHECK_UPDATE" | "UPDATE_AGENT";
-
-function formatDateTime(value?: string | null) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("zh-CN", { hour12: false });
-}
-
-function taskText(value?: string | null) {
-  if (value === "video") return "视频";
-  if (value === "live") return "直播";
-  if (value === "live_comment") return "搜索直播间评论";
-  if (value === "commerce_card_live_comment") return "商品卡养号";
-  return value ? normalizeTaskDisplayText(value) : "待命";
-}
-
-function statusTone(value?: string | null) {
-  if (value === "error" || value === "risk_control") return "red";
-  if (value === "offline" || value === "stopped") return "gray";
-  if (value === "paused" || value === "idle" || value === "booting" || value === "updating") return "amber";
-  return "green";
-}
-
-function taskTone(value?: string | null) {
-  if (value === "live_comment") return "purple";
-  if (value === "commerce_card_live_comment") return "amber";
-  if (value === "live") return "green";
-  if (value === "video") return "blue";
-  return "gray";
-}
-
-function enabledText(value?: boolean) {
-  return value === false ? "禁用" : "启用";
-}
 
 function parseAliasText(value?: string) {
   return (value || "")
@@ -423,75 +368,35 @@ export function DevicesPage() {
         </section>
 
         <section className="ops-workbench wide-side">
-          <div className="ops-panel">
-            <div className="ops-panel-head">
-              <span>设备运行清单</span>
-              <span className="ops-small">{devices.length} 台</span>
-            </div>
-            <div className="ops-table-wrap">
-              <table className="ops-table">
-                <thead>
-                  <tr>
-                    <th>设备</th>
-                    <th>当前状态</th>
-                    <th>当前任务</th>
-                    <th>平台 / 启用</th>
-                    <th>版本 / IP</th>
-                    <th>最后心跳</th>
-                    <th>常用操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {devices.length === 0 ? <tr><td className="ops-empty" colSpan={7}>没有符合条件的设备</td></tr> : null}
-                  {devices.map((device) => (
-                    <tr key={device.id || device.deviceCode} className={device.deviceCode === selectedDevice?.deviceCode ? "selected" : ""} onClick={() => setSelectedDeviceCode(device.deviceCode)}>
-                      <td>
-                        <div className="ops-title">{deviceDisplayName(device)}</div>
-                        <div className="ops-small">{deviceSubTitle(device)}</div>
-                      </td>
-                      <td><span className={`ops-tag ${statusTone(device.effectiveStatus || device.status)}`}>{statusText(device.effectiveStatus || device.status)}</span></td>
-                      <td><span className={`ops-tag ${taskTone(device.currentTask)}`}>{taskText(device.currentTask)}</span></td>
-                      <td>
-                        <div>{device.platform || "-"}</div>
-                        <span className={`ops-tag ${device.enabled === false ? "red" : "green"}`}>{enabledText(device.enabled)}</span>
-                      </td>
-                      <td>
-                        <div>{device.appVersion || "-"} / {device.targetVersion || "-"}</div>
-                        <div className="ops-small">{device.lastIp || "-"}</div>
-                      </td>
-                      <td>{formatDateTime(device.lastHeartbeatAt)}</td>
-                      <td>
-                        <div className="ops-actions-cell" onClick={(event) => event.stopPropagation()}>
-                          {/* LEGACY_FREEZE: 旧采集启动、暂停、停止按钮已冻结，设备维护与绑定入口保留。 */}
-                          <button className="ops-mini-btn" type="button" onClick={() => void openConfig(device)}>脚本参数</button>
-                          <button className="ops-mini-btn" type="button" onClick={() => openDeviceEditor(device)}>设备信息</button>
-                          <DeviceAccountBindingControl
-                            device={device}
-                            onSaved={() => void queryClient.invalidateQueries({ queryKey: ["devices"] })}
-                          />
-                          <Dropdown
-                            menu={{
-                              items: [
-                                { key: "REFRESH_CONFIG", icon: <SyncOutlined />, label: "刷新配置" },
-                                { key: "CHECK_UPDATE", icon: <SyncOutlined />, label: "检查版本" },
-                                { key: "UPDATE_AGENT", icon: <SyncOutlined />, label: "更新脚本" },
-                                { key: "RESTART_APP", icon: <ReloadOutlined />, label: "故障重启抖音" }
-                              ],
-                              onClick: ({ key }) => {
-                                sendMaintenanceCommand(device.deviceCode, key as MaintenanceCommandType);
-                              }
-                            }}
-                          >
-                            <button className="ops-mini-btn" type="button"><MoreOutlined /></button>
-                          </Dropdown>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <DeviceList
+            devices={devices}
+            selectedDeviceCode={selectedDevice?.deviceCode}
+            onSelect={(device) => setSelectedDeviceCode(device.deviceCode)}
+            renderActions={(device) => (
+              <>
+                {/* LEGACY_FREEZE: 旧采集启动、暂停、停止按钮已冻结，设备维护与绑定入口保留。 */}
+                <button className="ops-mini-btn" type="button" onClick={() => void openConfig(device)}>脚本参数</button>
+                <button className="ops-mini-btn" type="button" onClick={() => openDeviceEditor(device)}>设备信息</button>
+                <DeviceAccountBindingControl
+                  device={device}
+                  onSaved={() => void queryClient.invalidateQueries({ queryKey: ["devices"] })}
+                />
+                <Dropdown
+                  menu={{
+                    items: [
+                      { key: "REFRESH_CONFIG", icon: <SyncOutlined />, label: "刷新配置" },
+                      { key: "CHECK_UPDATE", icon: <SyncOutlined />, label: "检查版本" },
+                      { key: "UPDATE_AGENT", icon: <SyncOutlined />, label: "更新脚本" },
+                      { key: "RESTART_APP", icon: <ReloadOutlined />, label: "故障重启抖音" }
+                    ],
+                    onClick: ({ key }) => sendMaintenanceCommand(device.deviceCode, key as MaintenanceCommandType)
+                  }}
+                >
+                  <button className="ops-mini-btn" type="button"><MoreOutlined /></button>
+                </Dropdown>
+              </>
+            )}
+          />
 
           <aside className="ops-panel">
             <div className="ops-panel-head">
