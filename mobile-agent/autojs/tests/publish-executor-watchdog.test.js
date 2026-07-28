@@ -1,8 +1,8 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 
-const { createPublishExecutorWatchdog } = require("../domain/发布执行器看门狗.js");
-const { createPublishVideoHandler } = require("../features/publish-video/发布视频-入口.js");
+const { createPublishExecutorWatchdog } = require("../domain/publish-watchdog.js");
+const { createPublishVideoHandler } = require("../features/publish-video/publish-video-entry.js");
 
 test("发布执行器看门狗超时触发一次回调且完成后可中断线程", () => {
   let runner;

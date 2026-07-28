@@ -1,9 +1,9 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 
-const { createPublishVideoHandler } = require("../features/publish-video/发布视频-入口.js");
-const { createEditCoverStep } = require("../features/publish-video/编辑封面.js");
-const { createPublishTaskLock } = require("../domain/发布任务锁.js");
+const { createPublishVideoHandler } = require("../features/publish-video/publish-video-entry.js");
+const { createEditCoverStep } = require("../features/publish-video/edit-cover.js");
+const { createPublishTaskLock } = require("../domain/publish-task-lock.js");
 
 function createContext(events) {
   return {

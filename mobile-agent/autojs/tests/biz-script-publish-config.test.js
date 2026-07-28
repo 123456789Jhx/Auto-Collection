@@ -15,3 +15,8 @@ test("业务脚本 updater 不硬编码 localhost 下载地址", () => {
   assert(source.includes("latest.packageUrl"));
   assert(!source.includes("localhost:3015"));
 });
+test("业务脚本发布脚本读取 API 实际托管目录", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../../../scripts/publish-autojs-version.ps1"), "utf8");
+  assert(source.includes("account-data-platform\\apps\\api\\dist\\agent"));
+  assert(!source.includes("account-data-platform\\dist\\agent"));
+});

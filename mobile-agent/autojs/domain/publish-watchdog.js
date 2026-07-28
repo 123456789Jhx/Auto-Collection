@@ -1,3 +1,4 @@
+// 原中文名：发布执行器看门狗.js；职责：监测发布执行器进度与超时。
 var DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
 function defaultStartThread(runner) {

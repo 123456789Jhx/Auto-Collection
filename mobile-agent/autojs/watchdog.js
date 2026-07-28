@@ -167,14 +167,22 @@ function maybeUpdate(force) {
   if (!force && lastUpdateCheckAt && now - lastUpdateCheckAt < intervalMs) {
     return false;
   }
-  lastUpdateCheckAt = now;
-
   var createLogger = require(files.join(SCRIPT_DIR, "core/logger.js")).createLogger;
   var createStorage = require(files.join(SCRIPT_DIR, "core/storage.js")).createStorage;
   var createUploader = require(files.join(SCRIPT_DIR, "core/uploader.js")).createUploader;
   var logger = createLogger(config);
   var storage = createStorage(config, logger);
   var uploader = createUploader(config, logger, storage);
+  var registrationResult = uploader.registerDeviceToken();
+  var registrationReady = !!(
+    registrationResult &&
+    registrationResult.success &&
+    String(config.device && config.device.deviceId || "").trim()
+  );
+  if (!registrationReady) {
+    return false;
+  }
+  lastUpdateCheckAt = now;
   var versionResult = uploader.checkAgentVersion();
 
   if (!versionResult || !versionResult.updateAvailable || !versionResult.latestVersion) {

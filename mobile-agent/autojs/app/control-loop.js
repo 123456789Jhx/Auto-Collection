@@ -18,6 +18,19 @@ function createControlLoop(context) {
     ready: false
   };
   context.backendSync = backendSync;
+
+  function createPublishExecutionContext() {
+    if (!context.loadBaselineScript) {
+      return context;
+    }
+    var publishContext = {};
+    Object.keys(context).forEach(function (key) {
+      publishContext[key] = context[key];
+    });
+    publishContext.forceBaselineBizScripts = true;
+    publishContext.loadBizScript = context.loadBaselineScript;
+    return publishContext;
+  }
   var assignmentControl = context.assignmentControl || {
     pending: null
   };
@@ -281,6 +294,9 @@ function createControlLoop(context) {
     if (!config.upload.controlEnabled) {
       return;
     }
+    if (!backendSync.ready) {
+      return;
+    }
     var now = Date.now();
     if (!shouldPollControlCommands(force, now)) {
       return;
@@ -329,6 +345,9 @@ function createControlLoop(context) {
 
   function pollControlCommandsAsync(force) {
     if (!config.upload.controlEnabled) {
+      return;
+    }
+    if (!backendSync.ready) {
       return;
     }
     if (!shouldPollControlCommands(force, Date.now())) {
@@ -622,10 +641,13 @@ function createControlLoop(context) {
     try {
       if (commandType === "PUBLISH_VIDEO_TASK") {
         logger.info("发布执行器启动", { commandId: command.id, taskId: payload.taskId || "" });
-        var publishModule = context.loadBizScript
-          ? context.loadBizScript("features/publish-video/发布视频-入口.js")
-          : require("../features/publish-video/发布视频-入口.js");
-        publishVideoHandler = publishVideoHandler || publishModule.createPublishVideoHandler(context);
+        var publishContext = createPublishExecutionContext();
+        var publishModule = publishContext.loadBaselineScript
+          ? publishContext.loadBaselineScript("features/publish-video/publish-video-entry.js")
+          : publishContext.loadBizScript
+            ? publishContext.loadBizScript("features/publish-video/publish-video-entry.js")
+          : require("../features/publish-video/publish-video-entry.js");
+        publishVideoHandler = publishVideoHandler || publishModule.createPublishVideoHandler(publishContext);
         publishVideoHandler.handle(command);
         return;
       }

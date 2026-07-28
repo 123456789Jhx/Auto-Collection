@@ -73,6 +73,84 @@ test("business-script bundle contains no UTF-8 BOM in JavaScript or JSON entries
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
 });
+
+test("business-script manifest uses ASCII paths and keeps Chinese display names", () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "biz-script-manifest-"));
+  const version = "manifest-ascii-test";
+
+  try {
+    const result = spawnSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        bundleScript,
+        "-Version",
+        version,
+        "-PackageBaseUrl",
+        "http://127.0.0.1:3136/downloads/agent",
+        "-OutputDir",
+        outputDir
+      ],
+      { cwd: repoRoot, encoding: "utf8" }
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const zipPath = path.join(outputDir, `AgriVideoCollector-biz-scripts-${version}.zip`);
+    const entries = readZipEntries(zipPath);
+    assert.deepEqual(entries.filter((entry) => !/^[\x20-\x7E]+$/.test(entry.name)), []);
+
+    const manifest = JSON.parse(entries.find((entry) => entry.name === "biz-script-manifest.json").contents);
+    assert.deepEqual(manifest.files.filter((file) => !/^[\x20-\x7E]+$/.test(file.path)), []);
+    assert.equal(
+      manifest.files.find((file) => file.path === "features/publish-video/publish-video-entry.js").displayName,
+      "发布视频-入口.js"
+    );
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+test("business-script bundle rejects non-ASCII entry names", () => {
+  const temporarySourcePath = path.join(
+    repoRoot,
+    "mobile-agent",
+    "autojs",
+    "features",
+    "publish-video",
+    "临时中文文件.js"
+  );
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "biz-script-ascii-gate-"));
+
+  fs.writeFileSync(temporarySourcePath, "module.exports = {};\n", "utf8");
+  try {
+    const result = spawnSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        bundleScript,
+        "-Version",
+        "ascii-gate-test",
+        "-PackageBaseUrl",
+        "http://127.0.0.1:3136/downloads/agent",
+        "-OutputDir",
+        outputDir
+      ],
+      { cwd: repoRoot, encoding: "utf8" }
+    );
+
+    assert.notEqual(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stderr || result.stdout, /ASCII/i);
+  } finally {
+    fs.rmSync(temporarySourcePath, { force: true });
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
 test("business-script bundle defaults to the API-served artifact directory", () => {
   const version = "default-output-test";
   const apiArtifactDir = path.join(repoRoot, "account-data-platform", "apps", "api", "dist", "agent");

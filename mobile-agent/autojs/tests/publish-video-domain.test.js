@@ -1,10 +1,10 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 
-const { createActionTimeGate } = require("../domain/动作时间闸口.js");
-const { validateDescriptionTopics, validateTopics } = require("../domain/话题校验.js");
-const { createTopicContinuation } = require("../domain/话题断点续传.js");
-const { chooseVideoMaterial } = require("../domain/素材判断.js");
+const { createActionTimeGate } = require("../domain/action-timing-gates.js");
+const { validateDescriptionTopics, validateTopics } = require("../domain/topic-validator.js");
+const { createTopicContinuation } = require("../domain/topic-resume.js");
+const { chooseVideoMaterial } = require("../domain/material-inspector.js");
 
 test("动作闸口每次在两个配置区间内独立生成延时", () => {
   const randomValues = [0, 0.25, 0.5, 0.75];

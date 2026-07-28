@@ -1,3 +1,4 @@
+// 原中文名：素材目录管理.js；职责：管理发布素材目录、下载与归档。
 var fallbackStorageValues = {};
 var MATERIAL_STORAGE_NAME = "AgriVideoPublishMaterial";
 var MATERIAL_DIR_PATTERN = /^20\d{6}(（\d+）)?$/;

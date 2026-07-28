@@ -1,5 +1,10 @@
+// 原中文名：发布视频-入口.js；职责：协调素材下载、抖音/视频号发布与结果回传。
 function loadBizModule(context, path) {
+  if (context.forceBaselineBizScripts && context.loadBaselineScript) {
+    return context.loadBaselineScript(path);
+  }
   if (context.loadBizScript) return context.loadBizScript(path);
+  if (context.loadBaselineScript) return context.loadBaselineScript(path);
   return require(files.join(context.config.runtime.scriptDir, path));
 }
 
@@ -86,20 +91,20 @@ function createResultReporter(config) {
 }
 
 function createDefaultSteps(context, injectedUi) {
-  var ui = injectedUi || loadBizModule(context, "features/publish-video/抖音发布界面.js")
+  var ui = injectedUi || loadBizModule(context, "features/publish-video/douyin-publish-ui.js")
     .createDouyinPublishUi(context);
-  var materialDomain = loadBizModule(context, "domain/素材判断.js");
-  var topicDomain = loadBizModule(context, "domain/话题校验.js");
+  var materialDomain = loadBizModule(context, "domain/material-inspector.js");
+  var topicDomain = loadBizModule(context, "domain/topic-validator.js");
   return {
-    open: loadBizModule(context, "features/publish-video/打开抖音到相机页.js")
+    open: loadBizModule(context, "features/publish-video/open-douyin-camera.js")
       .createOpenDouyinCameraStep(ui),
-    select: loadBizModule(context, "features/publish-video/选择发布素材.js")
+    select: loadBizModule(context, "features/publish-video/select-publish-material.js")
       .createSelectPublishMaterialStep(ui, materialDomain.chooseVideoMaterial),
-    editCover: loadBizModule(context, "features/publish-video/编辑封面.js")
+    editCover: loadBizModule(context, "features/publish-video/edit-cover.js")
       .createEditCoverStep(ui),
-    fill: loadBizModule(context, "features/publish-video/填写标题描述话题.js")
+    fill: loadBizModule(context, "features/publish-video/fill-publish-text.js")
       .createFillPublishTextStep(ui, topicDomain),
-    publish: loadBizModule(context, "features/publish-video/执行发布与结果判定.js")
+    publish: loadBizModule(context, "features/publish-video/execute-publish.js")
       .createExecutePublishStep(ui),
     states: ui.states
   };
@@ -118,14 +123,14 @@ function createPublishVideoHandler(context, dependencies) {
   var uploader = context.uploader;
   var steps = dependencies.steps || null;
   var channelsHandler = dependencies.channelsHandler || null;
-  var materialManager = dependencies.materialManager || loadBizModule(context, "domain/素材目录管理.js")
+  var materialManager = dependencies.materialManager || loadBizModule(context, "domain/material-dir-manager.js")
     .createPublishMaterialManager({ logger: logger });
-  var publishLock = dependencies.publishLock || loadBizModule(context, "domain/发布任务锁.js")
+  var publishLock = dependencies.publishLock || loadBizModule(context, "domain/publish-task-lock.js")
     .createPublishTaskLock();
   var executionWatchdog = dependencies.executionWatchdog ||
-    loadBizModule(context, "domain/发布执行器看门狗.js").createPublishExecutorWatchdog({ timeoutMs: 10 * 60 * 1000 });
-  var topicDomain = dependencies.topicDomain || loadBizModule(context, "domain/话题校验.js");
-  var topicContinuation = dependencies.topicContinuation || loadBizModule(context, "domain/话题断点续传.js")
+    loadBizModule(context, "domain/publish-watchdog.js").createPublishExecutorWatchdog({ timeoutMs: 10 * 60 * 1000 });
+  var topicDomain = dependencies.topicDomain || loadBizModule(context, "domain/topic-validator.js");
+  var topicContinuation = dependencies.topicContinuation || loadBizModule(context, "domain/topic-resume.js")
     .createTopicContinuation({
       fetchTopic: createTopicQuery(context.config),
       validateDescriptionTopics: topicDomain.validateDescriptionTopics
@@ -161,7 +166,7 @@ function createPublishVideoHandler(context, dependencies) {
 
   function wechatChannelsHandler() {
     if (!channelsHandler) {
-      channelsHandler = loadBizModule(context, "features/publish-video/视频号发布全流程.js")
+      channelsHandler = loadBizModule(context, "features/publish-video/channels-publish-flow.js")
         .createWechatChannelsPublishHandler(context, {
           ui: dependencies.channelsUi,
           gate: dependencies.channelsGate,
@@ -175,7 +180,7 @@ function createPublishVideoHandler(context, dependencies) {
 
   function gateFor(payload) {
     if (dependencies.gate) return dependencies.gate;
-    return loadBizModule(context, "domain/动作时间闸口.js").createActionTimeGate({
+    return loadBizModule(context, "domain/action-timing-gates.js").createActionTimeGate({
       responseDelayMsMin: payload.responseDelayMsMin,
       responseDelayMsMax: payload.responseDelayMsMax,
       actionWaitMsMin: payload.actionWaitMsMin,

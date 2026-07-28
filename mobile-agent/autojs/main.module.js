@@ -49,15 +49,32 @@ var SCRIPT_DIR = getScriptDir();
 var BIZ_SCRIPT_ROOT = files.join(SCRIPT_DIR, "biz-scripts");
 var BIZ_SCRIPT_CURRENT_DIR = files.join(BIZ_SCRIPT_ROOT, "current");
 
+function requireWithModuleLoadLog(loaderName, path, resolvedPath, source) {
+  var startedAt = new Date().getTime();
+  console.info("[INFO] biz_module_load_start loader=" + loaderName + " source=" + source + " modulePath=" + path);
+  try {
+    var loadedModule = require(resolvedPath);
+    console.info("[INFO] biz_module_load_finish loader=" + loaderName + " source=" + source + " modulePath=" + path + " elapsedMs=" + (new Date().getTime() - startedAt) + " success=true");
+    return loadedModule;
+  } catch (error) {
+    console.info("[INFO] biz_module_load_finish loader=" + loaderName + " source=" + source + " modulePath=" + path + " elapsedMs=" + (new Date().getTime() - startedAt) + " success=false error=" + String(error));
+    throw error;
+  }
+}
+
+function localBaselineRequire(path) {
+  return requireWithModuleLoadLog("loadBaselineScript", path, files.join(SCRIPT_DIR, path), "baseline");
+}
+
 function localRequire(path) {
   var normalized = String(path || "").replace(/\\/g, "/");
   if (normalized.indexOf("features/") === 0 || normalized.indexOf("domain/") === 0) {
     var overridePath = files.join(BIZ_SCRIPT_CURRENT_DIR, normalized);
     if (files.exists(overridePath)) {
-      return require(overridePath);
+      return requireWithModuleLoadLog("loadBizScript", path, overridePath, "overlay");
     }
   }
-  return require(files.join(SCRIPT_DIR, path));
+  return requireWithModuleLoadLog("loadBizScript", path, files.join(SCRIPT_DIR, path), "baseline");
 }
 
 var config = localRequire("config.js");
@@ -155,6 +172,7 @@ var douyin = createDouyinAdapter(config, logger, ocrEngine, floatyControl, scree
 var context = {
   config: config,
   loadBizScript: localRequire,
+  loadBaselineScript: localBaselineRequire,
   logger: logger,
   permissions: permissions,
   storage: storage,

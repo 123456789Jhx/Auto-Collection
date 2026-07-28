@@ -1,3 +1,4 @@
+// 原中文名：视频号发布界面.js；职责：封装视频号发布界面交互。
 function createWechatChannelsPublishUi(context) {
   var logger = context.logger;
   var packageName = "com.tencent.mm";

@@ -1,5 +1,10 @@
+// 原中文名：视频号发布全流程.js；职责：编排视频号发布流程。
 function loadBizModule(context, path) {
+  if (context.forceBaselineBizScripts && context.loadBaselineScript) {
+    return context.loadBaselineScript(path);
+  }
   if (context.loadBizScript) return context.loadBizScript(path);
+  if (context.loadBaselineScript) return context.loadBaselineScript(path);
   return require(files.join(context.config.runtime.scriptDir, path));
 }
 
@@ -47,10 +52,10 @@ function createWechatChannelsPublishHandler(context, dependencies) {
   dependencies = dependencies || {};
   var logger = context.logger;
   var uploader = context.uploader;
-  var materialDomain = loadBizModule(context, "domain/素材判断.js");
-  var topicDomain = loadBizModule(context, "domain/话题校验.js");
-  var popupMarker = loadBizModule(context, "features/publish-video/视频号验证弹窗标记.js");
-  var ui = dependencies.ui || loadBizModule(context, "features/publish-video/视频号发布界面.js")
+  var materialDomain = loadBizModule(context, "domain/material-inspector.js");
+  var topicDomain = loadBizModule(context, "domain/topic-validator.js");
+  var popupMarker = loadBizModule(context, "features/publish-video/channels-verify-popup.js");
+  var ui = dependencies.ui || loadBizModule(context, "features/publish-video/channels-publish-ui.js")
     .createWechatChannelsPublishUi(context);
 
   var materialDownloader = dependencies.materialDownloader;
@@ -63,7 +68,7 @@ function createWechatChannelsPublishHandler(context, dependencies) {
 
   function gateFor(payload) {
     if (dependencies.gate) return dependencies.gate;
-    return loadBizModule(context, "domain/动作时间闸口.js").createActionTimeGate({
+    return loadBizModule(context, "domain/action-timing-gates.js").createActionTimeGate({
       responseDelayMsMin: payload.responseDelayMsMin,
       responseDelayMsMax: payload.responseDelayMsMax,
       actionWaitMsMin: payload.actionWaitMsMin,

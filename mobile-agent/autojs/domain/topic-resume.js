@@ -1,3 +1,4 @@
+// 原中文名：话题断点续传.js；职责：持久化话题填写断点。
 function defaultSleep(value) {
   if (typeof sleep === "function") sleep(value);
 }
@@ -18,7 +19,7 @@ function createTopicContinuation(dependencies) {
   var keepAwake = dependencies.keepAwake || defaultKeepAwake;
   var releaseAwake = dependencies.releaseAwake || defaultReleaseAwake;
   var validateDescription = dependencies.validateDescriptionTopics ||
-    require("./话题校验.js").validateDescriptionTopics;
+    require("./topic-validator.js").validateDescriptionTopics;
   var pollIntervalMs = Number(dependencies.pollIntervalMs || 20000);
 
   if (typeof fetchTopic !== "function") throw new Error("话题断点续传缺少查询函数");

@@ -1,3 +1,4 @@
+// 原中文名：发布任务锁.js；职责：串行化发布任务执行。
 var fallbackLockValues = {};
 var LOCK_STORAGE_NAME = "AgriVideoPublishTaskLock";
 var LOCK_KEY = "active";

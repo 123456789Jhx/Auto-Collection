@@ -1,3 +1,4 @@
+// 原中文名：填写标题描述话题.js；职责：填写标题、描述与话题。
 function topicPending(message) {
   var error = new Error(message);
   error.publishStatus = "TOPIC_PENDING";

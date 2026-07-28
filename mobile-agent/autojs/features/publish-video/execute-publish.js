@@ -1,3 +1,4 @@
+// 原中文名：执行发布与结果判定.js；职责：执行发布动作并判定结果。
 function createExecutePublishStep(ui) {
   return function executePublish(payload) {
     try {

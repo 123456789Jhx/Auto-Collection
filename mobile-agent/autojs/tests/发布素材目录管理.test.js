@@ -1,8 +1,8 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 
-const { createPublishMaterialManager } = require("../domain/素材目录管理.js");
-const { createPublishTaskLock } = require("../domain/发布任务锁.js");
+const { createPublishMaterialManager } = require("../domain/material-dir-manager.js");
+const { createPublishTaskLock } = require("../domain/publish-task-lock.js");
 
 function normalize(path) {
   var value = String(path || "").replace(/\\/g, "/").replace(/\/+/g, "/");

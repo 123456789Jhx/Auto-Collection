@@ -4,10 +4,10 @@ const { test } = require("node:test");
 const {
   createWechatChannelsPublishHandler,
   decideWechatStartupCorrection
-} = require("../features/publish-video/视频号发布全流程.js");
+} = require("../features/publish-video/channels-publish-flow.js");
 const {
   markChannelsVerificationPopup
-} = require("../features/publish-video/视频号验证弹窗标记.js");
+} = require("../features/publish-video/channels-verify-popup.js");
 
 function createContext(events) {
   return {

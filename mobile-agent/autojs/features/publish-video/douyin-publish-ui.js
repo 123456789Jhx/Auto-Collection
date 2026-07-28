@@ -1,3 +1,4 @@
+// 原中文名：抖音发布界面.js；职责：封装抖音发布界面交互。
 function createDouyinPublishUi(context) {
   var logger = context.logger;
 

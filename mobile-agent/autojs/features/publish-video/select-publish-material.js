@@ -1,3 +1,4 @@
+// 原中文名：选择发布素材.js；职责：选择待发布视频素材。
 function materialError(message) {
   var error = new Error(message);
   error.publishStatus = "MATERIAL_INVALID";

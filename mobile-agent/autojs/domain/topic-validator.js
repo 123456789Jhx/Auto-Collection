@@ -1,3 +1,4 @@
+// 原中文名：话题校验.js；职责：校验发布话题。
 function normalizeTopic(value) {
   return String(value || "")
     .replace(/^#+/, "")

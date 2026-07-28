@@ -61,6 +61,19 @@ function Add-DeterministicZipEntry(
   }
 }
 
+function Get-BizScriptDisplayName([string]$SourcePath) {
+  $firstLine = Get-Content -LiteralPath $SourcePath -Encoding UTF8 -TotalCount 1
+  $nameStart = $firstLine.IndexOf([char]0xFF1A)
+  $nameEnd = $firstLine.IndexOf([char]0xFF1B)
+  if ($nameStart -lt 0 -or $nameEnd -le $nameStart) {
+    return ""
+  }
+  $displayName = $firstLine.Substring($nameStart + 1, $nameEnd - $nameStart - 1).Trim()
+  if ($displayName -notmatch '\.js$') {
+    return ""
+  }
+  return $displayName
+}
 function Assert-ZipEntriesHaveNoUtf8Bom([string]$ArchivePath) {
   $archive = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
   $entriesWithBom = @()
@@ -85,6 +98,23 @@ function Assert-ZipEntriesHaveNoUtf8Bom([string]$ArchivePath) {
   }
   if ($entriesWithBom.Count -gt 0) {
     throw "UTF-8 BOM is not allowed in biz-scripts package entries: $($entriesWithBom -join ', ')"
+  }
+}
+
+function Assert-ZipEntryNamesAreAscii([string]$ArchivePath) {
+  $archive = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
+  $invalidEntries = @()
+  try {
+    foreach ($entry in $archive.Entries) {
+      if ($entry.FullName -notmatch '^[\x20-\x7E]+$') {
+        $invalidEntries += $entry.FullName
+      }
+    }
+  } finally {
+    $archive.Dispose()
+  }
+  if ($invalidEntries.Count -gt 0) {
+    throw "Only printable ASCII file names are allowed in biz-scripts package entries: $($invalidEntries -join ', ')"
   }
 }
 
@@ -113,10 +143,18 @@ $manifestFiles = @($sourceFiles | ForEach-Object {
   if ($relativePath -eq "config.js" -or -not ($relativePath.StartsWith("features/") -or $relativePath.StartsWith("domain/"))) {
     throw "Unsafe business script path: $relativePath"
   }
-  [ordered]@{
-    path = Convert-ToEncodedPath $relativePath
+  if ($relativePath -notmatch '^[\x20-\x7E]+$') {
+    throw "Only printable ASCII file names are allowed in biz-scripts package entries: $relativePath"
+  }
+  $manifestFile = [ordered]@{
+    path = $relativePath
     sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
   }
+  $displayName = Get-BizScriptDisplayName $_.FullName
+  if (-not [string]::IsNullOrWhiteSpace($displayName)) {
+    $manifestFile.displayName = $displayName
+  }
+  $manifestFile
 })
 
 $embeddedManifest = [ordered]@{
@@ -146,6 +184,7 @@ try {
   $archive.Dispose()
 }
 Assert-ZipEntriesHaveNoUtf8Bom -ArchivePath $zipPath
+Assert-ZipEntryNamesAreAscii -ArchivePath $zipPath
 
 $zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
 $zipFileName = Split-Path -Leaf $zipPath

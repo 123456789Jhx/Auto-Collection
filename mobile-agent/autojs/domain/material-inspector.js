@@ -1,3 +1,4 @@
+// 原中文名：素材判断.js；职责：检查并选择可发布素材。
 function normalizeDuration(value) {
   return String(value || "").replace(/\s+/g, "").trim();
 }

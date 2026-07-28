@@ -9,7 +9,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$downloadDir = Join-Path $repoRoot "account-data-platform\dist\agent"
+$downloadDir = Join-Path $repoRoot "account-data-platform\apps\api\dist\agent"
 
 if ([string]::IsNullOrWhiteSpace($ManifestPath)) {
   $latestManifest = Get-ChildItem -LiteralPath $downloadDir -Filter "AgriVideoCollector-biz-scripts-*.json" -File |

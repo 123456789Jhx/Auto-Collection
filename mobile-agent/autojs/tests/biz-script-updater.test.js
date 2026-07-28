@@ -86,13 +86,13 @@ test("compares dotted biz-script versions", () => {
   assert.equal(compareBizVersions("2.0.0", "2.0.1"), -1);
 });
 
-test("decodes URI paths while keeping updates inside business layers", () => {
+test("accepts ASCII paths while keeping updates inside business layers", () => {
   const files = validateManifest({
     version: "1.0.0",
     channel: "biz-scripts",
-    files: [{ path: "features/%E7%83%AD%E6%9B%B4%E6%96%B0%E7%A4%BA%E4%BE%8B.js", sha256: "a".repeat(64) }]
+    files: [{ path: "features/hot-update-example.js", sha256: "a".repeat(64) }]
   }, "1.0.0");
-  assert.equal(files[0].path, "features/热更新示例.js");
+  assert.equal(files[0].path, "features/hot-update-example.js");
   assert.throws(() => validateManifest({
     version: "1.0.0",
     channel: "biz-scripts",
@@ -114,6 +114,7 @@ test("queries biz-scripts without changing the APK version channel", () => {
   const deps = createMockDeps();
   const config = {
     app: { version: "9.9.9" },
+    device: { deviceId: "device-ready" },
     runtime: { scriptDir: "/runtime", bizScriptRoot: "/runtime/biz-scripts" },
     upload: { versionChannel: "stable", bizScriptVersionCheckIntervalMinutes: 30 }
   };
@@ -132,6 +133,40 @@ test("queries biz-scripts without changing the APK version channel", () => {
     version: "9.9.9",
     channel: "stable"
   });
+});
+
+test("defers biz-script checks until device registration has a device id", () => {
+  const deps = createMockDeps();
+  const config = {
+    app: { version: "9.9.9" },
+    device: { deviceId: "" },
+    runtime: { scriptDir: "/runtime", bizScriptRoot: "/runtime/biz-scripts" },
+    upload: { versionChannel: "stable", bizScriptVersionCheckIntervalMinutes: 30 }
+  };
+  let registered = false;
+  let checkCount = 0;
+  const updater = createBizScriptUpdater(config, { info() {}, warn() {} }, {
+    isRegistered() {
+      return registered;
+    },
+    checkAgentVersion() {
+      checkCount += 1;
+      return { updateAvailable: false };
+    },
+    uploadAgentUpdateEvent() {}
+  }, deps);
+
+  assert.deepEqual(updater.check(true), {
+    checked: false,
+    deferred: true,
+    reason: "device_not_registered"
+  });
+  assert.equal(checkCount, 0);
+
+  config.device.deviceId = "device-ready";
+  registered = true;
+  updater.check(true);
+  assert.equal(checkCount, 1);
 });
 
 test("keeps the current overlay and reports rollback when file verification fails", () => {

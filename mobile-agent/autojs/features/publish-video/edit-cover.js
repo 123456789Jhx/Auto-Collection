@@ -1,3 +1,4 @@
+// 原中文名：编辑封面.js；职责：编辑发布视频的封面。
 function createEditCoverStep(ui) {
   return function editCover(materials) {
     if (!materials || !materials.coverPath) {

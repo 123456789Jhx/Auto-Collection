@@ -1,3 +1,4 @@
+// 原中文名：动作时间闸口.js；职责：控制发布动作的时间节奏。
 function normalizeRange(minValue, maxValue, fallback) {
   var min = Number(minValue);
   var max = Number(maxValue);

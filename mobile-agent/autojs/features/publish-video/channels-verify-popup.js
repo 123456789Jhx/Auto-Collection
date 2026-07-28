@@ -1,3 +1,4 @@
+// 原中文名：视频号验证弹窗标记.js；职责：识别并标记视频号验证弹窗。
 function snapshotText(snapshot) {
   if (!snapshot) return "";
   return String(snapshot.combinedText || snapshot.visibleText || snapshot.text || "");

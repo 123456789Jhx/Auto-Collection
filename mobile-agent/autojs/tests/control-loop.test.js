@@ -61,6 +61,13 @@ function createContext(overrides) {
       lastPollAt: 0,
       polling: false
     },
+    backendSync: {
+      lastAt: 0,
+      running: false,
+      failureCount: 0,
+      lastFailureLogAt: 0,
+      ready: true
+    },
     heartbeatService: {
       reportImmediateHeartbeat: function () {},
       reportAgentHeartbeat: function () {}
@@ -134,6 +141,60 @@ function testUnregisteredPollAttemptsAreThrottled() {
 
     assert.strictEqual(getStartCount(), 1, "unregistered poll attempts must be throttled by command interval");
   });
+}
+
+function testControlCommandsWaitForBackendSync() {
+  var loaded = false;
+  var handled = false;
+  var pollCount = 0;
+  var command = {
+    id: "publish-command-before-sync",
+    commandType: "PUBLISH_VIDEO_TASK",
+    payload: { taskId: "publish-task-before-sync" }
+  };
+  var context = createContext({
+    backendSync: {
+      lastAt: 0,
+      running: true,
+      failureCount: 0,
+      lastFailureLogAt: 0,
+      ready: false
+    },
+    loadBizScript: function () {
+      loaded = true;
+      return {
+        createPublishVideoHandler: function () {
+          return {
+            handle: function () {
+              handled = true;
+            }
+          };
+        }
+      };
+    },
+    uploader: {
+      isRegistered: function () { return true; },
+      pollCommands: function () {
+        pollCount += 1;
+        return [command];
+      },
+      uploadRuntimeLog: function () {},
+      ackCommand: function () {}
+    }
+  });
+  var controlLoop = createControlLoop(context);
+
+  controlLoop.pollControlCommands(true);
+
+  assert.strictEqual(pollCount, 0);
+  assert.strictEqual(loaded, false);
+
+  context.backendSync.ready = true;
+  controlLoop.pollControlCommands(true);
+
+  assert.strictEqual(pollCount, 1);
+  assert.strictEqual(loaded, true);
+  assert.strictEqual(handled, true);
 }
 
 function testLiveCommentPauseRequestsInterrupt() {
@@ -600,8 +661,11 @@ function testPublishVideoCommandDispatchesToHotUpdateHandler() {
     payload: { taskId: "publish-task-13" }
   };
   var context = createContext({
-    loadBizScript: function (modulePath) {
-      assert.strictEqual(modulePath, "features/publish-video/发布视频-入口.js");
+    loadBizScript: function () {
+      throw new Error("publish command must not synchronously load the hot-update overlay");
+    },
+    loadBaselineScript: function (modulePath) {
+      assert.strictEqual(modulePath, "features/publish-video/publish-video-entry.js");
       return {
         createPublishVideoHandler: function () {
           return { handle: function (value) { handled.push(value); } };
@@ -626,6 +690,7 @@ function testPublishVideoCommandDispatchesToHotUpdateHandler() {
 
 testPollAsyncDoesNotStartThreadBeforeInterval();
 testUnregisteredPollAttemptsAreThrottled();
+testControlCommandsWaitForBackendSync();
 testLiveCommentPauseRequestsInterrupt();
 testStopIsNotSupersededByLaterStartInSamePoll();
 testRefreshRuntimeConfigAppliesCommerceCardConfig();

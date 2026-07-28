@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 
-const { createPublishVideoHandler } = require("../features/publish-video/发布视频-入口.js");
+const { createPublishVideoHandler } = require("../features/publish-video/publish-video-entry.js");
 
 function context(events) {
   return {

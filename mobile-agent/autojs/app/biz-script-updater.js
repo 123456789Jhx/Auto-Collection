@@ -165,6 +165,11 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
     try { return String(JSON.parse(deps.readText(versionPath)).version || "0.0.0"); } catch (error) { return "0.0.0"; }
   }
 
+  function isDeviceRegistrationReady() {
+    var deviceId = String(config.device && config.device.deviceId || "").trim();
+    return !!deviceId && (!uploader.isRegistered || uploader.isRegistered());
+  }
+
   function queryBizScriptVersion(version) {
     var originalVersion = config.app.version;
     var originalChannel = config.upload.versionChannel;
@@ -239,6 +244,9 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
 
   function check(force) {
     if (config.upload.bizScriptVersionCheckEnabled === false) return { checked: false, disabled: true };
+    if (!isDeviceRegistrationReady()) {
+      return { checked: false, deferred: true, reason: "device_not_registered" };
+    }
     var interval = Math.max(1, Number(config.upload.bizScriptVersionCheckIntervalMinutes || 30)) * 60 * 1000;
     if (!force && lastCheckAt && deps.now() - lastCheckAt < interval) return { checked: false, skipped: true };
     lastCheckAt = deps.now();
