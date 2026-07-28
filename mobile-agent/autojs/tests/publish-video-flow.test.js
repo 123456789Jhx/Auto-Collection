@@ -3,6 +3,7 @@ const { test } = require("node:test");
 
 const { createPublishVideoHandler } = require("../features/publish-video/发布视频-入口.js");
 const { createEditCoverStep } = require("../features/publish-video/编辑封面.js");
+const { createPublishTaskLock } = require("../domain/发布任务锁.js");
 
 function createContext(events) {
   return {
@@ -281,4 +282,104 @@ test("共享入口把视频号平台任务交给视频号 handler", () => {
 
   assert.deepEqual(handler.handle(command), { status: "SUCCEEDED" });
   assert.deepEqual(events, ["channels:channels-task-route"]);
+});
+
+test("第一条发布执行中重入第二条时返回 PUBLISH_BUSY", () => {
+  const events = [];
+  const reports = [];
+  const lockValues = {};
+  const storage = {
+    get(key, fallback) { return Object.hasOwn(lockValues, key) ? lockValues[key] : fallback; },
+    put(key, value) { lockValues[key] = value; },
+    remove(key) { delete lockValues[key]; }
+  };
+  const publishLock = createPublishTaskLock({ storage, now: () => 1000, ownerId: "flow-test" });
+  const materialManager = {
+    beginTask() {
+      events.push("begin");
+      return { dir: "/sdcard/20260728", videoPath: "/sdcard/20260728/video.mp4", coverPath: "/sdcard/20260728/cover.jpg" };
+    },
+    download(paths) { events.push("download"); return paths; },
+    endTask(dir) { events.push("end:" + dir); }
+  };
+  const steps = createSteps(events);
+  let secondResult;
+  let handler;
+  const originalOpen = steps.open;
+  steps.open = function (payload) {
+    originalOpen(payload);
+    secondResult = handler.handle({
+      id: "command-overlap-second",
+      commandType: "PUBLISH_VIDEO_TASK",
+      payload: { taskId: "task-overlap-second", title: "春耕" }
+    });
+  };
+  handler = createPublishVideoHandler(createContext(events), {
+    steps,
+    materialManager,
+    publishLock,
+    resultReporter: {
+      report(taskId, result) { reports.push({ taskId, result }); return { success: true }; }
+    },
+    gate: { waitForNext(name, predicate) { assert.equal(predicate(), true); events.push("gate:" + name); } }
+  });
+
+  const firstResult = handler.handle({
+    id: "command-overlap-first",
+    commandType: "PUBLISH_VIDEO_TASK",
+    payload: {
+      taskId: "task-overlap-first",
+      title: "春耕",
+      description: "#春耕 #农技",
+      videoUrl: "https://example.test/video.mp4",
+      coverUrl: "https://example.test/cover.jpg",
+      expectedTopicCount: 2
+    }
+  });
+
+  assert.equal(firstResult.status, "SUCCEEDED");
+  assert.deepEqual(secondResult, {
+    status: "PUBLISH_BUSY",
+    error: "上一发布任务仍在执行",
+    publishedUrl: "",
+    platformContentId: ""
+  });
+  assert.equal(events.filter((value) => value === "begin").length, 1);
+  assert.equal(events.at(-1), "end:/sdcard/20260728");
+  assert.deepEqual(reports.map((value) => value.result.status), ["PUBLISH_BUSY", "SUCCEEDED"]);
+  assert.equal(publishLock.acquire(), true);
+  publishLock.release();
+});
+
+test("素材下载失败仍清理任务目录并释放执行器锁", () => {
+  const events = [];
+  const handler = createPublishVideoHandler(createContext(events), {
+    materialManager: {
+      beginTask() {
+        events.push("begin");
+        return { dir: "/sdcard/20260728", videoPath: "/sdcard/20260728/video.mp4", coverPath: "/sdcard/20260728/cover.jpg" };
+      },
+      download() { events.push("download"); throw new Error("缺少封面素材：接口 coverUrl 为空"); },
+      endTask(dir) { events.push("end:" + dir); }
+    },
+    publishLock: {
+      acquire() { events.push("acquire"); return true; },
+      release() { events.push("release"); }
+    },
+    resultReporter: { report() { events.push("report"); return { success: true }; } },
+    gate: { waitForNext() { throw new Error("gate should not run"); } },
+    steps: createSteps(events)
+  });
+
+  const result = handler.handle({
+    id: "command-missing-cover",
+    commandType: "PUBLISH_VIDEO_TASK",
+    payload: { taskId: "task-missing-cover", videoUrl: "https://example.test/video.mp4", coverUrl: null }
+  });
+
+  assert.equal(result.status, "MATERIAL_INVALID");
+  assert.equal(result.error, "缺少封面素材：接口 coverUrl 为空");
+  assert.deepEqual(events, [
+    "acquire", "begin", "download", "report", "ack:FAILED", "end:/sdcard/20260728", "release"
+  ]);
 });

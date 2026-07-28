@@ -1,7 +1,3 @@
-function joinPath() {
-  return Array.prototype.slice.call(arguments).filter(Boolean).join("/").replace(/\/+/g, "/");
-}
-
 function loadBizModule(context, path) {
   if (context.loadBizScript) return context.loadBizScript(path);
   return require(files.join(context.config.runtime.scriptDir, path));
@@ -71,68 +67,6 @@ function createResultReporter(config) {
   };
 }
 
-function ensureDir(path) {
-  if (!files.exists(path)) {
-    files.createWithDirs(joinPath(path, ".keep"));
-    files.remove(joinPath(path, ".keep"));
-  }
-}
-
-function safeName(value) {
-  return String(value || "publish-video").replace(/[^0-9A-Za-z_-]+/g, "_");
-}
-
-function urlExtension(url, fallback, allowed) {
-  var match = /\.([0-9A-Za-z]{2,5})(?:[?#]|$)/.exec(String(url || ""));
-  var value = match ? "." + match[1].toLowerCase() : fallback;
-  return allowed.indexOf(value) >= 0 ? value : fallback;
-}
-
-function scanMedia(path) {
-  try {
-    if (typeof media !== "undefined" && media && media.scanFile) media.scanFile(path);
-  } catch (error) {}
-}
-
-function createMaterialDownloader(config) {
-  function downloadOne(url, path, label) {
-    var response = http.get(url, {
-      timeout: Math.max(15000, Number(config.upload.timeoutMs || 5000) * 4)
-    });
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw new Error(label + "下载失败：HTTP " + response.statusCode);
-    }
-    var bytes = response.body.bytes();
-    if (!bytes || !bytes.length) throw new Error(label + "下载失败：文件为空");
-    files.writeBytes(path, bytes);
-    scanMedia(path);
-    return path;
-  }
-
-  return {
-    download: function (payload) {
-      if (!payload.videoUrl) throw new Error("videoUrl不能为空");
-      var fallbackRoot = config.output && (config.output.cacheDir || config.output.baseDir) || "/sdcard/Download";
-      var downloadDir = String(payload.downloadDir || joinPath(fallbackRoot, "publish-video"));
-      ensureDir(downloadDir);
-      var taskName = safeName(payload.taskId);
-      var videoPath = joinPath(downloadDir, taskName + "-video" + urlExtension(
-        payload.videoUrl,
-        ".mp4",
-        [".mp4", ".mov", ".m4v"]
-      ));
-      var coverPath = payload.coverUrl ? joinPath(downloadDir, taskName + "-cover" + urlExtension(
-        payload.coverUrl,
-        ".jpg",
-        [".jpg", ".jpeg", ".png", ".webp"]
-      )) : "";
-      downloadOne(payload.videoUrl, videoPath, "视频素材");
-      if (payload.coverUrl) downloadOne(payload.coverUrl, coverPath, "封面素材");
-      return { downloadDir: downloadDir, videoPath: videoPath, coverPath: coverPath };
-    }
-  };
-}
-
 function createDefaultSteps(context, injectedUi) {
   var ui = injectedUi || loadBizModule(context, "features/publish-video/抖音发布界面.js")
     .createDouyinPublishUi(context);
@@ -166,7 +100,18 @@ function createPublishVideoHandler(context, dependencies) {
   var uploader = context.uploader;
   var steps = dependencies.steps || null;
   var channelsHandler = dependencies.channelsHandler || null;
-  var materialDownloader = dependencies.materialDownloader || createMaterialDownloader(context.config);
+  var materialManager = dependencies.materialManager || loadBizModule(context, "domain/素材目录管理.js")
+    .createPublishMaterialManager({ logger: logger });
+  var publishLock = dependencies.publishLock || loadBizModule(context, "domain/发布任务锁.js")
+    .createPublishTaskLock();
+  var activeMaterialDir = "";
+  var materialDownloader = dependencies.materialDownloader || {
+    download: function (payload) {
+      var paths = materialManager.beginTask(payload, context.config);
+      activeMaterialDir = paths.dir;
+      return materialManager.download(paths, payload);
+    }
+  };
   var resultReporter = dependencies.resultReporter || createResultReporter(context.config);
 
   function douyinSteps() {
@@ -241,34 +186,48 @@ function createPublishVideoHandler(context, dependencies) {
   function handle(command) {
     if (!command || command.commandType !== "PUBLISH_VIDEO_TASK") return { handled: false };
     var payload = command.payload || command.payloadJson || {};
-    if (isWechatChannelsTask(payload)) return wechatChannelsHandler().handle(command);
-    if (!payload.taskId) return finish(command, payload, "MATERIAL_INVALID", "taskId不能为空", null);
-    var materials;
-    try {
-      materials = materialDownloader.download(payload);
-    } catch (downloadError) {
-      return finish(command, payload, "MATERIAL_INVALID", String(downloadError), null);
+    if (!publishLock.acquire()) {
+      return finish(command, payload, "PUBLISH_BUSY", "上一发布任务仍在执行", null);
     }
-
+    activeMaterialDir = "";
     try {
-      var gate = gateFor(payload);
-      var activeSteps = douyinSteps();
-      activeSteps.open(payload);
-      gate.waitForNext("选择发布素材", activeSteps.states.galleryReady);
-      activeSteps.select(materials, payload);
-      gate.waitForNext("编辑封面", activeSteps.states.coverEditReady);
-      activeSteps.editCover(materials, payload);
-      gate.waitForNext("填写标题描述话题", activeSteps.states.publishFormReady);
-      activeSteps.fill(payload, materials);
-      gate.waitForNext("执行发布与结果判定", activeSteps.states.publishReviewReady);
-      var publishResult = activeSteps.publish(payload, materials) || {};
-      logger.info("抖音发布任务执行成功", { taskId: payload.taskId });
-      return finish(command, payload, "SUCCEEDED", "", publishResult);
-    } catch (error) {
-      var status = error && error.publishStatus || "FAILED";
-      var reason = String(error && error.message || error || "发布步骤失败");
-      logger.warn("抖音发布任务执行失败", { taskId: payload.taskId, status: status, reason: reason });
-      return finish(command, payload, status, reason, null);
+      if (!payload.taskId) return finish(command, payload, "MATERIAL_INVALID", "taskId不能为空", null);
+      if (isWechatChannelsTask(payload)) return wechatChannelsHandler().handle(command);
+      var materials;
+      try {
+        materials = materialDownloader.download(payload);
+      } catch (downloadError) {
+        var downloadReason = String(downloadError && downloadError.message || downloadError || "素材下载失败");
+        return finish(command, payload, "MATERIAL_INVALID", downloadReason, null);
+      }
+
+      try {
+        var gate = gateFor(payload);
+        var activeSteps = douyinSteps();
+        activeSteps.open(payload);
+        gate.waitForNext("选择发布素材", activeSteps.states.galleryReady);
+        activeSteps.select(materials, payload);
+        gate.waitForNext("编辑封面", activeSteps.states.coverEditReady);
+        activeSteps.editCover(materials, payload);
+        gate.waitForNext("填写标题描述话题", activeSteps.states.publishFormReady);
+        activeSteps.fill(payload, materials);
+        gate.waitForNext("执行发布与结果判定", activeSteps.states.publishReviewReady);
+        var publishResult = activeSteps.publish(payload, materials) || {};
+        logger.info("抖音发布任务执行成功", { taskId: payload.taskId });
+        return finish(command, payload, "SUCCEEDED", "", publishResult);
+      } catch (error) {
+        var status = error && error.publishStatus || "FAILED";
+        var reason = String(error && error.message || error || "发布步骤失败");
+        logger.warn("抖音发布任务执行失败", { taskId: payload.taskId, status: status, reason: reason });
+        return finish(command, payload, status, reason, null);
+      }
+    } finally {
+      try {
+        if (activeMaterialDir) materialManager.endTask(activeMaterialDir);
+      } finally {
+        activeMaterialDir = "";
+        publishLock.release();
+      }
     }
   }
 
@@ -276,7 +235,6 @@ function createPublishVideoHandler(context, dependencies) {
 }
 
 module.exports = {
-  createMaterialDownloader: createMaterialDownloader,
   createPublishVideoHandler: createPublishVideoHandler,
   createResultReporter: createResultReporter,
   isWechatChannelsTask: isWechatChannelsTask

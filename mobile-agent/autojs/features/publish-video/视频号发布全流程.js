@@ -47,20 +47,17 @@ function createWechatChannelsPublishHandler(context, dependencies) {
   dependencies = dependencies || {};
   var logger = context.logger;
   var uploader = context.uploader;
-  var sharedEntry = null;
   var materialDomain = loadBizModule(context, "domain/素材判断.js");
   var topicDomain = loadBizModule(context, "domain/话题校验.js");
   var popupMarker = loadBizModule(context, "features/publish-video/视频号验证弹窗标记.js");
   var ui = dependencies.ui || loadBizModule(context, "features/publish-video/视频号发布界面.js")
     .createWechatChannelsPublishUi(context);
 
-  function shared() {
-    if (!sharedEntry) sharedEntry = loadBizModule(context, "features/publish-video/发布视频-入口.js");
-    return sharedEntry;
+  var materialDownloader = dependencies.materialDownloader;
+  var resultReporter = dependencies.resultReporter;
+  if (!materialDownloader || !resultReporter) {
+    throw new Error("视频号发布必须由共享发布入口创建");
   }
-
-  var materialDownloader = dependencies.materialDownloader || shared().createMaterialDownloader(context.config);
-  var resultReporter = dependencies.resultReporter || shared().createResultReporter(context.config);
 
   function gateFor(payload) {
     if (dependencies.gate) return dependencies.gate;
@@ -146,7 +143,14 @@ function createWechatChannelsPublishHandler(context, dependencies) {
     try {
       materials = materialDownloader.download(payload);
     } catch (downloadError) {
-      return finish(command, payload, "MATERIAL_INVALID", String(downloadError), null, null);
+      return finish(
+        command,
+        payload,
+        "MATERIAL_INVALID",
+        String(downloadError && downloadError.message || downloadError || "素材下载失败"),
+        null,
+        null
+      );
     }
 
     try {
