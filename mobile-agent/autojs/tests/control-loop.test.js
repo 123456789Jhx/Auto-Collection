@@ -619,6 +619,9 @@ function testPublishVideoCommandDispatchesToHotUpdateHandler() {
   createControlLoop(context).pollControlCommands(true);
 
   assert.deepStrictEqual(handled, [command]);
+  assert(context.logs.some(function (item) {
+    return item.level === "INFO" && item.message === "发布执行器启动" && item.payload.commandId === command.id;
+  }));
 }
 
 testPollAsyncDoesNotStartThreadBeforeInterval();

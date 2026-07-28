@@ -621,6 +621,7 @@ function createControlLoop(context) {
 
     try {
       if (commandType === "PUBLISH_VIDEO_TASK") {
+        logger.info("发布执行器启动", { commandId: command.id, taskId: payload.taskId || "" });
         var publishModule = context.loadBizScript
           ? context.loadBizScript("features/publish-video/发布视频-入口.js")
           : require("../features/publish-video/发布视频-入口.js");

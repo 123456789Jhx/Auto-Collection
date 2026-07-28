@@ -1,6 +1,6 @@
 param(
   [string]$Version = "",
-  [string]$PackageBaseUrl = "http://localhost:3012/downloads/agent",
+  [string]$PackageBaseUrl = "",
   [string]$OutputDir = ""
 )
 
@@ -16,8 +16,15 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 if ([string]::IsNullOrWhiteSpace($Version)) {
   throw "Biz script version is required."
 }
+if ([string]::IsNullOrWhiteSpace($PackageBaseUrl)) {
+  $publicBaseUrl = [string]$env:PUBLIC_BASE_URL
+  if ([string]::IsNullOrWhiteSpace($publicBaseUrl)) {
+    $publicBaseUrl = "http://localhost:3012"
+  }
+  $PackageBaseUrl = $publicBaseUrl.TrimEnd("/") + "/downloads/agent"
+}
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
-  $OutputDir = Join-Path $repoRoot "account-data-platform\dist\agent"
+  $OutputDir = Join-Path $repoRoot "account-data-platform\apps\api\dist\agent"
 }
 
 $roots = @("features", "domain")
@@ -31,6 +38,10 @@ function Convert-ToEncodedPath([string]$Path) {
   return (($Path.Replace("\", "/").Split("/") | ForEach-Object {
     [Uri]::EscapeDataString($_)
   }) -join "/")
+}
+
+function Write-Utf8WithoutBom([string]$Path, [string]$Content) {
+  [System.IO.File]::WriteAllText($Path, $Content, (New-Object System.Text.UTF8Encoding($false)))
 }
 
 function Add-DeterministicZipEntry(
@@ -47,6 +58,33 @@ function Add-DeterministicZipEntry(
   } finally {
     $output.Dispose()
     $input.Dispose()
+  }
+}
+
+function Assert-ZipEntriesHaveNoUtf8Bom([string]$ArchivePath) {
+  $archive = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
+  $entriesWithBom = @()
+  try {
+    foreach ($entry in $archive.Entries) {
+      if ($entry.FullName -notmatch '(?i)\.(js|json)$') {
+        continue
+      }
+      $stream = $entry.Open()
+      try {
+        [byte[]]$prefix = New-Object byte[] 3
+        $read = $stream.Read($prefix, 0, $prefix.Length)
+        if ($read -eq 3 -and $prefix[0] -eq 0xEF -and $prefix[1] -eq 0xBB -and $prefix[2] -eq 0xBF) {
+          $entriesWithBom += $entry.FullName
+        }
+      } finally {
+        $stream.Dispose()
+      }
+    }
+  } finally {
+    $archive.Dispose()
+  }
+  if ($entriesWithBom.Count -gt 0) {
+    throw "UTF-8 BOM is not allowed in biz-scripts package entries: $($entriesWithBom -join ', ')"
   }
 }
 
@@ -87,7 +125,7 @@ $embeddedManifest = [ordered]@{
   files = $manifestFiles
   entryFile = $entryFile
 }
-$embeddedManifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $embeddedManifestPath -Encoding UTF8
+Write-Utf8WithoutBom -Path $embeddedManifestPath -Content ($embeddedManifest | ConvertTo-Json -Depth 6)
 
 foreach ($path in @($zipPath, $manifestPath, $shaPath)) {
   if (Test-Path $path) {
@@ -107,6 +145,7 @@ try {
 } finally {
   $archive.Dispose()
 }
+Assert-ZipEntriesHaveNoUtf8Bom -ArchivePath $zipPath
 
 $zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
 $zipFileName = Split-Path -Leaf $zipPath
@@ -121,7 +160,7 @@ $externalManifest = [ordered]@{
   sha256 = $zipHash
   status = "PUBLISHED"
 }
-$externalManifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+Write-Utf8WithoutBom -Path $manifestPath -Content ($externalManifest | ConvertTo-Json -Depth 6)
 Set-Content -LiteralPath $shaPath -Encoding ASCII -Value "$zipHash  $zipFileName"
 Remove-Item -LiteralPath $embeddedManifestPath -Force
 

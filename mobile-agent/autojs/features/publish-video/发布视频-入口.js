@@ -122,6 +122,8 @@ function createPublishVideoHandler(context, dependencies) {
     .createPublishMaterialManager({ logger: logger });
   var publishLock = dependencies.publishLock || loadBizModule(context, "domain/发布任务锁.js")
     .createPublishTaskLock();
+  var executionWatchdog = dependencies.executionWatchdog ||
+    loadBizModule(context, "domain/发布执行器看门狗.js").createPublishExecutorWatchdog({ timeoutMs: 10 * 60 * 1000 });
   var topicDomain = dependencies.topicDomain || loadBizModule(context, "domain/话题校验.js");
   var topicContinuation = dependencies.topicContinuation || loadBizModule(context, "domain/话题断点续传.js")
     .createTopicContinuation({
@@ -131,9 +133,23 @@ function createPublishVideoHandler(context, dependencies) {
   var activeMaterialDir = "";
   var materialDownloader = dependencies.materialDownloader || {
     download: function (payload) {
+      var timeoutMs = Math.max(1000, Number(payload.materialDownloadTimeoutMs || 20000));
+      logger.info("发布素材下载开始", {
+        taskId: payload.taskId || "",
+        videoUrl: payload.videoUrl || "",
+        coverUrl: payload.coverUrl || "",
+        timeoutMs: timeoutMs
+      });
       var paths = materialManager.beginTask(payload, context.config);
       activeMaterialDir = paths.dir;
-      return materialManager.download(paths, payload);
+      var downloaded = materialManager.download(paths, payload);
+      logger.info("发布素材下载完成", {
+        taskId: payload.taskId || "",
+        videoBytes: Number(downloaded.videoBytes || 0),
+        coverBytes: Number(downloaded.coverBytes || 0),
+        totalBytes: Number(downloaded.totalBytes || 0)
+      });
+      return downloaded;
     }
   };
   var resultReporter = dependencies.resultReporter || createResultReporter(context.config);
@@ -169,7 +185,28 @@ function createPublishVideoHandler(context, dependencies) {
     });
   }
 
-  function finish(command, payload, status, errorMessage, publishResult) {
+  function waitForGate(gate, taskId, actionName, predicate) {
+    logger.info("发布动作闸口开始", { taskId: taskId, action: actionName });
+    var result = gate.waitForNext(actionName, predicate);
+    logger.info("发布动作闸口完成", {
+      taskId: taskId,
+      action: actionName,
+      responseDelayMs: Number(result && result.responseDelayMs || 0),
+      actionWaitMs: Number(result && result.actionWaitMs || 0)
+    });
+    return result;
+  }
+
+  function finish(command, payload, status, errorMessage, publishResult, executionGuard) {
+    logger.info("发布执行器结束", {
+      commandId: command.id || "",
+      taskId: payload.taskId || "",
+      status: status,
+      error: errorMessage || ""
+    });
+    if (executionGuard && executionGuard.timedOut()) {
+      return { status: "FAILED", error: "执行器看门狗超时", watchdogTimedOut: true };
+    }
     var report = {
       deviceId: context.config.device.deviceId || "",
       deviceToken: context.config.device.deviceToken || "",
@@ -232,18 +269,37 @@ function createPublishVideoHandler(context, dependencies) {
   function handle(command) {
     if (!command || command.commandType !== "PUBLISH_VIDEO_TASK") return { handled: false };
     var payload = command.payload || command.payloadJson || {};
+    logger.info("发布执行器启动", { commandId: command.id || "", taskId: payload.taskId || "" });
+    var executionGuard = executionWatchdog.start(function () {
+      logger.error("发布执行器看门狗超时", { commandId: command.id || "", taskId: payload.taskId || "" });
+      if (context.commandControl) context.commandControl.polling = false;
+      try {
+        uploader.ackCommand(command.id, "FAILED", {
+          applied: false,
+          commandType: "PUBLISH_VIDEO_TASK",
+          status: "FAILED",
+          message: "执行器看门狗超时"
+        });
+      } catch (error) {
+        logger.error("发布执行器看门狗ACK失败", { commandId: command.id || "", message: String(error) });
+      }
+    });
     if (!publishLock.acquire()) {
-      return finish(command, payload, "PUBLISH_BUSY", "上一发布任务仍在执行", null);
+      try {
+        return finish(command, payload, "PUBLISH_BUSY", "上一发布任务仍在执行", null, executionGuard);
+      } finally {
+        executionGuard.complete();
+      }
     }
     activeMaterialDir = "";
     try {
-      if (!payload.taskId) return finish(command, payload, "MATERIAL_INVALID", "taskId不能为空", null);
+      if (!payload.taskId) return finish(command, payload, "MATERIAL_INVALID", "taskId不能为空", null, executionGuard);
       var topicValidation = topicDomain.validateDescriptionTopics(
         payload.description,
         payload.expectedTopicCount
       );
       if (!topicValidation.valid) {
-        return finish(command, payload, "TOPIC_PENDING", topicValidation.reason, null);
+        return finish(command, payload, "TOPIC_PENDING", topicValidation.reason, null, executionGuard);
       }
       if (isWechatChannelsTask(payload)) return wechatChannelsHandler().handle(command);
       var materials;
@@ -251,28 +307,29 @@ function createPublishVideoHandler(context, dependencies) {
         materials = materialDownloader.download(payload);
       } catch (downloadError) {
         var downloadReason = String(downloadError && downloadError.message || downloadError || "素材下载失败");
-        return finish(command, payload, "MATERIAL_INVALID", downloadReason, null);
+        return finish(command, payload, "MATERIAL_INVALID", downloadReason, null, executionGuard);
       }
 
       try {
         var gate = gateFor(payload);
         var activeSteps = douyinSteps();
+        logger.info("发布前准备打开App", { taskId: payload.taskId, platform: "DOUYIN" });
         activeSteps.open(payload);
-        gate.waitForNext("选择发布素材", activeSteps.states.galleryReady);
+        waitForGate(gate, payload.taskId, "选择发布素材", activeSteps.states.galleryReady);
         activeSteps.select(materials, payload);
-        gate.waitForNext("编辑封面", activeSteps.states.coverEditReady);
+        waitForGate(gate, payload.taskId, "编辑封面", activeSteps.states.coverEditReady);
         activeSteps.editCover(materials, payload);
-        gate.waitForNext("填写标题描述话题", activeSteps.states.publishFormReady);
+        waitForGate(gate, payload.taskId, "填写标题描述话题", activeSteps.states.publishFormReady);
         fillWithTopicContinuation(activeSteps, payload, materials);
-        gate.waitForNext("执行发布与结果判定", activeSteps.states.publishReviewReady);
+        waitForGate(gate, payload.taskId, "执行发布与结果判定", activeSteps.states.publishReviewReady);
         var publishResult = activeSteps.publish(payload, materials) || {};
         logger.info("抖音发布任务执行成功", { taskId: payload.taskId });
-        return finish(command, payload, "SUCCEEDED", "", publishResult);
+        return finish(command, payload, "SUCCEEDED", "", publishResult, executionGuard);
       } catch (error) {
         var status = error && error.publishStatus || "FAILED";
         var reason = String(error && error.message || error || "发布步骤失败");
         logger.warn("抖音发布任务执行失败", { taskId: payload.taskId, status: status, reason: reason });
-        return finish(command, payload, status, reason, null);
+        return finish(command, payload, status, reason, null, executionGuard);
       }
     } finally {
       try {
@@ -280,6 +337,7 @@ function createPublishVideoHandler(context, dependencies) {
       } finally {
         activeMaterialDir = "";
         publishLock.release();
+        executionGuard.complete();
       }
     }
   }

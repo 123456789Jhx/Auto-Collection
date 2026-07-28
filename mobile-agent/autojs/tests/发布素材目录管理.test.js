@@ -196,7 +196,13 @@ test("视频和封面落盘后立即扫描且任务结束删除整个目录", ()
   assert.deepEqual(manager.download(paths, {
     videoUrl: "https://example.test/video.mp4",
     coverUrl: "https://example.test/cover.jpg"
-  }), paths);
+  }), {
+    ...paths,
+    videoBytes: Buffer.from("https://example.test/video.mp4").length,
+    coverBytes: Buffer.from("https://example.test/cover.jpg").length,
+    totalBytes: Buffer.from("https://example.test/video.mp4https://example.test/cover.jpg").length,
+    timeoutMs: 20000
+  });
   assert.deepEqual(urls, ["https://example.test/video.mp4", "https://example.test/cover.jpg"]);
   assert.deepEqual(scans, [paths.videoPath, paths.coverPath]);
   assert.equal(memoryFiles.exists(paths.videoPath), true);

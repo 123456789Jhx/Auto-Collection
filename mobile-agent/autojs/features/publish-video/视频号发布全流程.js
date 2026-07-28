@@ -56,6 +56,7 @@ function createWechatChannelsPublishHandler(context, dependencies) {
   var materialDownloader = dependencies.materialDownloader;
   var resultReporter = dependencies.resultReporter;
   var topicContinuation = dependencies.topicContinuation;
+  var currentTaskId = "";
   if (!materialDownloader || !resultReporter) {
     throw new Error("视频号发布必须由共享发布入口创建");
   }
@@ -78,10 +79,19 @@ function createWechatChannelsPublishHandler(context, dependencies) {
   }
 
   function waitForNext(gate, actionName, stateCheck) {
-    return gate.waitForNext(actionName, function () {
+    logger.info("发布动作闸口开始", { taskId: currentTaskId, action: actionName, platform: "WECHAT_CHANNELS" });
+    var result = gate.waitForNext(actionName, function () {
       assertNoVerification(actionName);
       return stateCheck();
     });
+    logger.info("发布动作闸口完成", {
+      taskId: currentTaskId,
+      action: actionName,
+      platform: "WECHAT_CHANNELS",
+      responseDelayMs: Number(result && result.responseDelayMs || 0),
+      actionWaitMs: Number(result && result.actionWaitMs || 0)
+    });
+    return result;
   }
 
   function performAction(stage, action) {
@@ -116,6 +126,13 @@ function createWechatChannelsPublishHandler(context, dependencies) {
   }
 
   function finish(command, payload, status, errorMessage, publishResult, popupFeature) {
+    logger.info("发布执行器结束", {
+      commandId: command.id || "",
+      taskId: payload.taskId || "",
+      platform: "WECHAT_CHANNELS",
+      status: status,
+      error: errorMessage || ""
+    });
     var report = {
       deviceId: context.config.device.deviceId || "",
       deviceToken: context.config.device.deviceToken || "",
@@ -163,6 +180,7 @@ function createWechatChannelsPublishHandler(context, dependencies) {
   function handle(command) {
     if (!command || command.commandType !== "PUBLISH_VIDEO_TASK") return { handled: false };
     var payload = command.payload || command.payloadJson || {};
+    currentTaskId = payload.taskId || "";
     if (!payload.taskId) return finish(command, payload, "MATERIAL_INVALID", "taskId不能为空", null, null);
     var materials;
     try {
@@ -180,6 +198,7 @@ function createWechatChannelsPublishHandler(context, dependencies) {
 
     try {
       var gate = gateFor(payload);
+      logger.info("发布前准备打开App", { taskId: payload.taskId, platform: "WECHAT_CHANNELS" });
       correctWechatStartup(ui);
       assertNoVerification("启动校正");
       waitForNext(gate, "进入发现", ui.states.discoverReady);

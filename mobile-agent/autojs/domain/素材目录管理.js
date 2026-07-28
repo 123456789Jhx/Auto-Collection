@@ -1,6 +1,7 @@
 var fallbackStorageValues = {};
 var MATERIAL_STORAGE_NAME = "AgriVideoPublishMaterial";
 var MATERIAL_DIR_PATTERN = /^20\d{6}(（\d+）)?$/;
+var DEFAULT_DOWNLOAD_TIMEOUT_MS = 20000;
 
 function joinPath() {
   return Array.prototype.slice.call(arguments).filter(function (value) {
@@ -126,10 +127,10 @@ function createPublishMaterialManager(dependencies) {
     }
   }
 
-  function downloadOne(url, path, label) {
+  function downloadOne(url, path, label, timeoutMs) {
     var response;
     try {
-      response = httpApi.get(url, { timeout: 20000 });
+      response = httpApi.get(url, { timeout: timeoutMs });
     } catch (error) {
       throw new Error(label + "下载失败：HTTP 请求异常，" + errorMessage(error));
     }
@@ -143,17 +144,27 @@ function createPublishMaterialManager(dependencies) {
     }
     filesApi.writeBytes(path, bytes);
     scanFile(path);
+    return bytes.length;
   }
 
   function download(paths, payload) {
     payload = payload || {};
     var videoUrl = nonEmpty(payload.videoUrl);
     var coverUrl = nonEmpty(payload.coverUrl);
+    var timeoutMs = Math.max(1000, Number(payload.materialDownloadTimeoutMs || DEFAULT_DOWNLOAD_TIMEOUT_MS));
     if (!videoUrl) throw new Error("缺少视频素材：接口 videoUrl 为空");
     if (!coverUrl) throw new Error("缺少封面素材：接口 coverUrl 为空");
-    downloadOne(videoUrl, paths.videoPath, "视频素材");
-    downloadOne(coverUrl, paths.coverPath, "封面素材");
-    return paths;
+    var videoBytes = downloadOne(videoUrl, paths.videoPath, "视频素材", timeoutMs);
+    var coverBytes = downloadOne(coverUrl, paths.coverPath, "封面素材", timeoutMs);
+    return {
+      dir: paths.dir,
+      videoPath: paths.videoPath,
+      coverPath: paths.coverPath,
+      videoBytes: videoBytes,
+      coverBytes: coverBytes,
+      totalBytes: videoBytes + coverBytes,
+      timeoutMs: timeoutMs
+    };
   }
 
   function endTask(dir) {
