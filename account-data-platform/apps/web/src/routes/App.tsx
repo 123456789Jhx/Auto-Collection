@@ -1,4 +1,4 @@
-import { BarChartOutlined, CloudUploadOutlined, CodeOutlined, ControlOutlined, DatabaseOutlined, FileTextOutlined, LockOutlined, LoginOutlined, LogoutOutlined, MobileOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
+import { BarChartOutlined, CloudUploadOutlined, CodeOutlined, DatabaseOutlined, FileTextOutlined, LockOutlined, LoginOutlined, LogoutOutlined, MobileOutlined, UserOutlined } from "@ant-design/icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Form, Input, Layout, Menu, Space, Spin, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
@@ -28,8 +28,8 @@ const pages = {
 type PageKey = keyof typeof pages;
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
 
-function renderPage(page: PageKey, openScheduler: () => void) {
-  if (page === "dashboard") return <DashboardPage onOpenScheduler={openScheduler} />;
+function renderPage(page: PageKey) {
+  if (page === "dashboard") return <DashboardPage />;
   if (page === "scheduler") return <TaskSchedulerPage />;
   if (page === "tasks") return <TasksPage />;
   if (page === "devices") return <DevicesPage />;
@@ -90,7 +90,7 @@ export function App() {
   const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
   const current = useMemo(() => ({
     title: pages[page].title,
-    component: renderPage(page, () => setPage("scheduler"))
+    component: renderPage(page)
   }), [page]);
 
   function logout() {
@@ -175,8 +175,7 @@ export function App() {
           onClick={(item) => navigateToPage(item.key as PageKey)}
           items={[
             { key: "dashboard", icon: <BarChartOutlined />, label: "工作台" },
-            { key: "scheduler", icon: <ControlOutlined />, label: "任务调度" },
-            { key: "tasks", icon: <SettingOutlined />, label: "配置" },
+            // LEGACY_FREEZE: 保留调度与配置页面代码，恢复业务时再放回两个菜单项。
             { key: "devices", icon: <MobileOutlined />, label: "设备" },
             { key: "remoteScripts", icon: <CodeOutlined />, label: "远程脚本" },
             { key: "publishTasks", icon: <CloudUploadOutlined />, label: "发布任务" },

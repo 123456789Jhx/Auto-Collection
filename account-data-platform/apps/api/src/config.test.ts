@@ -9,6 +9,13 @@ describe("api config", () => {
     expect(config.adminUsername).toBe("root");
     expect(config.adminPassword).toBe("root");
     expect(config.mobileRequestSigningRequired).toBe(false);
+    expect(config.legacyBusinessFrozen).toBe(false);
+  });
+
+  test("parses the legacy business freeze switch as a boolean", () => {
+    expect(resolveConfig({ LEGACY_BUSINESS_FROZEN: "true" }).legacyBusinessFrozen).toBe(true);
+    expect(resolveConfig({ LEGACY_BUSINESS_FROZEN: "TRUE" }).legacyBusinessFrozen).toBe(true);
+    expect(resolveConfig({ LEGACY_BUSINESS_FROZEN: "false" }).legacyBusinessFrozen).toBe(false);
   });
 
   test("production rejects missing secrets", () => {

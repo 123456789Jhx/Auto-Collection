@@ -33,6 +33,7 @@ import { resolveCommentAction } from "../services/commerce-card-comment-action.s
 import { getTaskAssignmentEvents } from "../services/task-assignment-runtime.service";
 import { listRemoteScriptDefinitions } from "../services/remote-script-registry";
 import { remoteScriptConfigRoutes } from "./remote-scripts";
+import { guardLegacyMobileCommand, guardLegacyTaskAssignment } from "../services/legacy-freeze";
 
 const adminLoginSchema = z.object({
   username: z.string().trim().min(1),
@@ -263,6 +264,8 @@ adminRoutes.get("/task-assignments/:id/events", async (c) => {
   }
 });
 adminRoutes.post("/task-assignments/:id/commands", async (c) => {
+  const frozen = guardLegacyTaskAssignment(c);
+  if (frozen) return frozen;
   const parsed = createTaskAssignmentCommandSchema.safeParse(await c.req.json());
   if (!parsed.success) {
     return validationError(c, parsed.error);
@@ -277,6 +280,8 @@ adminRoutes.post("/task-assignments/:id/commands", async (c) => {
   }
 });
 adminRoutes.post("/task-assignments", async (c) => {
+  const frozen = guardLegacyTaskAssignment(c);
+  if (frozen) return frozen;
   const parsed = createTaskAssignmentSchema.safeParse(await c.req.json());
   if (!parsed.success) {
     return validationError(c, parsed.error);
@@ -333,7 +338,10 @@ adminRoutes.post("/agent-versions", async (c) => {
   return c.json(await publishAgentVersion(parsed.data), 201);
 });
 adminRoutes.post("/mobile-commands", async (c) => {
-  const parsed = createMobileCommandSchema.safeParse(await c.req.json());
+  const body = await c.req.json();
+  const frozen = guardLegacyMobileCommand(c, body);
+  if (frozen) return frozen;
+  const parsed = createMobileCommandSchema.safeParse(body);
   if (!parsed.success) {
     return validationError(c, parsed.error);
   }

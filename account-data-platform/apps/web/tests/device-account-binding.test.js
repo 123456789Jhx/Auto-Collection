@@ -23,3 +23,15 @@ test("设备页提供结构化账号绑定入口", () => {
   assert(!accountBindingControl.includes("destroyOnHidden"));
   assert(deviceApiClient.includes("{ accountProfile }"));
 });
+
+test("LEGACY_FREEZE 设备页移除采集控制并保留绑定和维护命令", () => {
+  for (const commandType of ["START", "PAUSE", "RESUME", "STOP"]) {
+    assert(!new RegExp(`send(?:Command|MaintenanceCommand)\\([^)]*,\\s*["']${commandType}["']`).test(devicesPage));
+  }
+  assert(!devicesPage.includes("启动/继续"));
+  assert(devicesPage.includes("DeviceAccountBindingControl"));
+  assert(devicesPage.includes("REFRESH_CONFIG"));
+  assert(devicesPage.includes("CHECK_UPDATE"));
+  assert(devicesPage.includes("UPDATE_AGENT"));
+  assert(devicesPage.includes("RESTART_APP"));
+});

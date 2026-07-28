@@ -38,11 +38,11 @@ test("搜索直播评论和商品卡直播评论是两个独立任务入口", ()
   assert(/commerceStartMode:\s*["']target_comment["']/.test(schedulerSource), "scheduler row actions must expose a target comment start mode");
   assert(/commerceCardStartMode/.test(schedulerSource), "scheduler must send the selected commerce-card start mode to the API");
   assert(/商品卡养号/.test(schedulerSource), "scheduler must show a dedicated product nurture button");
-  assert(/目标直播间评论（商品卡片养号）/.test(schedulerSource), "scheduler must show a clearly named target live comment button");
+  assert(/目标直播评论/.test(schedulerSource), "scheduler must show a clearly named target live comment button");
   assert(/搜索直播间评论/.test(schedulerSource), "old live_comment label must make the search-room flow explicit");
-  assert(/商品卡直播评论/.test(schedulerSource), "new commerce-card flow must have a separate label");
+  assert(/启动商品卡养号/.test(schedulerSource), "new commerce-card flow must keep a distinct start action");
   assert(/commerce_card_live_comment/.test(dashboardSource), "dashboard must recognize commerce-card live comment task status");
-  assert(/商品卡直播评论/.test(logsSource), "logs must display commerce-card live comment phases distinctly");
+  assert(/商品卡养号/.test(logsSource), "logs must display commerce-card live comment phases distinctly");
 });
 
 test("工作台展示功能状态看板而不是完整技术日志", () => {
@@ -69,11 +69,11 @@ test("工作台配置按钮打开表单而不是下发刷新指令", () => {
   assert(/刷新配置/.test(dashboardSource), "refresh command should keep explicit wording");
 });
 
-test("工作台状态控制统一跳转任务调度", () => {
-  assert(/DashboardPage onOpenScheduler=\{openScheduler\}/.test(appSource), "App should pass a real scheduler navigation callback to the dashboard");
-  assert(/onOpenScheduler:\s*\(\)\s*=>\s*void/.test(dashboardSource), "dashboard should require the scheduler navigation callback");
-  assert(/前往任务调度/.test(dashboardSource), "device details should guide operators to task scheduling");
-  assert(/<ControlOutlined \/>任务调度/.test(dashboardSource), "device cards should expose the scheduler command");
+test("LEGACY_FREEZE 工作台不再暴露任务调度入口", () => {
+  assert(!/DashboardPage onOpenScheduler=\{openScheduler\}/.test(appSource), "App should not wire a scheduler navigation callback from the dashboard");
+  assert(!/onOpenScheduler:\s*\(\)\s*=>\s*void/.test(dashboardSource), "dashboard should not expose the scheduler callback");
+  assert(!/前往任务调度/.test(dashboardSource), "device details should hide task scheduling");
+  assert(!/<ControlOutlined \/>任务调度/.test(dashboardSource), "device cards should hide the scheduler command");
   assert(!/sendCommand\(/.test(dashboardSource), "dashboard must not keep the generic state-command sender");
   assert(!/commandType:\s*["'](?:START|PAUSE|RESUME|STOP)["']/.test(dashboardSource), "dashboard must not create assignment state commands directly");
   assert(/commandType:\s*["']REFRESH_CONFIG["']/.test(dashboardSource), "dashboard may keep the non-assignment refresh command");

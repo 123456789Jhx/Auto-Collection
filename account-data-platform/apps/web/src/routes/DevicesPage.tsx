@@ -1,6 +1,6 @@
 import { MoreOutlined, ReloadOutlined, SyncOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Dropdown, Form, Input, InputNumber, Modal, Popconfirm, Select, Skeleton, Space, Switch, message } from "antd";
+import { Alert, Dropdown, Form, Input, InputNumber, Modal, Select, Skeleton, Space, Switch, message } from "antd";
 import { useState } from "react";
 import { createMobileCommand, getDeviceTaskConfig, getDevices, updateDevice, updateDeviceTaskConfig } from "../lib/api-client";
 import { deviceDisplayName, deviceSubTitle, normalizeTaskDisplayText, statusText } from "../lib/display-maps";
@@ -93,17 +93,7 @@ type DevicePayload = {
   accountProfile?: Record<string, unknown> | null;
 };
 
-type CommandType =
-  | "START"
-  | "PAUSE"
-  | "RESUME"
-  | "STOP"
-  | "REFRESH_CONFIG"
-  | "STATUS"
-  | "RESTART_APP"
-  | "RESTART_AGENT"
-  | "CHECK_UPDATE"
-  | "UPDATE_AGENT";
+type MaintenanceCommandType = "REFRESH_CONFIG" | "RESTART_APP" | "CHECK_UPDATE" | "UPDATE_AGENT";
 
 function formatDateTime(value?: string | null) {
   if (!value) return "-";
@@ -188,8 +178,8 @@ export function DevicesPage() {
     queryFn: getDevices,
     refetchInterval: autoRefreshSeconds > 0 ? autoRefreshSeconds * 1000 : false
   });
-  const commandMutation = useMutation({
-    mutationFn: ({ deviceId, commandType }: { deviceId: string; commandType: CommandType }) =>
+  const maintenanceCommandMutation = useMutation({
+    mutationFn: ({ deviceId, commandType }: { deviceId: string; commandType: MaintenanceCommandType }) =>
       createMobileCommand({ deviceId, commandType, expiresInSeconds: 3600 }),
     onSuccess: () => {
       messageApi.success("控制指令已下发，等待手机脚本拉取");
@@ -217,8 +207,8 @@ export function DevicesPage() {
     onError: (error: Error) => messageApi.error(error.message)
   });
 
-  function sendCommand(deviceCode: string, commandType: CommandType) {
-    commandMutation.mutate({ deviceId: deviceCode, commandType });
+  function sendMaintenanceCommand(deviceCode: string, commandType: MaintenanceCommandType) {
+    maintenanceCommandMutation.mutate({ deviceId: deviceCode, commandType });
   }
 
   async function manualRefresh() {
@@ -472,26 +462,13 @@ export function DevicesPage() {
                       <td>{formatDateTime(device.lastHeartbeatAt)}</td>
                       <td>
                         <div className="ops-actions-cell" onClick={(event) => event.stopPropagation()}>
-                          <button className="ops-mini-btn primary" type="button" onClick={() => sendCommand(device.deviceCode, "START")}>启动</button>
-                          <button className="ops-mini-btn" type="button" onClick={() => sendCommand(device.deviceCode, "PAUSE")}>暂停</button>
+                          {/* LEGACY_FREEZE: 旧采集启动、暂停、停止按钮已冻结，设备维护与绑定入口保留。 */}
                           <button className="ops-mini-btn" type="button" onClick={() => void openConfig(device)}>脚本参数</button>
                           <button className="ops-mini-btn" type="button" onClick={() => openDeviceEditor(device)}>设备信息</button>
                           <DeviceAccountBindingControl
                             device={device}
                             onSaved={() => void queryClient.invalidateQueries({ queryKey: ["devices"] })}
                           />
-                          <span onClick={(event) => event.stopPropagation()}>
-                            <Popconfirm
-                              title="确认关闭手机 Agent 脚本？"
-                              description="关闭后后台将无法继续下发任务，除非本地或守护脚本重新拉起。"
-                              okText="确认关闭"
-                              cancelText="取消"
-                              okButtonProps={{ danger: true }}
-                              onConfirm={() => sendCommand(device.deviceCode, "STOP")}
-                            >
-                              <button className="ops-mini-btn danger" type="button">关闭</button>
-                            </Popconfirm>
-                          </span>
                           <Dropdown
                             menu={{
                               items: [
@@ -501,7 +478,7 @@ export function DevicesPage() {
                                 { key: "RESTART_APP", icon: <ReloadOutlined />, label: "故障重启抖音" }
                               ],
                               onClick: ({ key }) => {
-                                sendCommand(device.deviceCode, key as "REFRESH_CONFIG" | "CHECK_UPDATE" | "UPDATE_AGENT" | "RESTART_APP");
+                                sendMaintenanceCommand(device.deviceCode, key as MaintenanceCommandType);
                               }
                             }}
                           >
@@ -540,8 +517,7 @@ export function DevicesPage() {
                     <div className="ops-k">备注</div><div>{selectedDevice.remark || "-"}</div>
                   </div>
                   <div className="ops-toolbar detail-toolbar">
-                    <button className="ops-btn primary" type="button" onClick={() => sendCommand(selectedDevice.deviceCode, "START")}>启动/继续</button>
-                    <button className="ops-btn" type="button" onClick={() => sendCommand(selectedDevice.deviceCode, "REFRESH_CONFIG")}>刷新配置</button>
+                    <button className="ops-btn" type="button" onClick={() => sendMaintenanceCommand(selectedDevice.deviceCode, "REFRESH_CONFIG")}>刷新配置</button>
                     <button className="ops-btn" type="button" onClick={() => void openConfig(selectedDevice)}>脚本参数</button>
                     <button className="ops-btn" type="button" onClick={() => openDeviceEditor(selectedDevice)}>设备信息</button>
                   </div>

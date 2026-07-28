@@ -15,6 +15,10 @@ function requireProductionValue(name: string, value: string, isProduction: boole
   }
 }
 
+function parseBoolean(value: string | undefined) {
+  return value?.trim().toLowerCase() === "true";
+}
+
 export function resolveConfig(env: EnvMap = process.env) {
   const nodeEnv = env.NODE_ENV ?? "development";
   const isProduction = nodeEnv === "production";
@@ -22,6 +26,7 @@ export function resolveConfig(env: EnvMap = process.env) {
   const adminPassword = env.ADMIN_PASSWORD ?? (isProduction ? "" : "root");
   const mobileRegistrationSecret = env.MOBILE_REGISTRATION_SECRET ?? "";
   const mobileRequestSigningRequired = env.MOBILE_REQUEST_SIGNING_REQUIRED === "true";
+  const legacyBusinessFrozen = parseBoolean(env.LEGACY_BUSINESS_FROZEN);
 
   requireProductionValue("JWT_SECRET", jwtSecret, isProduction);
   requireProductionValue("ADMIN_PASSWORD", adminPassword, isProduction);
@@ -43,6 +48,7 @@ export function resolveConfig(env: EnvMap = process.env) {
     adminTokenTtlSeconds: Number(env.ADMIN_TOKEN_TTL_SECONDS ?? 86400),
     mobileRegistrationSecret,
     mobileRequestSigningRequired,
+    legacyBusinessFrozen,
     mobileRequestTimestampSkewSeconds: Number(env.MOBILE_REQUEST_TIMESTAMP_SKEW_SECONDS ?? 300)
   };
 }

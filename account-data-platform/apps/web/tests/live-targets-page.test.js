@@ -15,13 +15,16 @@ const repoRootDir = path.join(currentDir, "../../../..");
 const configCenterPagePath = path.join(webSrcDir, "routes/ConfigCenterPage.tsx");
 const liveTargetsPagePath = path.join(webSrcDir, "routes/LiveTargetsPage.tsx");
 
-test("后台导航恢复配置侧边栏并移除配置中心", () => {
+test("LEGACY_FREEZE 隐藏任务调度和配置菜单但保留页面实现", () => {
+  const menuItems = appSource.match(/items=\{\[([\s\S]*?)\]\}/)?.[1] ?? "";
   assert(!/ConfigCenterPage/.test(appSource), "App should not import ConfigCenterPage");
   assert(!/configCenter/.test(appSource), "pages should not keep a configCenter route key");
   assert(!/配置中心/.test(appSource), "sidebar should not render config center text");
   assert(/TasksPage/.test(appSource), "App should import and render TasksPage");
-  assert(/key:\s*"tasks"/.test(appSource), "sidebar should keep the config route key");
-  assert(/label:\s*"配置"/.test(appSource), "sidebar should render config text");
+  assert(/TaskSchedulerPage/.test(appSource), "App should keep the scheduler page implementation");
+  assert(!/key:\s*"scheduler"/.test(menuItems), "sidebar should hide the scheduler route key");
+  assert(!/key:\s*"tasks"/.test(menuItems), "sidebar should hide the config route key");
+  assert(/LEGACY_FREEZE/.test(appSource), "sidebar freeze should be easy to reverse later");
   assert(!/key:\s*"liveTargets"/.test(appSource), "live target config should not stay as a top-level sidebar route");
   assert(!/label:\s*"直播目标配置"/.test(appSource), "live target config should not stay as a top-level sidebar route");
 });
@@ -76,7 +79,7 @@ test("直播目标配置页面管理目标、三阶段组合和默认关闭门�
   assert(/目标直播间/.test(source), "page should display target live room wording");
   assert(/直播间别名/.test(source), "page should manage aliases");
   assert(/搜索直播评论/.test(source), "page should manage search live comment config");
-  assert(/商品卡组合任务/.test(source), "page should manage the commerce-card workflow");
+  assert(/商品卡养号流程/.test(source), "page should manage the commerce-card workflow");
   assert(/相似度阈值/.test(source), "page should expose similarity threshold");
   assert(/商品卡养号/.test(source), "page should expose the product nurture stage");
   assert(/目标直播评论/.test(source), "page should expose the target comment stage");

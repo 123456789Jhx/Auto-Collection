@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Skeleton, message } from "antd";
-import { ControlOutlined, ReloadOutlined, SettingOutlined } from "@ant-design/icons";
+import { ReloadOutlined, SettingOutlined } from "@ant-design/icons";
 import { useMemo, useState } from "react";
 import { createMobileCommand, getDeviceDailyProgress, getDeviceProgressHistory, getOverview } from "../lib/api-client";
 import { deviceDisplayName, deviceSubTitle, sceneText, statusText } from "../lib/display-maps";
@@ -257,7 +257,7 @@ function ProgressLine(props: { label: string; percent: number; note: string; ton
   );
 }
 
-export function DashboardPage({ onOpenScheduler }: { onOpenScheduler: () => void }) {
+export function DashboardPage() {
   const queryClient = useQueryClient();
   const [messageApi, contextHolder] = message.useMessage();
   const [selectedDeviceCode, setSelectedDeviceCode] = useState("");
@@ -419,7 +419,6 @@ export function DashboardPage({ onOpenScheduler }: { onOpenScheduler: () => void
                   </div>
                   <div className="device-run-ops" onClick={(event) => event.stopPropagation()}>
                     <div className="device-run-actions">
-                      <button className="ops-mini-btn primary" type="button" onClick={onOpenScheduler}><ControlOutlined />任务调度</button>
                       <button className="ops-mini-btn" type="button" onClick={() => openDashboardConfig(item)}><SettingOutlined />配置</button>
                     </div>
                   </div>
@@ -467,7 +466,6 @@ export function DashboardPage({ onOpenScheduler }: { onOpenScheduler: () => void
 
             <div className="drawer-section-title">常用操作</div>
             <div className="drawer-action-grid">
-              <button className="ops-btn primary" type="button" onClick={onOpenScheduler}><ControlOutlined />前往任务调度</button>
               <button className="ops-btn" type="button" onClick={() => openDashboardConfig(selected)}><SettingOutlined />配置</button>
               <button className="ops-btn" type="button" disabled={commandMutation.isPending} onClick={() => refreshDeviceConfig(selected.deviceCode)}><ReloadOutlined />刷新配置</button>
             </div>
