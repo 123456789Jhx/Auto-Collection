@@ -3,8 +3,10 @@ import { patch } from "./api-client";
 
 export type { DeviceAccountBinding };
 
-export function updateDeviceAccountBinding(deviceCode: string, accountProfile: DeviceAccountBinding) {
-  return patch<{ accountProfile: DeviceAccountBinding }>(
+export type DeviceAccountProfile = DeviceAccountBinding | Record<string, never>;
+
+export function updateDeviceAccountBinding(deviceCode: string, accountProfile: DeviceAccountProfile) {
+  return patch<{ accountProfile: DeviceAccountProfile }>(
     `/admin/devices/${encodeURIComponent(deviceCode)}`,
     { accountProfile }
   );

@@ -27,6 +27,7 @@ export function DeviceBindingList() {
         />
       )}
       showBindingStatus
+      actionsLabel="绑定操作"
       title="设备绑定清单"
     />
   );

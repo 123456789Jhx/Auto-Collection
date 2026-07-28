@@ -71,5 +71,14 @@ describe("device account binding", () => {
     );
     expect(currentTaskResponse.status).toBe(200);
     expect((await currentTaskResponse.json()).accountProfile).toEqual(accountProfile);
+
+    const clearResponse = await adminRequest({ accountProfile: {} });
+    expect(clearResponse.status).toBe(200);
+    expect((await clearResponse.json()).accountProfile).toEqual({});
+    const [clearedDevice] = await db
+      .select({ accountProfile: collectorDevices.accountProfile })
+      .from(collectorDevices)
+      .where(eq(collectorDevices.deviceCode, deviceCode));
+    expect(clearedDevice.accountProfile).toEqual({});
   });
 });

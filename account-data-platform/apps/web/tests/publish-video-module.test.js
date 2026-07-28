@@ -93,7 +93,7 @@ test("设备绑定主体复用设备列表并展示绑定状态", () => {
   const bindingList = fs.readFileSync(bindingListPath, "utf8");
 
   assert(deviceList.includes("renderActions"));
-  assert(deviceList.includes("已绑定"));
+  assert(deviceList.includes("bindingAccountName"));
   assert(deviceList.includes("未绑定"));
   assert(bindingList.includes("getDevices"));
   assert(bindingList.includes("DeviceList"));

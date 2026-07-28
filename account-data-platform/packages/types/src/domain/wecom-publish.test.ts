@@ -22,6 +22,7 @@ const externalTask = {
 describe("wecom publish contracts", () => {
   test("parses the eight-field task and maps Chinese enums", () => {
     expect(wecomPublishTaskSchema.parse(externalTask)).toEqual(externalTask);
+    expect(wecomPublishTaskSchema.parse({ ...externalTask, accountName: null }).accountName).toBeNull();
     expect(toPublishPlatform("抖音")).toBe("DOUYIN");
     expect(toPublishPlatform("视频号")).toBe("WECHAT_CHANNELS");
     expect(toPublishTaskStatus("待发布")).toBe("PENDING");

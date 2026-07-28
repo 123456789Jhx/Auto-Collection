@@ -28,6 +28,7 @@ type DeviceListProps = {
   onSelect?: (device: DeviceRow) => void;
   renderActions: (device: DeviceRow) => ReactNode;
   showBindingStatus?: boolean;
+  actionsLabel?: string;
   title?: string;
 };
 
@@ -67,11 +68,10 @@ export function enabledText(value?: boolean) {
   return value === false ? "禁用" : "启用";
 }
 
-function hasAccountBinding(device: DeviceRow) {
+function bindingAccountName(device: DeviceRow) {
   const profile = device.accountProfile;
-  if (!profile) return false;
-  return ["douyinAccountId", "douyinAccountName", "wechatChannelsName"]
-    .some((key) => typeof profile[key] === "string" && profile[key].trim().length > 0);
+  const value = profile?.douyinAccountName;
+  return typeof value === "string" ? value.trim() : "";
 }
 
 export function DeviceList({
@@ -80,6 +80,7 @@ export function DeviceList({
   onSelect,
   renderActions,
   showBindingStatus = false,
+  actionsLabel = "常用操作",
   title = "设备运行清单"
 }: DeviceListProps) {
   const columnCount = showBindingStatus ? 8 : 7;
@@ -101,13 +102,13 @@ export function DeviceList({
               <th>版本 / IP</th>
               <th>最后心跳</th>
               {showBindingStatus ? <th>绑定状态</th> : null}
-              <th>{showBindingStatus ? "绑定操作" : "常用操作"}</th>
+              <th>{actionsLabel}</th>
             </tr>
           </thead>
           <tbody>
             {devices.length === 0 ? <tr><td className="ops-empty" colSpan={columnCount}>没有符合条件的设备</td></tr> : null}
             {devices.map((device) => {
-              const bound = hasAccountBinding(device);
+              const accountName = bindingAccountName(device);
               return (
                 <tr
                   key={device.id || device.deviceCode}
@@ -129,7 +130,9 @@ export function DeviceList({
                     <div className="ops-small">{device.lastIp || "-"}</div>
                   </td>
                   <td>{formatDateTime(device.lastHeartbeatAt)}</td>
-                  {showBindingStatus ? <td><span className={`ops-tag ${bound ? "green" : "gray"}`}>{bound ? "已绑定" : "未绑定"}</span></td> : null}
+                  {showBindingStatus ? (
+                    <td><span className={`ops-tag ${accountName ? "green" : "gray"}`}>{accountName || "未绑定"}</span></td>
+                  ) : null}
                   <td>
                     <div className="ops-actions-cell" onClick={(event) => event.stopPropagation()}>
                       {renderActions(device)}

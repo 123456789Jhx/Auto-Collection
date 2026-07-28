@@ -372,6 +372,7 @@ export function DevicesPage() {
             devices={devices}
             selectedDeviceCode={selectedDevice?.deviceCode}
             onSelect={(device) => setSelectedDeviceCode(device.deviceCode)}
+            showBindingStatus
             renderActions={(device) => (
               <>
                 {/* LEGACY_FREEZE: 旧采集启动、暂停、停止按钮已冻结，设备维护与绑定入口保留。 */}

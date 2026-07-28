@@ -12,9 +12,16 @@ import { claimAndMatchPublishTask } from "./publish-match.service";
 const suffix = crypto.randomUUID().replaceAll("-", "");
 const tokenEnv = `NODE11_MATCH_TOKEN_${suffix}`;
 const matchedDeviceCode = `node11-match-${suffix.slice(0, 12)}`;
+const newerMatchedDeviceCode = `node11-newer-${suffix.slice(0, 12)}`;
 const disabledDeviceCode = `node11-disabled-${suffix.slice(0, 12)}`;
+const recentUnboundDeviceCode = `node11-unbound-a-${suffix.slice(0, 10)}`;
+const olderUnboundDeviceCode = `node11-unbound-b-${suffix.slice(0, 10)}`;
+const offlineUnboundDeviceCode = `node11-offline-${suffix.slice(0, 12)}`;
 let configId = "";
 let matchedDeviceId = "";
+let newerMatchedDeviceId = "";
+let recentUnboundDeviceId = "";
+let olderUnboundDeviceId = "";
 
 const baseTask = {
   title: "节点11发布任务",
@@ -49,32 +56,87 @@ beforeAll(async () => {
   }).returning();
   configId = config.id;
 
-  const [matchedDevice] = await db.insert(collectorDevices).values({
-    deviceCode: matchedDeviceCode,
-    deviceName: "节点11命中设备",
-    enabled: true,
-    accountProfile: {
-      douyinAccountId: "test-001",
-      douyinAccountName: "测试号001",
-      wechatChannelsName: ""
+  const heartbeatNow = new Date();
+  const devices = await db.insert(collectorDevices).values([
+    {
+      deviceCode: matchedDeviceCode,
+      deviceName: "节点11最早绑定设备",
+      enabled: true,
+      status: "online",
+      lastHeartbeatAt: heartbeatNow,
+      updatedAt: new Date(heartbeatNow.getTime() - 120_000),
+      accountProfile: {
+        douyinAccountId: "test-001",
+        douyinAccountName: "测试号001",
+        wechatChannelsName: ""
+      },
+      createdBy: "node11-test",
+      updatedBy: "node11-test"
     },
-    createdBy: "node11-test",
-    updatedBy: "node11-test"
-  }).returning();
-  matchedDeviceId = matchedDevice.id;
-
-  await db.insert(collectorDevices).values({
-    deviceCode: disabledDeviceCode,
-    deviceName: "节点11禁用设备",
-    enabled: false,
-    accountProfile: {
-      douyinAccountId: "disabled-001",
-      douyinAccountName: "禁用号",
-      wechatChannelsName: ""
+    {
+      deviceCode: newerMatchedDeviceCode,
+      deviceName: "节点11较晚绑定设备",
+      enabled: true,
+      status: "running",
+      lastHeartbeatAt: heartbeatNow,
+      updatedAt: new Date(heartbeatNow.getTime() - 60_000),
+      accountProfile: {
+        douyinAccountId: "test-001-newer",
+        douyinAccountName: "测试号001",
+        wechatChannelsName: ""
+      },
+      createdBy: "node11-test",
+      updatedBy: "node11-test"
     },
-    createdBy: "node11-test",
-    updatedBy: "node11-test"
-  });
+    {
+      deviceCode: disabledDeviceCode,
+      deviceName: "节点11禁用设备",
+      enabled: false,
+      status: "online",
+      lastHeartbeatAt: heartbeatNow,
+      accountProfile: {
+        douyinAccountId: "disabled-001",
+        douyinAccountName: "禁用号",
+        wechatChannelsName: ""
+      },
+      createdBy: "node11-test",
+      updatedBy: "node11-test"
+    },
+    {
+      deviceCode: recentUnboundDeviceCode,
+      deviceName: "节点11最近心跳未绑定设备",
+      enabled: true,
+      status: "idle",
+      lastHeartbeatAt: heartbeatNow,
+      accountProfile: {},
+      createdBy: "node11-test",
+      updatedBy: "node11-test"
+    },
+    {
+      deviceCode: olderUnboundDeviceCode,
+      deviceName: "节点11较早心跳未绑定设备",
+      enabled: true,
+      status: "idle",
+      lastHeartbeatAt: new Date(heartbeatNow.getTime() - 60_000),
+      accountProfile: { wechatChannelsName: "仅记录" },
+      createdBy: "node11-test",
+      updatedBy: "node11-test"
+    },
+    {
+      deviceCode: offlineUnboundDeviceCode,
+      deviceName: "节点11离线未绑定设备",
+      enabled: true,
+      status: "offline",
+      lastHeartbeatAt: new Date(heartbeatNow.getTime() - 10 * 60_000),
+      accountProfile: {},
+      createdBy: "node11-test",
+      updatedBy: "node11-test"
+    }
+  ]).returning();
+  matchedDeviceId = devices[0].id;
+  newerMatchedDeviceId = devices[1].id;
+  recentUnboundDeviceId = devices[3].id;
+  olderUnboundDeviceId = devices[4].id;
 });
 
 afterAll(async () => {
@@ -82,23 +144,33 @@ afterAll(async () => {
     await db.delete(publishTasks).where(eq(publishTasks.configId, configId));
     await db.delete(remoteScriptConfigs).where(eq(remoteScriptConfigs.id, configId));
   }
-  await db.delete(collectorDevices).where(inArray(collectorDevices.deviceCode, [matchedDeviceCode, disabledDeviceCode]));
+  await db.delete(collectorDevices).where(inArray(collectorDevices.deviceCode, [
+    matchedDeviceCode,
+    newerMatchedDeviceCode,
+    disabledDeviceCode,
+    recentUnboundDeviceCode,
+    olderUnboundDeviceCode,
+    offlineUnboundDeviceCode
+  ]));
   delete process.env[tokenEnv];
 });
 
 describe("publish task matching", () => {
-  test("matches an enabled account and persists idempotently", async () => {
+  test("trims an account name and chooses the earliest updated online binding idempotently", async () => {
+    const task = { ...baseTask, accountName: "  测试号001  " };
     const first = await claimAndMatchPublishTask(configId, "node11-test", {
-      fetch: fetchTask(baseTask),
+      fetch: fetchTask(task),
       logger: () => undefined
     });
     const repeated = await claimAndMatchPublishTask(configId, "node11-test", {
-      fetch: fetchTask(baseTask),
+      fetch: fetchTask(task),
       logger: () => undefined
     });
 
     expect(first.task?.status).toBe("MATCHED");
     expect(first.task?.matchedDeviceId).toBe(matchedDeviceId);
+    expect(first.task?.matchedDeviceId).not.toBe(newerMatchedDeviceId);
+    expect(first.task?.accountName).toBe("测试号001");
     expect(first.created).toBeTrue();
     expect(repeated.task?.id).toBe(first.task?.id);
     expect(repeated.created).toBeFalse();
@@ -118,7 +190,40 @@ describe("publish task matching", () => {
 
     expect(result.task?.status).toBe("UNMATCHED");
     expect(result.task?.matchedDeviceId).toBeNull();
-    expect(result.task?.matchNote).toBe("未命中：无绑定该账号设备");
+    expect(result.task?.matchNote).toBe("无绑定该抖音号的设备：禁用号");
+  });
+
+  test("matches an unspecified account to the freshest online unbound device", async () => {
+    const result = await claimAndMatchPublishTask(configId, "node11-test", {
+      fetch: fetchTask({ ...baseTask, taskId: `${baseTask.taskId}-unbound`, accountName: null }),
+      logger: () => undefined
+    });
+
+    expect(result.task?.status).toBe("MATCHED");
+    expect(result.task?.accountName).toBe("");
+    expect(result.task?.matchedDeviceId).toBe(recentUnboundDeviceId);
+    expect(result.task?.matchedDeviceId).not.toBe(olderUnboundDeviceId);
+  });
+
+  test("stores unmatched when an unspecified account has no online unbound device", async () => {
+    await db.update(collectorDevices).set({ enabled: false }).where(inArray(
+      collectorDevices.id,
+      [recentUnboundDeviceId, olderUnboundDeviceId]
+    ));
+    try {
+      const result = await claimAndMatchPublishTask(configId, "node11-test", {
+        fetch: fetchTask({ ...baseTask, taskId: `${baseTask.taskId}-no-unbound`, accountName: null }),
+        logger: () => undefined
+      });
+      expect(result.task?.status).toBe("UNMATCHED");
+      expect(result.task?.matchedDeviceId).toBeNull();
+      expect(result.task?.matchNote).toBe("无可用的未绑定设备");
+    } finally {
+      await db.update(collectorDevices).set({ enabled: true }).where(inArray(
+        collectorDevices.id,
+        [recentUnboundDeviceId, olderUnboundDeviceId]
+      ));
+    }
   });
 
   test("does not persist when the external API returns null", async () => {

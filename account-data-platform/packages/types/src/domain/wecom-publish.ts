@@ -20,7 +20,7 @@ export const wecomPublishTaskSchema = z.object({
   platform: externalPublishPlatformSchema,
   status: externalPublishTaskStatusSchema,
   taskId: z.string().min(1),
-  accountName: z.string().min(1)
+  accountName: z.string().trim().min(1).nullable()
 }).strict();
 
 export type WecomPublishTask = z.infer<typeof wecomPublishTaskSchema>;

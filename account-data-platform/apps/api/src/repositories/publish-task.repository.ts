@@ -63,7 +63,7 @@ export async function saveClaimedPublishTask(input: SaveClaimedTaskInput, actor:
       configId: input.configId,
       taskId: input.task.taskId,
       platform: input.platform,
-      accountName: input.task.accountName,
+      accountName: input.task.accountName ?? "",
       title: input.task.title,
       description: input.task.description,
       coverUrl: input.task.coverUrl,

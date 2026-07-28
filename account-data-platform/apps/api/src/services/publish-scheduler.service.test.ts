@@ -62,6 +62,8 @@ beforeAll(async () => {
     deviceCode,
     deviceName: "节点12虚拟设备",
     enabled: true,
+    status: "online",
+    lastHeartbeatAt: new Date(),
     accountProfile: {
       douyinAccountId: "node12-account",
       douyinAccountName: "节点12命中号",
@@ -133,12 +135,12 @@ describe("publish scheduler", () => {
       eq(publishTasks.taskId, `unmatched-${suffix}`),
       inArray(publishTasks.status, ["REPORTED"])
     ));
-    expect(task.resultError).toBe("未命中：无绑定该账号设备");
+    expect(task.resultError).toBe("无绑定该抖音号的设备：没有绑定的账号");
     expect(task.reportedAt).toBeInstanceOf(Date);
     expect(patches).toEqual([{
       platform: "抖音",
       status: "未发布",
-      error: "未命中：无绑定该账号设备"
+      error: "无绑定该抖音号的设备：没有绑定的账号"
     }]);
   });
 });

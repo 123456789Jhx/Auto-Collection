@@ -1,7 +1,10 @@
+import { collectorDevices } from "@pkg/db/schema";
 import { toPublishPlatform, toPublishTaskStatus } from "@pkg/types";
+import { and, asc, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import { config as appConfig } from "../config";
+import { db } from "../repositories/db";
 import {
-  findEnabledDeviceByDouyinAccountName,
   saveClaimedPublishTask,
   savePublishTaskMatch
 } from "../repositories/publish-task.repository";
@@ -15,6 +18,46 @@ const publishClientConfigSchema = z.object({
   externalBaseUrl: z.string().url(),
   externalTokenEnv: z.string().min(1)
 }).passthrough();
+
+const ONLINE_HEARTBEAT_WINDOW_MS = 3 * 60 * 1000;
+
+function onlineSince() {
+  return new Date(Date.now() - ONLINE_HEARTBEAT_WINDOW_MS);
+}
+
+async function findOnlineDeviceByBinding(accountName: string) {
+  const [device] = await db
+    .select()
+    .from(collectorDevices)
+    .where(and(
+      eq(collectorDevices.tenantId, appConfig.tenantId),
+      eq(collectorDevices.enabled, true),
+      isNull(collectorDevices.deletedAt),
+      gte(collectorDevices.lastHeartbeatAt, onlineSince()),
+      sql`btrim(coalesce(${collectorDevices.accountProfile}->>'douyinAccountName', '')) = ${accountName}`
+    ))
+    // collector_devices.updatedAt is the existing binding-edit timestamp; the earliest binding wins.
+    .orderBy(asc(collectorDevices.updatedAt), asc(collectorDevices.id))
+    .limit(1);
+  return device ?? null;
+}
+
+async function findOnlineUnboundDevice() {
+  const [device] = await db
+    .select()
+    .from(collectorDevices)
+    .where(and(
+      eq(collectorDevices.tenantId, appConfig.tenantId),
+      eq(collectorDevices.enabled, true),
+      isNull(collectorDevices.deletedAt),
+      gte(collectorDevices.lastHeartbeatAt, onlineSince()),
+      sql`nullif(btrim(coalesce(${collectorDevices.accountProfile}->>'douyinAccountName', '')), '') is null`
+    ))
+    // Unspecified-account tasks prefer the unbound device with the freshest heartbeat.
+    .orderBy(desc(collectorDevices.lastHeartbeatAt), asc(collectorDevices.updatedAt), asc(collectorDevices.id))
+    .limit(1);
+  return device ?? null;
+}
 
 export class PublishMatchServiceError extends Error {
   constructor(
@@ -48,7 +91,12 @@ export async function claimAndMatchPublishTask(
   }
 
   const platform = toPublishPlatform(externalTask.platform);
-  const saved = await saveClaimedPublishTask({ configId, platform, task: externalTask }, actor);
+  const accountName = externalTask.accountName?.trim() || null;
+  const saved = await saveClaimedPublishTask({
+    configId,
+    platform,
+    task: { ...externalTask, accountName }
+  }, actor);
   if (!saved.created) {
     return {
       claimed: true,
@@ -58,12 +106,17 @@ export async function claimAndMatchPublishTask(
     };
   }
 
-  const device = await findEnabledDeviceByDouyinAccountName(externalTask.accountName);
+  const device = accountName
+    ? await findOnlineDeviceByBinding(accountName)
+    : await findOnlineUnboundDevice();
   const matchedTask = await savePublishTaskMatch(
     saved.task.id,
     device
       ? { matchedDeviceId: device.id }
-      : { matchedDeviceId: null, matchNote: "未命中：无绑定该账号设备" },
+      : {
+        matchedDeviceId: null,
+        matchNote: accountName ? `无绑定该抖音号的设备：${accountName}` : "无可用的未绑定设备"
+      },
     actor
   );
   return {
