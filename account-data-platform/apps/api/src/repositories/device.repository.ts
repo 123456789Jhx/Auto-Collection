@@ -4,6 +4,8 @@ import { and, asc, eq, isNull } from "drizzle-orm";
 import { config } from "../config";
 import { db } from "./db";
 
+type DeviceDatabase = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 export async function findDeviceByCode(deviceCode: string) {
   const [device] = await db
     .select()
@@ -363,8 +365,8 @@ export async function updateDeviceByCode(deviceCode: string, values: Partial<typ
   return device ?? null;
 }
 
-export async function markDeviceCommandIssued(deviceId: string) {
-  await db
+export async function markDeviceCommandIssued(deviceId: string, database: DeviceDatabase = db) {
+  await database
     .update(collectorDevices)
     .set({ lastCommandAt: new Date(), updatedAt: new Date() })
     .where(eq(collectorDevices.id, deviceId));

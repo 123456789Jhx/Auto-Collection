@@ -1,14 +1,45 @@
 import { collectorDevices, publishTasks } from "@pkg/db/schema";
-import type { PublishPlatform, WecomPublishTask } from "@pkg/types";
+import type { ManualPublishTestPayload, PublishPlatform, WecomPublishTask } from "@pkg/types";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { config } from "../config";
 import { db } from "./db";
+
+type PublishTaskDatabase = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 type SaveClaimedTaskInput = {
   configId: string;
   platform: PublishPlatform;
   task: WecomPublishTask;
 };
+
+// The prefix keeps generated manual IDs out of the external-task unique-key namespace.
+export const MANUAL_PUBLISH_TASK_ID_PREFIX = "manual-";
+
+export async function saveManualPublishTaskDispatched(
+  input: Omit<ManualPublishTestPayload, "platform"> & { platform: PublishPlatform },
+  actor: string,
+  database: PublishTaskDatabase = db
+) {
+  const now = new Date();
+  const [task] = await database.insert(publishTasks).values({
+    tenantId: config.tenantId,
+    configId: input.configId,
+    taskId: `${MANUAL_PUBLISH_TASK_ID_PREFIX}${crypto.randomUUID()}`,
+    platform: input.platform,
+    accountName: "",
+    title: input.title,
+    description: input.description,
+    coverUrl: input.coverUrl ?? null,
+    videoUrl: input.videoUrl,
+    status: "DISPATCHED",
+    matchedDeviceId: input.deviceId,
+    dispatchedAt: now,
+    createdBy: actor,
+    updatedBy: actor
+  }).returning();
+  if (!task) throw new Error("PUBLISH_TASK_CREATE_FAILED");
+  return task;
+}
 
 export async function findPublishTaskByExternalKey(platform: PublishPlatform, taskId: string) {
   const [task] = await db

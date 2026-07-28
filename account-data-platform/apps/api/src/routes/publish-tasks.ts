@@ -1,7 +1,8 @@
 import {
   claimPublishTaskOncePayloadSchema,
   completePublishTopicsPayloadSchema,
-  dispatchPublishTasksPayloadSchema
+  dispatchPublishTasksPayloadSchema,
+  manualPublishTestPayloadSchema
 } from "@pkg/types";
 import { Hono } from "hono";
 import { validationError } from "../lib/validation";
@@ -15,6 +16,10 @@ import { RemoteScriptServiceError } from "../services/remote-script.service";
 import { WecomPublishClientError } from "../services/wecom-publish-client";
 import { dispatchPublishConfigNow } from "../services/publish-scheduler.service";
 import { completePublishTaskTopics } from "../services/publish-task-result.service";
+import {
+  createManualPublishTest,
+  ManualPublishTestServiceError
+} from "../services/manual-publish-test.service";
 
 export const publishTaskRoutes = new Hono<{ Variables: AdminVariables }>();
 
@@ -31,6 +36,21 @@ publishTaskRoutes.post("/dispatch-now", async (c) => {
     }
     if (error instanceof PublishMatchServiceError || error instanceof RemoteScriptServiceError) {
       return c.json({ error: { code: error.message, message: error.userMessage, details: {} } }, 400);
+    }
+    throw error;
+  }
+});
+
+publishTaskRoutes.post("/manual-test", async (c) => {
+  const parsed = manualPublishTestPayloadSchema.safeParse(await c.req.json());
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    return c.json(await createManualPublishTest(parsed.data, c.get("admin").username));
+  } catch (error) {
+    if (error instanceof ManualPublishTestServiceError || error instanceof RemoteScriptServiceError) {
+      return c.json({
+        error: { code: error.message, message: error.userMessage, details: {} }
+      }, 400);
     }
     throw error;
   }

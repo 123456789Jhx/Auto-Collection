@@ -8,6 +8,9 @@ const routesDir = path.join(webRoot, "src/routes");
 const modulePath = path.join(routesDir, "PublishVideoModulePage.tsx");
 const deviceListPath = path.join(routesDir, "DeviceList.tsx");
 const bindingListPath = path.join(routesDir, "DeviceBindingList.tsx");
+const operationsPath = path.join(routesDir, "PublishTaskOperations.tsx");
+const manualModalPath = path.join(routesDir, "ManualPublishTestModal.tsx");
+const publishApiPath = path.join(webRoot, "src/lib/api-client-publish-tasks.ts");
 const appSource = fs.readFileSync(path.join(routesDir, "App.tsx"), "utf8");
 const remoteSource = fs.readFileSync(path.join(routesDir, "RemoteScriptsPage.tsx"), "utf8");
 
@@ -21,7 +24,41 @@ test("视频发布模块组合四个业务标签", () => {
   assert(source.includes("PublishTasksContent"));
   assert(source.includes('fixedScriptKey="publish_video"'));
   assert(source.includes("DeviceBindingList"));
-  assert(source.includes("开发中"));
+  assert(source.includes("PublishTaskOperations"));
+  assert(source.includes('activeKey={activeTab}'));
+  assert(source.includes('setActiveTab("task-dashboard")'));
+});
+
+test("任务操作接通领取、立即调度和手动测试发布", () => {
+  assert(fs.existsSync(operationsPath), "PublishTaskOperations.tsx should exist");
+  assert(fs.existsSync(manualModalPath), "ManualPublishTestModal.tsx should exist");
+  const operations = fs.readFileSync(operationsPath, "utf8");
+  const modal = fs.readFileSync(manualModalPath, "utf8");
+  const api = fs.readFileSync(publishApiPath, "utf8");
+
+  for (const label of ["领取一条", "立即调度", "手动测试发布"]) {
+    assert(operations.includes(label), `missing ${label} action`);
+  }
+  assert(operations.includes('scriptKey: "publish_video"'));
+  assert(operations.includes('status: "ENABLED"'));
+  assert(operations.includes("message.useMessage()"));
+  assert(operations.includes("contextHolder"));
+  assert(operations.includes("messageApi.success"));
+  assert(operations.includes("messageApi.info"));
+  assert(operations.includes("messageApi.error"));
+  assert(operations.includes("coverUrl: values.coverUrl?.trim() || null"));
+
+  for (const field of ["deviceId", "platform", "videoUrl", "coverUrl", "title", "description"]) {
+    assert(modal.includes(`name="${field}"`), `missing ${field} field`);
+  }
+  assert(modal.includes("描述需含5个#话题"));
+  assert(modal.includes("可留空"));
+  assert(modal.includes("online"));
+  assert(modal.includes('"running"'));
+
+  assert(api.includes('"/admin/publish-tasks/claim-once"'));
+  assert(api.includes('"/admin/publish-tasks/dispatch-now"'));
+  assert(api.includes('"/admin/publish-tasks/manual-test"'));
 });
 
 test("视频发布菜单成为唯一发布入口并保留旧路由", () => {

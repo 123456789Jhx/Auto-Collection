@@ -21,9 +21,20 @@ export const dispatchPublishTasksPayloadSchema = z.object({
   configId: z.string().uuid()
 }).strict();
 
+export const manualPublishTestPayloadSchema = z.object({
+  configId: z.string().uuid(),
+  deviceId: z.string().uuid(),
+  platform: z.enum(["抖音", "视频号"]),
+  videoUrl: z.string().trim().url(),
+  coverUrl: z.string().trim().url().nullable().optional(),
+  title: z.string().trim().min(1).max(500),
+  description: z.string().trim().min(1)
+}).strict();
+
 export const completePublishTopicsPayloadSchema = z.object({
   description: z.string().trim().min(1)
 }).strict();
 
 export type PublishTaskResultStatus = z.infer<typeof publishTaskResultStatusSchema>;
 export type PublishTaskResultPayload = z.infer<typeof publishTaskResultPayloadSchema>;
+export type ManualPublishTestPayload = z.infer<typeof manualPublishTestPayloadSchema>;

@@ -4,6 +4,8 @@ import { config } from "../config";
 import { markDeviceCommandIssued } from "../repositories/device.repository";
 import { db } from "../repositories/db";
 
+type PublishCommandDatabase = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 type PublishCommandTask = {
   id: string;
   matchedDeviceId: string | null;
@@ -50,12 +52,13 @@ function isUniqueViolation(error: unknown) {
 export async function createPublishVideoTaskCommand(
   task: PublishCommandTask,
   commandConfig: PublishCommandConfig,
-  actor: string
+  actor: string,
+  database: PublishCommandDatabase = db
 ) {
   const deviceId = task.matchedDeviceId;
   if (!deviceId) throw new Error("PUBLISH_TASK_DEVICE_REQUIRED");
   const idempotencyKey = keyFor(task);
-  const [existing] = await db.select().from(mobileCommands).where(and(
+  const [existing] = await database.select().from(mobileCommands).where(and(
     eq(mobileCommands.tenantId, config.tenantId),
     eq(mobileCommands.idempotencyKey, idempotencyKey),
     isNull(mobileCommands.deletedAt)
@@ -64,7 +67,7 @@ export async function createPublishVideoTaskCommand(
 
   try {
     const now = new Date();
-    const [command] = await db.insert(mobileCommands).values({
+    const [command] = await database.insert(mobileCommands).values({
       tenantId: config.tenantId,
       deviceId,
       idempotencyKey,
@@ -77,11 +80,11 @@ export async function createPublishVideoTaskCommand(
       updatedBy: actor
     }).returning();
     if (!command) throw new Error("PUBLISH_COMMAND_CREATE_FAILED");
-    await markDeviceCommandIssued(deviceId);
+    await markDeviceCommandIssued(deviceId, database);
     return { command, idempotent: false };
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
-    const [raced] = await db.select().from(mobileCommands).where(and(
+    const [raced] = await database.select().from(mobileCommands).where(and(
       eq(mobileCommands.tenantId, config.tenantId),
       eq(mobileCommands.idempotencyKey, idempotencyKey),
       isNull(mobileCommands.deletedAt)

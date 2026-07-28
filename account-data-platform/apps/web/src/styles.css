@@ -2019,8 +2019,26 @@ body {
   white-space: nowrap;
 }
 
+.publish-task-operations-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.publish-task-operation-body {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 104px;
+}
+
+.publish-task-operation-body .ant-btn {
+  justify-self: start;
+}
+
 @media (max-width: 720px) {
-  .publish-task-stats {
+  .publish-task-stats,
+  .publish-task-operations-grid {
     grid-template-columns: 1fr;
   }
 }

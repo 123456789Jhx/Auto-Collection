@@ -1,4 +1,7 @@
+import type { ManualPublishTestPayload } from "@pkg/types";
 import { mutate, request } from "./api-client";
+
+export type { ManualPublishTestPayload };
 
 export type PublishTaskRow = {
   id: string;
@@ -38,4 +41,29 @@ export function completePublishTaskTopics(id: string, description: string) {
     `/admin/publish-tasks/${encodeURIComponent(id)}/topics`,
     { description }
   );
+}
+
+export function claimPublishTaskOnce(configId: string) {
+  return mutate<{
+    claimed: boolean;
+    created: boolean;
+    task: PublishTaskRow | null;
+  }>("/admin/publish-tasks/claim-once", { configId });
+}
+
+export function dispatchPublishTasksNow(configId: string) {
+  return mutate<{
+    configId: string;
+    scheduledSlot: string;
+    dispatched: number;
+    reported: number;
+  }>("/admin/publish-tasks/dispatch-now", { configId });
+}
+
+export function createManualPublishTest(payload: ManualPublishTestPayload) {
+  return mutate<{
+    task: PublishTaskRow;
+    command: { id: string; commandType: string; status: string };
+    idempotent: boolean;
+  }>("/admin/publish-tasks/manual-test", payload);
 }

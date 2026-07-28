@@ -1,16 +1,21 @@
-import { Empty, Tabs, Typography } from "antd";
+import { Tabs, Typography } from "antd";
+import { useState } from "react";
 import { DeviceBindingList } from "./DeviceBindingList";
 import { PublishTasksContent } from "./PublishTasksPage";
 import { RemoteScriptsContent } from "./RemoteScriptsPage";
+import { PublishTaskOperations } from "./PublishTaskOperations";
 
 export function PublishVideoModulePage() {
+  const [activeTab, setActiveTab] = useState("task-dashboard");
+
   return (
     <div className="ops-page publish-video-module-page">
       <div className="ops-page-header">
         <Typography.Title level={3}>视频发布</Typography.Title>
       </div>
       <Tabs
-        defaultActiveKey="task-dashboard"
+        activeKey={activeTab}
+        onChange={setActiveTab}
         items={[
           {
             key: "task-dashboard",
@@ -20,11 +25,7 @@ export function PublishVideoModulePage() {
           {
             key: "task-operations",
             label: "任务操作",
-            children: (
-              <section className="ops-panel">
-                <div className="ops-panel-body"><Empty description="开发中" /></div>
-              </section>
-            )
+            children: <PublishTaskOperations onTaskCreated={() => setActiveTab("task-dashboard")} />
           },
           {
             key: "business-config",
