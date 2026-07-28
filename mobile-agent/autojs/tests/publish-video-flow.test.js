@@ -202,7 +202,12 @@ test("任一素材下载失败上报 MATERIAL_INVALID 并停止 UI 流程", () =
   const result = handler.handle({
     id: "command-13-failed",
     commandType: "PUBLISH_VIDEO_TASK",
-    payload: { taskId: "task-13-failed", videoUrl: "https://example.test/missing.mp4" }
+    payload: {
+      taskId: "task-13-failed",
+      description: "发布 #春耕 #农技",
+      expectedTopicCount: 2,
+      videoUrl: "https://example.test/missing.mp4"
+    }
   });
 
   assert.equal(result.status, "MATERIAL_INVALID");
@@ -211,62 +216,17 @@ test("任一素材下载失败上报 MATERIAL_INVALID 并停止 UI 流程", () =
   assert.deepEqual(events, ["ack:FAILED"]);
 });
 
-test("话题校验失败上报 TOPIC_PENDING 且不执行发布", () => {
-  const events = [];
-  const reports = [];
-  const steps = createSteps(events);
-  steps.fill = function () {
-    events.push("填写标题描述话题:pending");
-    const error = new Error("界面已选话题数量不足，缺少：农技");
-    error.publishStatus = "TOPIC_PENDING";
-    throw error;
-  };
-  const handler = createPublishVideoHandler(createContext(events), {
-    materialDownloader: {
-      download() {
-        return { videoPath: "/download/video.mp4", coverPath: "" };
-      }
-    },
-    resultReporter: {
-      report(taskId, result) {
-        reports.push({ taskId, result });
-        return { success: true };
-      }
-    },
-    gate: {
-      waitForNext(name, predicate) {
-        assert.equal(predicate(), true);
-        events.push("gate:" + name);
-      }
-    },
-    steps
-  });
-
-  const result = handler.handle({
-    id: "command-topic-pending",
-    commandType: "PUBLISH_VIDEO_TASK",
-    payload: {
-      taskId: "task-topic-pending",
-      title: "春耕",
-      description: "春耕记录 #春耕 #农技",
-      videoUrl: "https://example.test/video.mp4",
-      expectedTopicCount: 2
-    }
-  });
-
-  assert.equal(result.status, "TOPIC_PENDING");
-  assert.equal(reports[0].result.status, "TOPIC_PENDING");
-  assert.match(reports[0].result.error, /缺少：农技/);
-  assert.equal(events.includes("执行发布与结果判定"), false);
-  assert.equal(events.at(-1), "ack:DONE");
-});
-
 test("共享入口把视频号平台任务交给视频号 handler", () => {
   const events = [];
   const command = {
     id: "channels-command-route",
     commandType: "PUBLISH_VIDEO_TASK",
-    payload: { taskId: "channels-task-route", platform: "WECHAT_CHANNELS" }
+    payload: {
+      taskId: "channels-task-route",
+      platform: "WECHAT_CHANNELS",
+      description: "发布 #春耕 #农技",
+      expectedTopicCount: 2
+    }
   };
   const handler = createPublishVideoHandler(createContext(events), {
     steps: createSteps(events),
@@ -374,7 +334,13 @@ test("素材下载失败仍清理任务目录并释放执行器锁", () => {
   const result = handler.handle({
     id: "command-missing-cover",
     commandType: "PUBLISH_VIDEO_TASK",
-    payload: { taskId: "task-missing-cover", videoUrl: "https://example.test/video.mp4", coverUrl: null }
+    payload: {
+      taskId: "task-missing-cover",
+      description: "发布 #春耕 #农技",
+      expectedTopicCount: 2,
+      videoUrl: "https://example.test/video.mp4",
+      coverUrl: null
+    }
   });
 
   assert.equal(result.status, "MATERIAL_INVALID");

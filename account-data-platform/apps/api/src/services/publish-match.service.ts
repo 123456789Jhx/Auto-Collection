@@ -1,25 +1,23 @@
-import { collectorDevices } from "@pkg/db/schema";
-import { toPublishPlatform, toPublishTaskStatus } from "@pkg/types";
+import { collectorDevices, publishTasks } from "@pkg/db/schema";
+import { toPublishPlatform, toPublishTaskStatus, type ExternalPublishPlatform } from "@pkg/types";
 import { and, asc, desc, eq, gte, isNull, sql } from "drizzle-orm";
-import { z } from "zod";
 import { config as appConfig } from "../config";
 import { db } from "../repositories/db";
 import {
   saveClaimedPublishTask,
-  savePublishTaskMatch
+  savePublishTaskMatch,
+  savePublishTaskTopicPending
 } from "../repositories/publish-task.repository";
+import { publishVideoConfigSchema } from "./publish-config";
+import { validatePublishTopics } from "./publish-topics";
 import { getRemoteScriptConfig } from "./remote-script.service";
 import {
   claimTask,
   type WecomPublishClientOptions
 } from "./wecom-publish-client";
 
-const publishClientConfigSchema = z.object({
-  externalBaseUrl: z.string().url(),
-  externalTokenEnv: z.string().min(1)
-}).passthrough();
-
 const ONLINE_HEARTBEAT_WINDOW_MS = 3 * 60 * 1000;
+type PublishTaskRow = typeof publishTasks.$inferSelect;
 
 function onlineSince() {
   return new Date(Date.now() - ONLINE_HEARTBEAT_WINDOW_MS);
@@ -68,10 +66,34 @@ export class PublishMatchServiceError extends Error {
   }
 }
 
+export async function matchClaimedPublishTask(task: PublishTaskRow, actor: string) {
+  const accountName = task.accountName.trim() || null;
+  if (task.platform === "WECHAT_CHANNELS" && !accountName) {
+    return savePublishTaskMatch(task.id, {
+      matchedDeviceId: null,
+      matchNote: "视频号任务必须指定账号并绑定视频号"
+    }, actor);
+  }
+  const device = accountName
+    ? await findOnlineDeviceByBinding(accountName)
+    : await findOnlineUnboundDevice();
+  return savePublishTaskMatch(
+    task.id,
+    device
+      ? { matchedDeviceId: device.id }
+      : {
+        matchedDeviceId: null,
+        matchNote: accountName ? `无绑定该抖音号的设备：${accountName}` : "无可用的未绑定设备"
+      },
+    actor
+  );
+}
+
 export async function claimAndMatchPublishTask(
   configId: string,
   actor: string,
-  options: WecomPublishClientOptions = {}
+  options: WecomPublishClientOptions = {},
+  claimPlatform: ExternalPublishPlatform = "抖音"
 ) {
   const config = await getRemoteScriptConfig(configId);
   if (config.scriptKey !== "publish_video") {
@@ -80,12 +102,12 @@ export async function claimAndMatchPublishTask(
   if (config.status !== "ENABLED") {
     throw new PublishMatchServiceError("CONFIG_DISABLED", "发布视频配置已停用");
   }
-  const parsedConfig = publishClientConfigSchema.safeParse(config.configPayload);
+  const parsedConfig = publishVideoConfigSchema.safeParse(config.configPayload);
   if (!parsedConfig.success) {
     throw new PublishMatchServiceError("CONFIG_PAYLOAD_INVALID", "发布视频配置缺少外部接口参数");
   }
 
-  const externalTask = await claimTask(parsedConfig.data, { platform: "抖音" }, options);
+  const externalTask = await claimTask(parsedConfig.data, { platform: claimPlatform }, options);
   if (!externalTask) {
     return { claimed: false, created: false, task: null };
   }
@@ -105,20 +127,10 @@ export async function claimAndMatchPublishTask(
       task: saved.task
     };
   }
-
-  const device = accountName
-    ? await findOnlineDeviceByBinding(accountName)
-    : await findOnlineUnboundDevice();
-  const matchedTask = await savePublishTaskMatch(
-    saved.task.id,
-    device
-      ? { matchedDeviceId: device.id }
-      : {
-        matchedDeviceId: null,
-        matchNote: accountName ? `无绑定该抖音号的设备：${accountName}` : "无可用的未绑定设备"
-      },
-    actor
-  );
+  const topicValidation = validatePublishTopics(externalTask.description, parsedConfig.data.expectedTopicCount);
+  const matchedTask = topicValidation.valid
+    ? await matchClaimedPublishTask(saved.task, actor)
+    : await savePublishTaskTopicPending(saved.task.id, topicValidation.reason, actor);
   return {
     claimed: true,
     created: true,

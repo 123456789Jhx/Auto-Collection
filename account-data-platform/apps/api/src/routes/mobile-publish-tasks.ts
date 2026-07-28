@@ -2,7 +2,7 @@ import { publishTaskResultPayloadSchema } from "@pkg/types";
 import { Hono } from "hono";
 import { validationError } from "../lib/validation";
 import { mobileAuth } from "../middleware/mobile-auth";
-import { reportPublishTaskResult } from "../services/publish-task-result.service";
+import { getPublishTaskTopicResolution, reportPublishTaskResult } from "../services/publish-task-result.service";
 import { WecomPublishClientError } from "../services/wecom-publish-client";
 
 type MobileVariables = {
@@ -14,6 +14,25 @@ type MobileVariables = {
 export const mobilePublishTaskRoutes = new Hono<{ Variables: MobileVariables }>();
 
 mobilePublishTaskRoutes.use("*", mobileAuth);
+
+mobilePublishTaskRoutes.get("/:id/topics", async (c) => {
+  const deviceId = c.req.query("deviceId") || "";
+  if (!deviceId) {
+    return c.json({ error: { code: "VALIDATION_ERROR", message: "deviceId is required", details: {} } }, 400);
+  }
+  try {
+    return c.json(await getPublishTaskTopicResolution(c.req.param("id"), deviceId));
+  } catch (error) {
+    const code = String(error instanceof Error ? error.message : error);
+    if (code === "PUBLISH_TASK_NOT_FOUND") {
+      return c.json({ error: { code, message: "发布任务不存在", details: {} } }, 404);
+    }
+    if (code === "PUBLISH_TASK_DEVICE_MISMATCH") {
+      return c.json({ error: { code, message: "发布任务不属于当前设备", details: {} } }, 403);
+    }
+    throw error;
+  }
+});
 
 mobilePublishTaskRoutes.post("/:id/result", async (c) => {
   const parsed = publishTaskResultPayloadSchema.safeParse(c.get("mobileBody"));

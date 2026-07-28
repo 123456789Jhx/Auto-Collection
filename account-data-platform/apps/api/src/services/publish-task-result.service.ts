@@ -1,12 +1,13 @@
 import type { PublishTaskResultPayload } from "@pkg/types";
 import {
   findPublishTaskContext,
-  savePublishTaskDispatched,
   savePublishTaskResult,
   updatePublishTaskDescription
 } from "../repositories/publish-dispatch.repository";
 import { publishClientOnlyConfigSchema, publishVideoConfigSchema } from "./publish-config";
-import { redispatchPublishVideoTaskCommand } from "./publish-command.service";
+import { matchClaimedPublishTask } from "./publish-match.service";
+import { dispatchMatchedPublishTask } from "./publish-scheduler.service";
+import { PublishTopicsValidationError, validatePublishTopics } from "./publish-topics";
 import { patchTaskStatus, type WecomPublishClientOptions } from "./wecom-publish-client";
 
 type ResultInput = Omit<PublishTaskResultPayload, "deviceToken">;
@@ -54,9 +55,37 @@ export async function reportPublishTaskResult(
 export async function completePublishTaskTopics(id: string, description: string, actor: string) {
   const current = await findPublishTaskContext(id);
   if (!current) throw new Error("PUBLISH_TASK_NOT_FOUND");
+  if (current.task.status !== "TOPIC_PENDING") throw new Error("PUBLISH_TASK_TOPIC_STATE_INVALID");
   const commandConfig = publishVideoConfigSchema.parse(current.configPayload);
-  const updated = await updatePublishTaskDescription(id, description, actor);
+  const validation = validatePublishTopics(description, commandConfig.expectedTopicCount);
+  if (!validation.valid) throw new PublishTopicsValidationError(validation.reason);
+  const updated = await updatePublishTaskDescription(
+    id,
+    description,
+    current.task.matchedDeviceId ? "MATCHED" : "CLAIMED",
+    actor
+  );
   if (!updated) throw new Error("PUBLISH_TASK_TOPIC_STATE_INVALID");
-  await redispatchPublishVideoTaskCommand(updated, commandConfig, actor);
-  return savePublishTaskDispatched(id, updated.scheduledSlot ?? new Date(), actor);
+  const matched = updated.matchedDeviceId ? updated : await matchClaimedPublishTask(updated, actor);
+  const result = await dispatchMatchedPublishTask(
+    matched,
+    commandConfig,
+    updated.scheduledSlot ?? new Date(),
+    actor,
+    {},
+    true
+  );
+  return result.task;
+}
+
+export async function getPublishTaskTopicResolution(id: string, deviceCode: string) {
+  const current = await findPublishTaskContext(id);
+  if (!current) throw new Error("PUBLISH_TASK_NOT_FOUND");
+  if (current.deviceCode !== deviceCode) throw new Error("PUBLISH_TASK_DEVICE_MISMATCH");
+  return {
+    taskId: current.task.id,
+    status: current.task.status,
+    description: current.task.description,
+    resolved: current.task.status !== "TOPIC_PENDING"
+  };
 }

@@ -43,6 +43,19 @@ function parseConfigPayload(value: string): ConfigPayloadFormValue {
   return parsed as ConfigPayloadFormValue;
 }
 
+function normalizePublishVideoPayload(
+  scriptKey: string | undefined,
+  payload: ConfigPayloadFormValue
+) {
+  const normalized = { ...payload };
+  if (scriptKey !== "publish_video") return normalized;
+  delete normalized.dailyLimitPerAccount;
+  if (typeof normalized.topicResolveTimeoutMinutes !== "number") {
+    return { ...normalized, topicResolveTimeoutMinutes: 30 };
+  }
+  return normalized;
+}
+
 export function RemoteScriptConfigModal({
   open,
   config,
@@ -58,13 +71,18 @@ export function RemoteScriptConfigModal({
   useEffect(() => {
     if (!open) return;
     form.resetFields();
+    const scriptKey = config?.scriptKey ?? definitions.find((item) => item.status === "ENABLED")?.scriptKey;
+    const configPayload = normalizePublishVideoPayload(
+      scriptKey,
+      (config?.configPayload ?? {}) as ConfigPayloadFormValue
+    );
     form.setFieldsValue({
-      scriptKey: config?.scriptKey ?? definitions.find((item) => item.status === "ENABLED")?.scriptKey,
+      scriptKey,
       configName: config?.configName ?? "",
       remark: config?.remark ?? "",
       status: config?.status ?? "ENABLED",
-      configPayload: (config?.configPayload ?? {}) as ConfigPayloadFormValue,
-      configPayloadText: JSON.stringify(config?.configPayload ?? {}, null, 2)
+      configPayload,
+      configPayloadText: JSON.stringify(configPayload, null, 2)
     });
   }, [config, definitions, form, open]);
 
@@ -115,9 +133,10 @@ export function RemoteScriptConfigModal({
                 value: item.scriptKey,
                 label: item.scriptName || item.displayName || item.scriptKey
               }))}
-            onChange={() => {
-              form.setFieldValue("configPayload", {});
-              form.setFieldValue("configPayloadText", "{}");
+            onChange={(scriptKey) => {
+              const configPayload = normalizePublishVideoPayload(scriptKey, {});
+              form.setFieldValue("configPayload", configPayload);
+              form.setFieldValue("configPayloadText", JSON.stringify(configPayload, null, 2));
             }}
           />
         </Form.Item>

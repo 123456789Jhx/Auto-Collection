@@ -9,6 +9,7 @@ type PublishCommandDatabase = typeof db | Parameters<Parameters<typeof db.transa
 type PublishCommandTask = {
   id: string;
   matchedDeviceId: string | null;
+  platform: string;
   title: string;
   description: string;
   coverUrl: string | null;
@@ -21,12 +22,14 @@ export type PublishCommandConfig = {
   actionWaitMsMin: number;
   actionWaitMsMax: number;
   expectedTopicCount: number;
+  topicResolveTimeoutMinutes: number;
   downloadDir?: string;
 };
 
 function commandValues(task: PublishCommandTask, commandConfig: PublishCommandConfig) {
   return {
     taskId: task.id,
+    platform: task.platform,
     title: task.title,
     description: task.description,
     coverUrl: task.coverUrl,
@@ -36,6 +39,7 @@ function commandValues(task: PublishCommandTask, commandConfig: PublishCommandCo
     actionWaitMsMin: commandConfig.actionWaitMsMin,
     actionWaitMsMax: commandConfig.actionWaitMsMax,
     expectedTopicCount: commandConfig.expectedTopicCount,
+    topicResolveTimeoutMinutes: commandConfig.topicResolveTimeoutMinutes,
     downloadDir: commandConfig.downloadDir ?? ""
   };
 }

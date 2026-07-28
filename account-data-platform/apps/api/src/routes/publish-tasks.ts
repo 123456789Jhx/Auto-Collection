@@ -16,6 +16,7 @@ import { RemoteScriptServiceError } from "../services/remote-script.service";
 import { WecomPublishClientError } from "../services/wecom-publish-client";
 import { dispatchPublishConfigNow } from "../services/publish-scheduler.service";
 import { completePublishTaskTopics } from "../services/publish-task-result.service";
+import { PublishTopicsValidationError } from "../services/publish-topics";
 import {
   createManualPublishTest,
   ManualPublishTestServiceError
@@ -66,6 +67,11 @@ publishTaskRoutes.post("/:id/topics", async (c) => {
       c.get("admin").username
     ));
   } catch (error) {
+    if (error instanceof PublishTopicsValidationError) {
+      return c.json({
+        error: { code: error.code, message: error.userMessage, details: {} }
+      }, 400);
+    }
     const code = String(error instanceof Error ? error.message : error);
     if (code === "PUBLISH_TASK_NOT_FOUND") {
       return c.json({ error: { code, message: "发布任务不存在", details: {} } }, 404);

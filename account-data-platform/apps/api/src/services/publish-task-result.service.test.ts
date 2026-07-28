@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { collectorDevices, publishTasks, remoteScriptConfigs } from "@pkg/db/schema";
+import { collectorDevices, mobileCommands, publishTasks, remoteScriptConfigs } from "@pkg/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { db } from "../repositories/db";
-import { reportPublishTaskResult } from "./publish-task-result.service";
+import { completePublishTaskTopics, reportPublishTaskResult } from "./publish-task-result.service";
 
 const suffix = crypto.randomUUID().replaceAll("-", "");
 const tokenEnv = `NODE12_RESULT_TOKEN_${suffix}`;
@@ -18,7 +18,14 @@ beforeAll(async () => {
     configName: `节点12结果配置_${suffix}`,
     configPayload: {
       externalBaseUrl: "http://wecom.mock.local",
-      externalTokenEnv: tokenEnv
+      externalTokenEnv: tokenEnv,
+      publishTimeSlots: [],
+      responseDelayMsMin: 10,
+      responseDelayMsMax: 20,
+      actionWaitMsMin: 30,
+      actionWaitMsMax: 40,
+      expectedTopicCount: 5,
+      downloadDir: "/sdcard/"
     },
     configHash: suffix.padEnd(64, "0").slice(0, 64),
     createdBy: "node12-test",
@@ -29,6 +36,12 @@ beforeAll(async () => {
   const [device] = await db.insert(collectorDevices).values({
     deviceCode,
     enabled: true,
+    status: "online",
+    lastHeartbeatAt: new Date(),
+    accountProfile: {
+      douyinAccountName: "节点12结果号",
+      wechatChannelsName: "节点12结果视频号"
+    },
     createdBy: "node12-test",
     updatedBy: "node12-test"
   }).returning();
@@ -56,12 +69,35 @@ beforeAll(async () => {
       videoUrl: "https://media.example.test/topic.mp4",
       status: "DISPATCHED",
       matchedDeviceId: deviceId
+    },
+    {
+      configId,
+      taskId: `topic-invalid-${suffix}`,
+      platform: "DOUYIN",
+      accountName: "节点12结果号",
+      title: "补全仍不合格任务",
+      description: "缺话题",
+      videoUrl: "https://media.example.test/topic-invalid.mp4",
+      status: "TOPIC_PENDING",
+      matchNote: "应有5个#，实际0个"
+    },
+    {
+      configId,
+      taskId: `topic-resolve-${suffix}`,
+      platform: "DOUYIN",
+      accountName: "节点12结果号",
+      title: "补全后首次匹配任务",
+      description: "缺话题",
+      videoUrl: "https://media.example.test/topic-resolve.mp4",
+      status: "TOPIC_PENDING",
+      matchNote: "应有5个#，实际0个"
     }
   ]).returning();
   taskIds.push(...rows.map((row) => row.id));
 });
 
 afterAll(async () => {
+  await db.delete(mobileCommands).where(eq(mobileCommands.deviceId, deviceId));
   await db.delete(publishTasks).where(inArray(publishTasks.id, taskIds));
   await db.delete(remoteScriptConfigs).where(eq(remoteScriptConfigs.id, configId));
   await db.delete(collectorDevices).where(eq(collectorDevices.id, deviceId));
@@ -115,5 +151,40 @@ describe("publish task result mapping", () => {
     expect(result.resultError).toBe("话题数量不足");
     expect(result.reportedAt).toBeNull();
     expect(patchCount).toBe(0);
+  });
+
+  test("rejects an invalid topic completion without changing the pending task", async () => {
+    await expect(completePublishTaskTopics(
+      taskIds[2],
+      "补全后仍只有 #一 #二 #三 #四",
+      "node12-admin"
+    )).rejects.toThrow("应有5个#，实际4个");
+
+    const [task] = await db.select().from(publishTasks).where(eq(publishTasks.id, taskIds[2]));
+    expect(task).toMatchObject({ status: "TOPIC_PENDING", matchedDeviceId: null });
+  });
+
+  test("matches and dispatches a pre-match topic pending task after valid completion", async () => {
+    const result = await completePublishTaskTopics(
+      taskIds[3],
+      "补全完成 #一 #二 #三 #四 #五",
+      "node12-admin"
+    );
+
+    expect(result).toMatchObject({
+      status: "DISPATCHED",
+      matchedDeviceId: deviceId,
+      description: "补全完成 #一 #二 #三 #四 #五"
+    });
+    const [command] = await db.select().from(mobileCommands).where(eq(
+      mobileCommands.idempotencyKey,
+      `${taskIds[3]}:${deviceId}`
+    ));
+    expect(command).toBeDefined();
+    expect(command.payloadJson).toMatchObject({
+      description: "补全完成 #一 #二 #三 #四 #五",
+      expectedTopicCount: 5,
+      topicResolveTimeoutMinutes: 30
+    });
   });
 });

@@ -25,7 +25,7 @@ let olderUnboundDeviceId = "";
 
 const baseTask = {
   title: "节点11发布任务",
-  description: "外部接口匹配测试",
+  description: "外部接口匹配测试 #农业",
   coverUrl: null,
   videoUrl: "https://media.example.test/node11.mp4",
   platform: "抖音",
@@ -48,7 +48,13 @@ beforeAll(async () => {
     configName: `节点11匹配配置_${suffix}`,
     configPayload: {
       externalBaseUrl: "http://wecom.mock.local",
-      externalTokenEnv: tokenEnv
+      externalTokenEnv: tokenEnv,
+      publishTimeSlots: [],
+      responseDelayMsMin: 10,
+      responseDelayMsMax: 20,
+      actionWaitMsMin: 30,
+      actionWaitMsMax: 40,
+      expectedTopicCount: 1
     },
     configHash: suffix.padEnd(64, "0").slice(0, 64),
     createdBy: "node11-test",

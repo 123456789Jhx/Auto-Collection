@@ -69,10 +69,11 @@ describe("remote script registry", () => {
             type: "boolean",
             description: "无封面时跳过"
           },
-          dailyLimitPerAccount: {
+          topicResolveTimeoutMinutes: {
             type: "integer",
             minimum: 1,
-            description: "每账号每日上限"
+            maximum: 120,
+            description: "话题补全等待超时（分钟）"
           },
           downloadDir: {
             type: "string",

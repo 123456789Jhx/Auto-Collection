@@ -28,12 +28,12 @@ function hmacSha256Hex(secret, value) {
   return bytesToHex(mac.doFinal(new java.lang.String(value || "").getBytes("UTF-8")));
 }
 
-function signedHeaders(config, url, bodyText) {
+function signedHeaders(config, url, bodyText, method) {
   var timestamp = new Date().toISOString();
   var bodyHash = sha256Hex(bodyText);
   var uri = android.net.Uri.parse(url);
   var canonical = [
-    "POST",
+    method || "POST",
     uri.getEncodedPath() || "/",
     uri.getEncodedQuery() || "",
     timestamp,
@@ -45,6 +45,24 @@ function signedHeaders(config, url, bodyText) {
     "X-Timestamp": timestamp,
     "X-Body-SHA256": bodyHash,
     "X-Signature": hmacSha256Hex(config.device.deviceToken || "", canonical)
+  };
+}
+
+function createTopicQuery(config) {
+  return function queryTopic(taskId) {
+    var baseUrl = String(config.upload.baseUrl || "").replace(/\/$/, "");
+    var deviceId = config.device.deviceId || "";
+    var url = baseUrl + "/mobile/publish-tasks/" + encodeURIComponent(taskId) +
+      "/topics?deviceId=" + encodeURIComponent(deviceId);
+    var response = http.get(url, {
+      timeout: config.upload.timeoutMs,
+      headers: signedHeaders(config, url, "", "GET")
+    });
+    var responseBody = response.body ? response.body.string() : "";
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new Error("话题补全查询失败：" + response.statusCode + " " + responseBody.slice(0, 160));
+    }
+    return JSON.parse(responseBody || "{}");
   };
 }
 
@@ -104,6 +122,12 @@ function createPublishVideoHandler(context, dependencies) {
     .createPublishMaterialManager({ logger: logger });
   var publishLock = dependencies.publishLock || loadBizModule(context, "domain/发布任务锁.js")
     .createPublishTaskLock();
+  var topicDomain = dependencies.topicDomain || loadBizModule(context, "domain/话题校验.js");
+  var topicContinuation = dependencies.topicContinuation || loadBizModule(context, "domain/话题断点续传.js")
+    .createTopicContinuation({
+      fetchTopic: createTopicQuery(context.config),
+      validateDescriptionTopics: topicDomain.validateDescriptionTopics
+    });
   var activeMaterialDir = "";
   var materialDownloader = dependencies.materialDownloader || {
     download: function (payload) {
@@ -126,7 +150,8 @@ function createPublishVideoHandler(context, dependencies) {
           ui: dependencies.channelsUi,
           gate: dependencies.channelsGate,
           materialDownloader: materialDownloader,
-          resultReporter: resultReporter
+          resultReporter: resultReporter,
+          topicContinuation: topicContinuation
         });
     }
     return channelsHandler;
@@ -183,6 +208,27 @@ function createPublishVideoHandler(context, dependencies) {
     };
   }
 
+  function reportTopicPending(payload, reason) {
+    resultReporter.report(payload.taskId, {
+      deviceId: context.config.device.deviceId || "",
+      deviceToken: context.config.device.deviceToken || "",
+      status: "TOPIC_PENDING",
+      error: reason || "话题待补充"
+    });
+  }
+
+  function fillWithTopicContinuation(activeSteps, payload, materials) {
+    try {
+      return activeSteps.fill(payload, materials);
+    } catch (error) {
+      if (!error || error.publishStatus !== "TOPIC_PENDING") throw error;
+      var reason = String(error.message || "话题待补充");
+      reportTopicPending(payload, reason);
+      payload.description = topicContinuation.waitForResolvedDescription(payload);
+      return activeSteps.fill(payload, materials);
+    }
+  }
+
   function handle(command) {
     if (!command || command.commandType !== "PUBLISH_VIDEO_TASK") return { handled: false };
     var payload = command.payload || command.payloadJson || {};
@@ -192,6 +238,13 @@ function createPublishVideoHandler(context, dependencies) {
     activeMaterialDir = "";
     try {
       if (!payload.taskId) return finish(command, payload, "MATERIAL_INVALID", "taskId不能为空", null);
+      var topicValidation = topicDomain.validateDescriptionTopics(
+        payload.description,
+        payload.expectedTopicCount
+      );
+      if (!topicValidation.valid) {
+        return finish(command, payload, "TOPIC_PENDING", topicValidation.reason, null);
+      }
       if (isWechatChannelsTask(payload)) return wechatChannelsHandler().handle(command);
       var materials;
       try {
@@ -210,7 +263,7 @@ function createPublishVideoHandler(context, dependencies) {
         gate.waitForNext("编辑封面", activeSteps.states.coverEditReady);
         activeSteps.editCover(materials, payload);
         gate.waitForNext("填写标题描述话题", activeSteps.states.publishFormReady);
-        activeSteps.fill(payload, materials);
+        fillWithTopicContinuation(activeSteps, payload, materials);
         gate.waitForNext("执行发布与结果判定", activeSteps.states.publishReviewReady);
         var publishResult = activeSteps.publish(payload, materials) || {};
         logger.info("抖音发布任务执行成功", { taskId: payload.taskId });

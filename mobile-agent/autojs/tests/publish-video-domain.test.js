@@ -2,7 +2,8 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 
 const { createActionTimeGate } = require("../domain/动作时间闸口.js");
-const { validateTopics } = require("../domain/话题校验.js");
+const { validateDescriptionTopics, validateTopics } = require("../domain/话题校验.js");
+const { createTopicContinuation } = require("../domain/话题断点续传.js");
 const { chooseVideoMaterial } = require("../domain/素材判断.js");
 
 test("动作闸口每次在两个配置区间内独立生成延时", () => {
@@ -74,6 +75,64 @@ test("话题校验要求描述话题与界面已选话题同时达到预期", ()
   assert.equal(pending.valid, false);
   assert.equal(pending.status, "TOPIC_PENDING");
   assert.match(pending.reason, /农技/);
+});
+
+test("手机描述话题校验与 API 规则一致", () => {
+  assert.deepEqual(validateDescriptionTopics("春耕 #一 #二 #三 #四", 5), {
+    valid: false,
+    actualCount: 4,
+    reason: "应有5个#，实际4个"
+  });
+  assert.deepEqual(validateDescriptionTopics("春耕 #一 #二 # #四 #五", 5), {
+    valid: false,
+    actualCount: 5,
+    reason: "第3个#后无文字"
+  });
+});
+
+test("话题断点轮询先 pending 后 resolved 并释放亮屏", () => {
+  const events = [];
+  const responses = [
+    { resolved: false, status: "TOPIC_PENDING", description: "只有 #一个" },
+    { resolved: true, status: "DISPATCHED", description: "补全 #一 #二" }
+  ];
+  let now = 0;
+  const continuation = createTopicContinuation({
+    fetchTopic() { events.push("poll"); return responses.shift(); },
+    sleep(ms) { events.push("sleep:" + ms); now += ms; },
+    now() { return now; },
+    keepAwake(ms) { events.push("awake:" + ms); },
+    releaseAwake() { events.push("release-awake"); }
+  });
+
+  const result = continuation.waitForResolvedDescription({
+    taskId: "topic-resume",
+    description: "只有 #一个",
+    expectedTopicCount: 2,
+    topicResolveTimeoutMinutes: 1
+  });
+
+  assert.equal(result, "补全 #一 #二");
+  assert.deepEqual(events, ["awake:60000", "poll", "sleep:20000", "poll", "release-awake"]);
+});
+
+test("话题断点超时给出固定文案并释放亮屏", () => {
+  const events = [];
+  let now = 0;
+  const continuation = createTopicContinuation({
+    fetchTopic() { events.push("poll"); return { resolved: false, status: "TOPIC_PENDING" }; },
+    sleep(ms) { now += ms; },
+    now() { return now; },
+    keepAwake() { events.push("awake"); },
+    releaseAwake() { events.push("release-awake"); }
+  });
+
+  assert.throws(() => continuation.waitForResolvedDescription({
+    taskId: "topic-timeout",
+    expectedTopicCount: 2,
+    topicResolveTimeoutMinutes: 0.5
+  }), /话题补全超时/);
+  assert.deepEqual(events.at(-1), "release-awake");
 });
 
 test("素材判断先看第一项，第一项为图时选择第二个视频", () => {

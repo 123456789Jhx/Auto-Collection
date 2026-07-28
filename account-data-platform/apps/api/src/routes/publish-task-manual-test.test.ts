@@ -8,6 +8,7 @@ import { createManualPublishTest } from "../services/manual-publish-test.service
 
 const suffix = crypto.randomUUID().replaceAll("-", "");
 const deviceCode = `n3-manual-${suffix.slice(0, 12)}`;
+const deviceToken = `${suffix}${suffix}`;
 let adminToken = "";
 let deviceId = "";
 let enabledConfigId = "";
@@ -22,7 +23,7 @@ const configPayload = {
   actionWaitMsMin: 900,
   actionWaitMsMax: 1700,
   expectedTopicCount: 5,
-  dailyLimitPerAccount: 3,
+  topicResolveTimeoutMinutes: 30,
   downloadDir: "/sdcard/Download/n3-manual"
 };
 
@@ -84,8 +85,14 @@ beforeAll(async () => {
   const [device] = await db.insert(collectorDevices).values({
     deviceCode,
     deviceName: "N3 手动测试设备",
+    deviceToken,
     enabled: true,
     status: "online",
+    lastHeartbeatAt: new Date(),
+    accountProfile: {
+      douyinAccountName: "N5B路由账号",
+      wechatChannelsName: "N5B路由视频号"
+    },
     createdBy: "n3-test",
     updatedBy: "n3-test"
   }).returning();
@@ -151,6 +158,8 @@ describe("POST /admin/publish-tasks/manual-test", () => {
       actionWaitMsMin: 900,
       actionWaitMsMax: 1700,
       expectedTopicCount: 5,
+      topicResolveTimeoutMinutes: 30,
+      platform: "WECHAT_CHANNELS",
       downloadDir: "/sdcard/Download/n3-manual"
     });
   });
@@ -182,5 +191,62 @@ describe("POST /admin/publish-tasks/manual-test", () => {
     const response = await manualRequest({ ...requestBody(), platform: "快手", title: "" });
     expect(response.status).toBe(400);
     expect((await response.json()).error.code).toBe("VALIDATION_ERROR");
+  });
+
+  test("rejects incomplete topic repair and dispatches after valid repair", async () => {
+    const [task] = await db.insert(publishTasks).values({
+      configId: enabledConfigId,
+      taskId: `n5b-topics-route-${suffix}`,
+      platform: "DOUYIN",
+      accountName: "N5B路由账号",
+      title: "N5B 话题补全路由",
+      description: "只有 #一个",
+      videoUrl: "https://media.example.test/n5b-topic.mp4",
+      status: "TOPIC_PENDING",
+      matchedDeviceId: deviceId,
+      matchNote: "应有5个#，实际1个"
+    }).returning();
+    const requestTopics = (description: string) => app.request(
+      `/api/v1/admin/publish-tasks/${task.id}/topics`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ description })
+      }
+    );
+
+    const invalid = await requestTopics("仍然只有 #一 #二 #三 #四");
+    expect(invalid.status).toBe(400);
+    expect((await invalid.json()).error.message).toBe("应有5个#，实际4个");
+
+    const pendingQuery = await app.request(
+      `/api/v1/mobile/publish-tasks/${task.id}/topics?deviceId=${deviceCode}`,
+      { headers: { "X-Device-Token": deviceToken } }
+    );
+    expect(pendingQuery.status).toBe(200);
+    expect(await pendingQuery.json()).toMatchObject({ resolved: false, status: "TOPIC_PENDING" });
+
+    const valid = await requestTopics("补全完成 #一 #二 #三 #四 #五");
+    expect(valid.status).toBe(200);
+    expect(await valid.json()).toMatchObject({ status: "DISPATCHED", matchedDeviceId: deviceId });
+    const commands = await db.select().from(mobileCommands).where(eq(
+      mobileCommands.idempotencyKey,
+      `${task.id}:${deviceId}`
+    ));
+    expect(commands).toHaveLength(1);
+
+    const resolvedQuery = await app.request(
+      `/api/v1/mobile/publish-tasks/${task.id}/topics?deviceId=${deviceCode}`,
+      { headers: { "X-Device-Token": deviceToken } }
+    );
+    expect(resolvedQuery.status).toBe(200);
+    expect(await resolvedQuery.json()).toMatchObject({
+      resolved: true,
+      status: "DISPATCHED",
+      description: "补全完成 #一 #二 #三 #四 #五"
+    });
   });
 });

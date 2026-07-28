@@ -13,6 +13,7 @@ const manualModalPath = path.join(routesDir, "ManualPublishTestModal.tsx");
 const publishApiPath = path.join(webRoot, "src/lib/api-client-publish-tasks.ts");
 const appSource = fs.readFileSync(path.join(routesDir, "App.tsx"), "utf8");
 const remoteSource = fs.readFileSync(path.join(routesDir, "RemoteScriptsPage.tsx"), "utf8");
+const remoteModalSource = fs.readFileSync(path.join(routesDir, "RemoteScriptConfigModal.tsx"), "utf8");
 
 test("视频发布模块组合四个业务标签", () => {
   assert(fs.existsSync(modulePath), "PublishVideoModulePage.tsx should exist");
@@ -84,6 +85,9 @@ test("业务配置固定过滤 publish_video 的列表和定义", () => {
   assert(remoteSource.includes("fixedScriptKey"));
   assert(remoteSource.includes("effectiveScriptKey"));
   assert(remoteSource.includes("item.scriptKey === fixedScriptKey"));
+  assert(remoteModalSource.includes("normalizePublishVideoPayload"));
+  assert(remoteModalSource.includes("delete normalized.dailyLimitPerAccount"));
+  assert(remoteModalSource.includes("topicResolveTimeoutMinutes: 30"));
 });
 
 test("设备绑定主体复用设备列表并展示绑定状态", () => {

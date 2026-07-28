@@ -1,5 +1,5 @@
 import { collectorDevices, publishTasks, remoteScriptConfigs } from "@pkg/db/schema";
-import { and, asc, count, desc, eq, gte, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
 import { config } from "../config";
 import { db } from "./db";
 
@@ -20,18 +20,6 @@ export async function hasPublishTaskForSlot(configId: string, slot: Date) {
     isNull(publishTasks.deletedAt)
   ));
   return Number(row?.total ?? 0) > 0;
-}
-
-export async function countAccountTasksSince(configId: string, accountName: string, since: Date) {
-  const [row] = await db.select({ total: count() }).from(publishTasks).where(and(
-    eq(publishTasks.tenantId, config.tenantId),
-    eq(publishTasks.configId, configId),
-    eq(publishTasks.accountName, accountName),
-    isNotNull(publishTasks.matchedDeviceId),
-    gte(publishTasks.claimedAt, since),
-    isNull(publishTasks.deletedAt)
-  ));
-  return Number(row?.total ?? 0);
 }
 
 export async function savePublishTaskDispatched(id: string, scheduledSlot: Date, actor: string) {
@@ -95,10 +83,16 @@ export async function findPublishTaskContext(id: string) {
   return row ?? null;
 }
 
-export async function updatePublishTaskDescription(id: string, description: string, actor: string) {
+export async function updatePublishTaskDescription(
+  id: string,
+  description: string,
+  status: "CLAIMED" | "MATCHED",
+  actor: string
+) {
   const [task] = await db.update(publishTasks).set({
     description,
-    status: "MATCHED",
+    status,
+    matchNote: null,
     resultError: null,
     finishedAt: null,
     reportedAt: null,

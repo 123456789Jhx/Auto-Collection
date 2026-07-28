@@ -125,3 +125,19 @@ export async function savePublishTaskMatch(
   }
   return updated;
 }
+
+export async function savePublishTaskTopicPending(id: string, reason: string, actor: string) {
+  const [updated] = await db.update(publishTasks).set({
+    status: "TOPIC_PENDING",
+    matchedDeviceId: null,
+    matchNote: reason,
+    updatedAt: new Date(),
+    updatedBy: actor
+  }).where(and(
+    eq(publishTasks.tenantId, config.tenantId),
+    eq(publishTasks.id, id),
+    isNull(publishTasks.deletedAt)
+  )).returning();
+  if (!updated) throw new Error("发布任务话题状态保存失败");
+  return updated;
+}

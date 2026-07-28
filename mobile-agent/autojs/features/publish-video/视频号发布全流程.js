@@ -55,6 +55,7 @@ function createWechatChannelsPublishHandler(context, dependencies) {
 
   var materialDownloader = dependencies.materialDownloader;
   var resultReporter = dependencies.resultReporter;
+  var topicContinuation = dependencies.topicContinuation;
   if (!materialDownloader || !resultReporter) {
     throw new Error("视频号发布必须由共享发布入口创建");
   }
@@ -88,6 +89,30 @@ function createWechatChannelsPublishHandler(context, dependencies) {
     var result = action();
     assertNoVerification(stage + "后");
     return result;
+  }
+
+  function fillAndValidateTopics(payload) {
+    performAction("填写描述", function () { ui.fillDescription(payload.description); });
+    var requiredTopics = topicDomain.extractTopics(payload.description);
+    for (var i = 0; i < requiredTopics.length; i++) {
+      (function (topic) {
+        performAction("选择话题" + topic, function () { ui.selectTopic(topic); });
+      })(requiredTopics[i]);
+    }
+    return topicDomain.validateTopics(
+      payload.description,
+      ui.listSelectedTopics(),
+      payload.expectedTopicCount
+    );
+  }
+
+  function reportTopicPending(payload, reason) {
+    resultReporter.report(payload.taskId, {
+      deviceId: context.config.device.deviceId || "",
+      deviceToken: context.config.device.deviceToken || "",
+      status: "TOPIC_PENDING",
+      error: reason || "视频号话题待补充"
+    });
   }
 
   function finish(command, payload, status, errorMessage, publishResult, popupFeature) {
@@ -178,19 +203,14 @@ function createWechatChannelsPublishHandler(context, dependencies) {
       performAction("点击标题框外", function () { ui.tapOutsideTitle(); });
       performAction("完成标题", function () { ui.completeTitle(); });
       waitForNext(gate, "等待导出", ui.states.exportComplete);
-      performAction("填写描述", function () { ui.fillDescription(payload.description); });
-      var requiredTopics = topicDomain.extractTopics(payload.description);
-      for (var i = 0; i < requiredTopics.length; i++) {
-        (function (topic) {
-          performAction("选择话题" + topic, function () { ui.selectTopic(topic); });
-        })(requiredTopics[i]);
+      var topicResult = fillAndValidateTopics(payload);
+      if (!topicResult.valid) {
+        if (!topicContinuation) throw topicPending(topicResult.reason || "视频号话题待补充");
+        reportTopicPending(payload, topicResult.reason);
+        payload.description = topicContinuation.waitForResolvedDescription(payload);
+        topicResult = fillAndValidateTopics(payload);
+        if (!topicResult.valid) throw topicPending(topicResult.reason || "视频号话题待补充");
       }
-      var topicResult = topicDomain.validateTopics(
-        payload.description,
-        ui.listSelectedTopics(),
-        payload.expectedTopicCount
-      );
-      if (!topicResult.valid) throw topicPending(topicResult.reason || "视频号话题待补充");
       waitForNext(gate, "发表视频", ui.states.publishReady);
       performAction("发表视频", function () { ui.publish(); });
       var outcome = ui.waitForPublishOutcome(60000, function () { assertNoVerification("发表结果等待"); });
