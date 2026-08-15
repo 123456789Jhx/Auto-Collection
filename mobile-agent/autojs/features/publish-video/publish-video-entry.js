@@ -1,11 +1,24 @@
 // 原中文名：发布视频-入口.js；职责：协调素材下载、抖音/视频号发布与结果回传。
 function loadBizModule(context, path) {
-  if (context.forceBaselineBizScripts && context.loadBaselineScript) {
-    return context.loadBaselineScript(path);
+  var moduleCache = context.publishModuleCache;
+  if (moduleCache && Object.prototype.hasOwnProperty.call(moduleCache, path)) {
+    return moduleCache[path];
   }
-  if (context.loadBizScript) return context.loadBizScript(path);
-  if (context.loadBaselineScript) return context.loadBaselineScript(path);
-  return require(files.join(context.config.runtime.scriptDir, path));
+  if (context.allowPublishModuleLoad === false) {
+    throw new Error("publish module cache miss: " + path);
+  }
+  var loadedModule;
+  if (context.forceBaselineBizScripts && context.loadBaselineScript) {
+    loadedModule = context.loadBaselineScript(path);
+  } else if (context.loadBizScript) {
+    loadedModule = context.loadBizScript(path);
+  } else if (context.loadBaselineScript) {
+    loadedModule = context.loadBaselineScript(path);
+  } else {
+    loadedModule = require(files.join(context.config.runtime.scriptDir, path));
+  }
+  if (moduleCache) moduleCache[path] = loadedModule;
+  return loadedModule;
 }
 
 function bytesToHex(bytes) {

@@ -164,6 +164,61 @@ test("视频号流程按启动校正、素材、标题、导出、话题、发�
   assert.equal(reports[0].result.platformContentId, "channels-14");
 });
 
+test("视频号话题待补后轮询新文案并在当前流程继续发表", () => {
+  const events = [];
+  const reports = [];
+  const ui = createSuccessfulUi(events);
+  let validationRound = 0;
+  ui.listSelectedTopics = function () {
+    validationRound += 1;
+    return validationRound === 1 ? ["春耕"] : ["春耕", "农技"];
+  };
+  const handler = createWechatChannelsPublishHandler(createContext(events), {
+    ui,
+    materialDownloader: {
+      download() {
+        events.push("下载素材");
+        return { videoPath: "/download/video.mp4", coverPath: "/download/cover.jpg" };
+      }
+    },
+    resultReporter: {
+      report(taskId, result) {
+        reports.push({ taskId, result });
+        events.push("report:" + result.status);
+        return { success: true };
+      }
+    },
+    gate: { waitForNext(_name, predicate) { assert.equal(predicate(), true); } },
+    topicContinuation: {
+      waitForResolvedDescription() {
+        events.push("poll");
+        return "修正 #春耕 #农技";
+      }
+    }
+  });
+
+  const result = handler.handle({
+    id: "channels-topic-resume-14",
+    commandType: "PUBLISH_VIDEO_TASK",
+    payload: {
+      taskId: "channels-topic-resume-task-14",
+      platform: "WECHAT_CHANNELS",
+      title: "春耕",
+      description: "初始 #春耕 #农技",
+      videoUrl: "https://example.test/video.mp4",
+      expectedTopicCount: 2
+    }
+  });
+
+  assert.equal(result.status, "SUCCEEDED");
+  assert.deepEqual(reports.map((item) => item.result.status), ["TOPIC_PENDING", "SUCCEEDED"]);
+  assert.equal(events.filter((value) => value === "下载素材").length, 1);
+  assert.equal(events.filter((value) => value === "启动微信").length, 1);
+  assert.equal(events.filter((value) => value === "杀后台重开").length, 1);
+  const progression = ["描述:初始 #春耕 #农技", "poll", "描述:修正 #春耕 #农技", "发表"];
+  assert.deepEqual(events.filter((value) => progression.includes(value)), progression);
+});
+
 test("流程中发现验证弹窗立即上报 CHANNELS_VERIFY_PENDING", () => {
   const events = [];
   const reports = [];
@@ -239,5 +294,9 @@ test("添加标题后出现验证弹窗时不继续输入或点击", () => {
 
   assert.equal(result.status, "CHANNELS_VERIFY_PENDING");
   assert.equal(events.some((value) => value.startsWith("输入标题:")), false);
+  assert.equal(events.includes("对勾"), false);
+  assert.equal(events.includes("标题框外"), false);
+  assert.equal(events.includes("完成"), false);
+  assert.equal(events.some((value) => /^(描述:|话题:|发表$|成功判定$)/.test(value)), false);
   assert.match(reports[0].result.error, /身份验证/);
 });

@@ -216,37 +216,65 @@ test("任一素材下载失败上报 MATERIAL_INVALID 并停止 UI 流程", () =
   assert.deepEqual(events, ["ack:FAILED"]);
 });
 
-test("共享入口把视频号平台任务交给视频号 handler", () => {
-  const events = [];
-  const command = {
-    id: "channels-command-route",
-    commandType: "PUBLISH_VIDEO_TASK",
-    payload: {
-      taskId: "channels-task-route",
-      platform: "WECHAT_CHANNELS",
-      description: "发布 #春耕 #农技",
-      expectedTopicCount: 2
-    }
-  };
-  const handler = createPublishVideoHandler(createContext(events), {
-    steps: createSteps(events),
-    materialDownloader: { download() { throw new Error("抖音下载器不应执行"); } },
-    resultReporter: { report() { throw new Error("抖音上报器不应执行"); } },
-    channelsHandler: {
-      handle(value) {
-        events.push("channels:" + value.payload.taskId);
-        return { status: "SUCCEEDED" };
+test("视频号经共享入口在验证待处理或异常时清理目录并释放锁", () => {
+  const cases = [
+    { status: "CHANNELS_VERIFY_PENDING", ack: "DONE", popupText: "请先验证" },
+    { status: "FAILED", ack: "FAILED", throwStartup: true }
+  ];
+  for (const scenario of cases) {
+    const events = [];
+    const reports = [];
+    const acknowledgements = [];
+    const context = createContext(events);
+    context.uploader.ackCommand = function (id, status, detail) { events.push("ack:" + status); acknowledgements.push({ id, status, detail }); };
+    const handler = createPublishVideoHandler(context, {
+      materialManager: {
+        beginTask() { events.push("begin"); return { dir: "/channels/task", videoPath: "/channels/task/video.mp4", coverPath: "/channels/task/cover.jpg" }; },
+        download(paths) { events.push("download"); return paths; },
+        endTask(dir) { events.push("cleanup:" + dir); }
+      },
+      publishLock: {
+        acquire() { events.push("acquire"); return true; },
+        release() { events.push("release"); }
+      },
+      resultReporter: { report(taskId, result) { reports.push({ taskId, result }); events.push("report:" + result.status); } },
+      channelsUi: {
+        inspectStartupState() {
+          events.push("startup");
+          if (scenario.throwStartup) throw new Error("微信启动异常");
+          return { foreground: true, bottomTab: "信息" };
+        },
+        snapshot() { events.push("snapshot"); return { visibleText: scenario.popupText || "" }; },
+        openDiscover() { events.push("open-discover"); }
       }
-    }
-  });
+    });
+    const result = handler.handle({
+      id: "channels-cleanup-" + scenario.status,
+      commandType: "PUBLISH_VIDEO_TASK",
+      payload: { taskId: "channels-cleanup-task", platform: "WECHAT_CHANNELS", description: "发布 #春耕 #农技", expectedTopicCount: 2, videoUrl: "https://example.test/video.mp4", coverUrl: "https://example.test/cover.jpg" }
+    });
 
-  assert.deepEqual(handler.handle(command), { status: "SUCCEEDED" });
-  assert.deepEqual(events, ["channels:channels-task-route"]);
+    assert.equal(result.status, scenario.status);
+    assert.equal(reports[0].result.status, scenario.status);
+    const acknowledgement = acknowledgements[0];
+    assert.equal(acknowledgement.status, scenario.ack);
+    if (scenario.status === "CHANNELS_VERIFY_PENDING") assert.ok(acknowledgement.detail.popupFeature);
+    assert.equal(events.filter((value) => value === "cleanup:/channels/task").length, 1);
+    assert.equal(events.filter((value) => value === "release").length, 1);
+    assert.equal(events.includes("open-discover"), false);
+  }
 });
 
 test("第一条发布执行中重入第二条时返回 PUBLISH_BUSY", () => {
   const events = [];
   const reports = [];
+  const acknowledgements = [];
+  const context = createContext(events);
+  context.uploader.ackCommand = function (id, status, result) {
+    events.push("ack:" + status);
+    acknowledgements.push({ id, status, result });
+    return { id, status, result };
+  };
   const lockValues = {};
   const storage = {
     get(key, fallback) { return Object.hasOwn(lockValues, key) ? lockValues[key] : fallback; },
@@ -274,13 +302,14 @@ test("第一条发布执行中重入第二条时返回 PUBLISH_BUSY", () => {
       payload: { taskId: "task-overlap-second", title: "春耕" }
     });
   };
-  handler = createPublishVideoHandler(createContext(events), {
+  handler = createPublishVideoHandler(context, {
     steps,
     materialManager,
     publishLock,
     resultReporter: {
       report(taskId, result) { reports.push({ taskId, result }); return { success: true }; }
     },
+    topicContinuation: { waitForResolvedDescription() { events.push("topic-resume"); } },
     gate: { waitForNext(name, predicate) { assert.equal(predicate(), true); events.push("gate:" + name); } }
   });
 
@@ -305,8 +334,20 @@ test("第一条发布执行中重入第二条时返回 PUBLISH_BUSY", () => {
     platformContentId: ""
   });
   assert.equal(events.filter((value) => value === "begin").length, 1);
+  assert.equal(events.filter((value) => value === "download").length, 1);
+  assert.equal(events.filter((value) => value === "打开抖音到相机页").length, 1);
+  assert.equal(events.includes("topic-resume"), false);
+  assert.equal(events.some((value) => /retry|delay|重试|延迟/.test(value)), false);
   assert.equal(events.at(-1), "end:/sdcard/20260728");
   assert.deepEqual(reports.map((value) => value.result.status), ["PUBLISH_BUSY", "SUCCEEDED"]);
+  const busyAck = acknowledgements.find((value) => value.id === "command-overlap-second");
+  assert.deepEqual(busyAck, {
+    id: "command-overlap-second",
+    status: "FAILED",
+    result: { applied: false, commandType: "PUBLISH_VIDEO_TASK", status: "PUBLISH_BUSY", message: "上一发布任务仍在执行", publishedUrl: "", platformContentId: "" }
+  });
+  assert.equal("nextDispatchAt" in busyAck.result, false);
+  assert.equal("retryAfterMs" in busyAck.result, false);
   assert.equal(publishLock.acquire(), true);
   publishLock.release();
 });

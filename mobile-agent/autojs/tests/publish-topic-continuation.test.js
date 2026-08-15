@@ -79,7 +79,7 @@ test("流程中话题待补时轮询修正描述并在当前流程继续发布",
   assert.equal(events.includes("publish"), true);
 });
 
-test("收到命令时话题预检失败不下载不开 app 并释放锁", () => {
+test("收到视频号命令时话题预检失败不下载不开 app 并释放锁", () => {
   const events = [];
   const handler = createPublishVideoHandler(context(events), {
     publishLock: {
@@ -93,6 +93,7 @@ test("收到命令时话题预检失败不下载不开 app 并释放锁", () => 
   const payload = validPayload("n5b-task-precheck");
   payload.description = "只有 #一 #二 #三 #四";
   payload.expectedTopicCount = 5;
+  payload.platform = "WECHAT_CHANNELS";
 
   const result = handler.handle({
     id: "n5b-command-precheck",

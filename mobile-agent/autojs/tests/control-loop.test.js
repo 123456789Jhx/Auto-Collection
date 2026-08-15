@@ -160,17 +160,23 @@ function testControlCommandsWaitForBackendSync() {
       lastFailureLogAt: 0,
       ready: false
     },
-    loadBizScript: function () {
+    loadBizScript: function (modulePath) {
       loaded = true;
-      return {
-        createPublishVideoHandler: function () {
-          return {
-            handle: function () {
-              handled = true;
-            }
-          };
-        }
-      };
+      if (modulePath === "features/publish-video/publish-video-entry.js") {
+        return {
+          createPublishVideoHandler: function () {
+            return {
+              handle: function () {
+                handled = true;
+              }
+            };
+          }
+        };
+      }
+      return {};
+    },
+    loadBaselineScript: function () {
+      throw new Error("publish preload must not use the baseline");
     },
     uploader: {
       isRegistered: function () { return true; },
@@ -190,6 +196,7 @@ function testControlCommandsWaitForBackendSync() {
   assert.strictEqual(loaded, false);
 
   context.backendSync.ready = true;
+  controlLoop.preloadPublishVideoHandler();
   controlLoop.pollControlCommands(true);
 
   assert.strictEqual(pollCount, 1);
@@ -653,24 +660,52 @@ function testLauncherStopsDuplicateInstancesBeforeLayout() {
   assert(source.indexOf('stopEngines("launcher.js")') >= 0, "launcher cleanup should target launcher instances");
 }
 
-function testPublishVideoCommandDispatchesToHotUpdateHandler() {
+function testPublishVideoPreloadRunsBeforeWorkerCommandAndUsesOnlyCache() {
   var handled = [];
+  var loadCalls = [];
   var command = {
-    id: "publish-command-13",
+    id: "publish-command-preloaded",
     commandType: "PUBLISH_VIDEO_TASK",
-    payload: { taskId: "publish-task-13" }
+    payload: { taskId: "publish-task-preloaded" }
+  };
+  var expectedPaths = [
+    "features/publish-video/publish-video-entry.js",
+    "domain/material-dir-manager.js",
+    "domain/publish-task-lock.js",
+    "domain/action-timing-gates.js",
+    "domain/material-inspector.js",
+    "domain/topic-validator.js",
+    "domain/topic-resume.js",
+    "domain/publish-watchdog.js",
+    "features/publish-video/open-douyin-camera.js",
+    "features/publish-video/select-publish-material.js",
+    "features/publish-video/edit-cover.js",
+    "features/publish-video/fill-publish-text.js",
+    "features/publish-video/execute-publish.js",
+    "features/publish-video/douyin-publish-ui.js",
+    "features/publish-video/channels-publish-ui.js",
+    "features/publish-video/channels-verify-popup.js",
+    "features/publish-video/channels-publish-flow.js"
+  ];
+  var modules = {};
+  expectedPaths.forEach(function (modulePath) {
+    modules[modulePath] = {};
+  });
+  modules["features/publish-video/publish-video-entry.js"] = {
+    createPublishVideoHandler: function (publishContext) {
+      assert.strictEqual(publishContext.allowPublishModuleLoad, true);
+      assert.strictEqual(publishContext.publishModuleCache, context.publishModuleCache);
+      return { handle: function (value) { handled.push(value); } };
+    }
   };
   var context = createContext({
-    loadBizScript: function () {
-      throw new Error("publish command must not synchronously load the hot-update overlay");
+    loadBizScript: function (modulePath) {
+      loadCalls.push(modulePath);
+      if (!modules[modulePath]) throw new Error("missing publish preload module: " + modulePath);
+      return modules[modulePath];
     },
-    loadBaselineScript: function (modulePath) {
-      assert.strictEqual(modulePath, "features/publish-video/publish-video-entry.js");
-      return {
-        createPublishVideoHandler: function () {
-          return { handle: function (value) { handled.push(value); } };
-        }
-      };
+    loadBaselineScript: function () {
+      throw new Error("publish preload must not use the baseline");
     },
     uploader: {
       isRegistered: function () { return true; },
@@ -679,12 +714,27 @@ function testPublishVideoCommandDispatchesToHotUpdateHandler() {
       ackCommand: function () {}
     }
   });
+  var controlLoop = createControlLoop(context);
 
-  createControlLoop(context).pollControlCommands(true);
+  controlLoop.preloadPublishVideoHandler();
+  assert.deepStrictEqual(loadCalls, expectedPaths);
+  var preloadLogs = context.logs.filter(function (item) {
+    return item.level === "INFO" && item.message === "publish module preload finish";
+  });
+  assert.strictEqual(preloadLogs.length, expectedPaths.length);
+  preloadLogs.forEach(function (item, index) {
+    assert.strictEqual(item.payload.modulePath, expectedPaths[index]);
+    assert.strictEqual(typeof item.payload.elapsedMs, "number");
+  });
+  controlLoop.preloadPublishVideoHandler();
+  assert.strictEqual(loadCalls.length, expectedPaths.length, "repeated preload must reuse the cached handler");
+
+  controlLoop.pollControlCommands(true);
 
   assert.deepStrictEqual(handled, [command]);
+  assert.strictEqual(loadCalls.length, expectedPaths.length, "worker publish handling must not load modules");
   assert(context.logs.some(function (item) {
-    return item.level === "INFO" && item.message === "发布执行器启动" && item.payload.commandId === command.id;
+    return item.level === "INFO" && item.message === "publish module preload ready";
   }));
 }
 
@@ -700,6 +750,6 @@ testV2PauseWaitsForSafeCheckpoint();
 testV2StopWaitsForSafeCheckpoint();
 testDuplicateV2CommandReplaysFinalAck();
 testLauncherStopsDuplicateInstancesBeforeLayout();
-testPublishVideoCommandDispatchesToHotUpdateHandler();
+testPublishVideoPreloadRunsBeforeWorkerCommandAndUsesOnlyCache();
 
 console.log("control-loop tests passed");

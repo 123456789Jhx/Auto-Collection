@@ -1176,6 +1176,16 @@ function createCollectorApp(context) {
       return true;
     }
 
+    try {
+      controlLoop.preloadPublishVideoHandler();
+    } catch (preloadError) {
+      logger.error("publish module preload startup failed", { message: String(preloadError) });
+      controlLoop.reportRuntimeLog("ERROR", "publish module preload startup failed", {
+        message: String(preloadError)
+      });
+    }
+
+
     runBackground("脚本就绪日志上报", function () {
       controlLoop.reportRuntimeLog("INFO", "Agent 已就绪", {
         version: config.app.version,

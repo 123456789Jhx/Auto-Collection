@@ -1,7 +1,8 @@
 function createControlLoop(context) {
   var createRemoteScriptConfigHandler = require("./remote-script-config-handler.js").createRemoteScriptConfigHandler;
+  var createPublishVideoPreloader = require("./publish-video-preloader.js").createPublishVideoPreloader;
   var remoteScriptConfigHandler = createRemoteScriptConfigHandler(context);
-  var publishVideoHandler = null;
+  var publishVideoPreloader = createPublishVideoPreloader(context);
   var config = context.config;
   var logger = context.logger;
   var uploader = context.uploader;
@@ -19,17 +20,8 @@ function createControlLoop(context) {
   };
   context.backendSync = backendSync;
 
-  function createPublishExecutionContext() {
-    if (!context.loadBaselineScript) {
-      return context;
-    }
-    var publishContext = {};
-    Object.keys(context).forEach(function (key) {
-      publishContext[key] = context[key];
-    });
-    publishContext.forceBaselineBizScripts = true;
-    publishContext.loadBizScript = context.loadBaselineScript;
-    return publishContext;
+  function preloadPublishVideoHandler() {
+    return publishVideoPreloader.preload();
   }
   var assignmentControl = context.assignmentControl || {
     pending: null
@@ -641,13 +633,10 @@ function createControlLoop(context) {
     try {
       if (commandType === "PUBLISH_VIDEO_TASK") {
         logger.info("发布执行器启动", { commandId: command.id, taskId: payload.taskId || "" });
-        var publishContext = createPublishExecutionContext();
-        var publishModule = publishContext.loadBaselineScript
-          ? publishContext.loadBaselineScript("features/publish-video/publish-video-entry.js")
-          : publishContext.loadBizScript
-            ? publishContext.loadBizScript("features/publish-video/publish-video-entry.js")
-          : require("../features/publish-video/publish-video-entry.js");
-        publishVideoHandler = publishVideoHandler || publishModule.createPublishVideoHandler(publishContext);
+        var publishVideoHandler = publishVideoPreloader.getHandler();
+        if (!publishVideoHandler) {
+          throw new Error("publish video handler is not preloaded");
+        }
         publishVideoHandler.handle(command);
         return;
       }
@@ -1192,6 +1181,7 @@ function createControlLoop(context) {
     refreshRuntimeConfig: refreshRuntimeConfig,
     waitWhilePaused: waitWhilePaused,
     reportRuntimeLog: reportRuntimeLog,
+    preloadPublishVideoHandler: preloadPublishVideoHandler,
     syncBackendOnce: syncBackendOnce,
     syncBackendAsync: syncBackendAsync,
     completePendingAssignmentControl: completePendingAssignmentControl
