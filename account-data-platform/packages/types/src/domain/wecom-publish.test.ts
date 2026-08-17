@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   claimPublishTaskPayloadSchema,
+  claimPublishTaskResponseSchema,
   patchPublishTaskStatusPayloadSchema,
   toPublishPlatform,
   toPublishTaskStatus,
@@ -11,7 +12,7 @@ import type { WecomPublishTask } from "./wecom-publish";
 const externalTask = {
   title: "夏橙发布任务",
   description: "发布夏橙短视频",
-  coverUrl: null,
+  coverUrl: "https://media.example.test/cover.jpg",
   videoUrl: "https://media.example.test/video.mp4",
   platform: "抖音",
   status: "待发布",
@@ -25,6 +26,8 @@ describe("wecom publish contracts", () => {
     expect(wecomPublishTaskSchema.parse({ ...externalTask, accountName: null }).accountName).toBeNull();
     expect(toPublishPlatform("抖音")).toBe("DOUYIN");
     expect(toPublishPlatform("视频号")).toBe("WECHAT_CHANNELS");
+    expect(wecomPublishTaskSchema.parse({ ...externalTask, status: "未发布" }).status).toBe("未发布");
+    expect(toPublishTaskStatus("未发布")).toBe("PENDING");
     expect(toPublishTaskStatus("待发布")).toBe("PENDING");
     expect(toPublishTaskStatus("已发布")).toBe("PUBLISHED");
   });
@@ -40,7 +43,19 @@ describe("wecom publish contracts", () => {
       publishedUrl: "https://channels.example.test/post/1",
       platformContentId: "channels-1"
     }).status).toBe("已发布");
+    expect(() => wecomPublishTaskSchema.parse({ ...externalTask, coverUrl: null })).toThrow();
+    expect(() => wecomPublishTaskSchema.parse({ ...externalTask, coverUrl: "" })).toThrow();
+    expect(() => wecomPublishTaskSchema.parse({ ...externalTask, coverUrl: "ftp://media.example.test/cover.jpg" })).toThrow();
     expect(() => wecomPublishTaskSchema.parse({ ...externalTask, extra: true })).toThrow();
     expect(() => patchPublishTaskStatusPayloadSchema.parse({ platform: "抖音", status: "待发布" })).toThrow();
+    expect(claimPublishTaskResponseSchema.parse({
+      data: { ...externalTask, coverUrl: null, videoUrl: "ftp://media.example.test/video.mp4" }
+    }).data).toMatchObject({ coverUrl: null, videoUrl: "ftp://media.example.test/video.mp4" });
+  });
+
+  test("requires a non-empty account name for every claim", () => {
+    expect(() => claimPublishTaskPayloadSchema.parse({ platform: "抖音" })).toThrow();
+    expect(() => claimPublishTaskPayloadSchema.parse({ platform: "抖音", accountName: "" })).toThrow();
+    expect(() => claimPublishTaskPayloadSchema.parse({ platform: "抖音", accountName: "   " })).toThrow();
   });
 });

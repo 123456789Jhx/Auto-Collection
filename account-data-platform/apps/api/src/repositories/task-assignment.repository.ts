@@ -515,7 +515,7 @@ export async function completeTaskAssignmentAtomic(input: {
 export async function acknowledgeTaskAssignmentCommandAtomic(input: {
   commandId: string;
   deviceId: string;
-  status: "FETCHED" | "DONE" | "FAILED" | "IGNORED";
+  status: "FETCHED" | "CLAIMED" | "RUNNING" | "DONE" | "FAILED" | "IGNORED" | "TIMED_OUT";
   result: Record<string, unknown>;
   payloadHash: string;
 }) {
@@ -534,7 +534,7 @@ export async function acknowledgeTaskAssignmentCommandAtomic(input: {
     if (!command) {
       throw new AssignmentRuntimeError("COMMAND_NOT_FOUND");
     }
-    if (["DONE", "FAILED", "IGNORED"].includes(command.status)) {
+    if (["DONE", "FAILED", "IGNORED", "TIMED_OUT"].includes(command.status)) {
       const previousHash = command.resultJson && typeof command.resultJson._ackHash === "string"
         ? command.resultJson._ackHash
         : "";
@@ -544,6 +544,9 @@ export async function acknowledgeTaskAssignmentCommandAtomic(input: {
       }
       throw new AssignmentRuntimeError("COMMAND_ACK_CONFLICT", { currentStatus: command.status });
     }
+    if (input.status === "RUNNING" && !["CLAIMED", "FETCHED"].includes(command.status)) {
+      throw new AssignmentRuntimeError("COMMAND_ACK_CONFLICT", { currentStatus: command.status });
+    }
 
     const now = new Date();
     const [updatedCommand] = await transaction
@@ -551,14 +554,14 @@ export async function acknowledgeTaskAssignmentCommandAtomic(input: {
       .set({
         status: input.status,
         resultJson: { ...input.result, _ackHash: input.payloadHash },
-        fetchedAt: input.status === "FETCHED" ? now : command.fetchedAt,
-        acknowledgedAt: input.status === "DONE" || input.status === "FAILED" || input.status === "IGNORED" ? now : command.acknowledgedAt,
+        fetchedAt: input.status === "FETCHED" || input.status === "CLAIMED" ? now : command.fetchedAt,
+        acknowledgedAt: input.status === "DONE" || input.status === "FAILED" || input.status === "IGNORED" || input.status === "TIMED_OUT" ? now : command.acknowledgedAt,
         updatedAt: now,
         updatedBy: "mobile_agent"
       })
       .where(eq(mobileCommands.id, command.id))
       .returning();
-    if (!command.assignmentId || input.status === "FETCHED") {
+    if (!command.assignmentId || input.status === "FETCHED" || input.status === "CLAIMED" || input.status === "RUNNING") {
       return { command: updatedCommand ?? command, assignment: null, event: null, idempotent: false };
     }
 

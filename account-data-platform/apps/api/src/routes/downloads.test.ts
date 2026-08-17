@@ -7,7 +7,8 @@ import { config } from "../config";
 const suffix = crypto.randomUUID().slice(0, 8);
 const files = [
   { name: `n5-emergency-${suffix}.mp4`, type: "video/mp4", body: "video-bytes" },
-  { name: `n5-emergency-${suffix}.jpg`, type: "image/jpeg", body: "image-bytes" }
+  { name: `n5-emergency-${suffix}.jpg`, type: "image/jpeg", body: "image-bytes" },
+  { name: `n5-agent-${suffix}.apk`, type: "application/vnd.android.package-archive", body: "apk-bytes" }
 ];
 const root = resolve(process.cwd(), config.agentDownloadDir);
 

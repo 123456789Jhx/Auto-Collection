@@ -1,6 +1,19 @@
-import type { CreateAgentVersionPayload, MobileAgentUpdateEventPayload } from "@pkg/types";
+import type {
+  AgentUpdateEventListQuery,
+  AgentVersionListQuery,
+  CreateAgentVersionPayload,
+  MobileAgentUpdateEventPayload
+} from "@pkg/types";
 import { config } from "../config";
-import { createAgentUpdateEvent, createAgentVersion, findLatestPublishedAgentVersion, listAgentVersions } from "../repositories/agent-version.repository";
+import {
+  createAgentUpdateEvent,
+  createAgentVersion,
+  findAgentVersion,
+  findLatestPublishedAgentVersion,
+  listAgentUpdateEvents,
+  listAgentVersions,
+  listDevicesWithUpdateEvents
+} from "../repositories/agent-version.repository";
 import { resolveDeviceByToken } from "../repositories/device.repository";
 import { parseOptionalDate } from "../lib/date";
 
@@ -19,7 +32,17 @@ function resolveVersionDevice(deviceId: string, appVersion?: string, deviceToken
   if (!deviceToken) {
     throw new Error("DEVICE_TOKEN_REQUIRED");
   }
-  return resolveDeviceByToken({ deviceToken, appVersion });
+  return resolveDeviceByToken({ deviceToken, appVersion, expectedDeviceCode: deviceId });
+}
+
+export class AgentVersionServiceError extends Error {
+  constructor(
+    code: "VERSION_CONFLICT",
+    readonly userMessage: string,
+    readonly details: Record<string, unknown> = {}
+  ) {
+    super(code);
+  }
 }
 
 export async function getAgentVersionCheck(deviceId: string, currentVersion: string, channel = "stable", deviceToken?: string) {
@@ -54,12 +77,14 @@ export async function getAgentVersionCheck(deviceId: string, currentVersion: str
   };
 }
 
-export async function getAgentVersions() {
-  return listAgentVersions(100);
+export async function getAgentVersions(query?: Partial<AgentVersionListQuery>) {
+  return listAgentVersions(query?.limit ?? 100, query?.channel);
 }
 
 export async function publishAgentVersion(payload: CreateAgentVersionPayload) {
-  return createAgentVersion({
+  const existing = await findAgentVersion(payload.channel, payload.version);
+  if (existing) return resolveExistingVersion(existing, payload);
+  const values = {
     tenantId: config.tenantId,
     version: payload.version,
     channel: payload.channel,
@@ -73,19 +98,92 @@ export async function publishAgentVersion(payload: CreateAgentVersionPayload) {
     publishedAt: new Date(),
     createdBy: "admin",
     updatedBy: "admin"
+  };
+  try {
+    return { ...await createAgentVersion(values), idempotent: false };
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    const concurrent = await findAgentVersion(payload.channel, payload.version);
+    if (!concurrent) throw error;
+    return resolveExistingVersion(concurrent, payload);
+  }
+}
+
+type SavedAgentVersion = NonNullable<Awaited<ReturnType<typeof findAgentVersion>>>;
+
+function isUniqueViolation(error: unknown) {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "23505");
+}
+
+function resolveExistingVersion(existing: SavedAgentVersion, payload: CreateAgentVersionPayload) {
+  const same = existing.packageUrl === (payload.packageUrl ?? null)
+    && (existing.sha256?.toLowerCase() ?? null) === (payload.sha256?.toLowerCase() ?? null)
+    && existing.entryFile === payload.entryFile
+    && existing.status === payload.status
+    && existing.forceUpdate === payload.forceUpdate
+    && existing.minSupportedVersion === (payload.minSupportedVersion ?? null)
+    && existing.releaseNote === (payload.releaseNote ?? null);
+  if (!same) {
+    throw new AgentVersionServiceError(
+      "VERSION_CONFLICT",
+      "同一通道下该版本已存在，但包地址、哈希或入口文件不同",
+      { channel: payload.channel, version: payload.version, existingId: existing.id }
+    );
+  }
+  return { ...existing, idempotent: true };
+}
+
+export function getAgentUpdateEvents(query: AgentUpdateEventListQuery) {
+  return listAgentUpdateEvents(query);
+}
+
+export async function getAgentDeviceUpdateStatus(channel: string) {
+  const [latest, rows] = await Promise.all([
+    findLatestPublishedAgentVersion(channel),
+    listDevicesWithUpdateEvents(channel)
+  ]);
+  const seen = new Set<string>();
+  const data = rows.flatMap((row) => {
+    if (seen.has(row.deviceId)) return [];
+    seen.add(row.deviceId);
+    const currentVersion = row.updateStatus === "APPLIED" ? row.toVersion : row.fromVersion;
+    return [{
+      deviceId: row.deviceId,
+      deviceCode: row.deviceCode,
+      deviceName: row.deviceName,
+      deviceStatus: row.deviceStatus,
+      lastHeartbeatAt: row.lastHeartbeatAt,
+      currentVersion,
+      targetVersion: latest?.version ?? null,
+      updateStatus: row.updateStatus,
+      eventMessage: row.eventMessage,
+      updatedAt: row.eventCreatedAt,
+      isCurrent: Boolean(latest && currentVersion === latest.version)
+    }];
   });
+  const summary = data.reduce((counts, item) => {
+    if (!item.updateStatus) counts.noReport += 1;
+    else if (item.updateStatus === "FAILED" || item.updateStatus === "ROLLBACK") counts.failed += 1;
+    else if (item.isCurrent) counts.applied += 1;
+    else counts.pending += 1;
+    return counts;
+  }, { total: data.length, applied: 0, pending: 0, failed: 0, noReport: 0 });
+  return { data, targetVersion: latest?.version ?? null, summary };
 }
 
 export async function saveAgentUpdateEvent(payload: MobileAgentUpdateEventPayload, deviceToken?: string) {
-  const isBizScriptEvent = payload.payload?.channel === "biz-scripts";
+  const channel = typeof payload.payload?.channel === "string" ? payload.payload.channel : "stable";
+  const isBizScriptEvent = channel === "biz-scripts";
   const device = await resolveVersionDevice(
     payload.deviceId,
     isBizScriptEvent ? undefined : payload.fromVersion,
     deviceToken
   );
+  const savedVersion = payload.toVersion ? await findAgentVersion(channel, payload.toVersion) : null;
   return createAgentUpdateEvent({
     tenantId: config.tenantId,
     deviceId: device.id,
+    agentVersionId: savedVersion?.id,
     fromVersion: payload.fromVersion,
     toVersion: payload.toVersion,
     eventType: payload.eventType,

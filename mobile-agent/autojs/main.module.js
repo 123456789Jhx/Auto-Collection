@@ -125,6 +125,8 @@ var createLogger = localRequire("core/logger.js").createLogger;
 var createPermissionManager = localRequire("core/permission.js").createPermissionManager;
 var createStorage = localRequire("core/storage.js").createStorage;
 var createUploader = localRequire("core/uploader.js").createUploader;
+var createDeviceRecoveryJournal = localBaselineRequire("app/device-recovery-journal.js").createDeviceRecoveryJournal;
+var createDeviceRecoverySync = localBaselineRequire("app/device-recovery-sync.js").createDeviceRecoverySync;
 var createOcr = localRequire("core/ocr.js").createOcr;
 var createScreenRecognizer = localRequire("core/screen-recognizer.js").createScreenRecognizer;
 var createMatcher = localRequire("core/matcher.js").createMatcher;
@@ -134,6 +136,8 @@ var createHeartbeatService = localRequire("app/heartbeat.js").createHeartbeatSer
 var createBizScriptUpdater = localRequire("app/biz-script-updater.js").createBizScriptUpdater;
 var createAgentHeartbeatDaemon = localRequire("app/agent-heartbeat-daemon.js").createAgentHeartbeatDaemon;
 var createControlLoop = localRequire("app/control-loop.js").createControlLoop;
+var createAccountWarmupCommandBridge = localRequire("app/account-warmup-command-bridge.js").createAccountWarmupCommandBridge;
+var createRemoteWakeCommandBridge = localRequire("app/remote-wake-command-bridge.js").createRemoteWakeCommandBridge;
 var createTaskScheduler = localRequire("app/task-scheduler.js").createTaskScheduler;
 var createRunRequestResolver = localRequire("app/run-request-resolver.js").createRunRequestResolver;
 var createCandidateService = localRequire("domain/candidate-service.js").createCandidateService;
@@ -160,6 +164,14 @@ var logger = createLogger(config);
 var permissions = createPermissionManager(config, logger);
 var storage = createStorage(config, logger);
 var uploader = createUploader(config, logger, storage);
+var deviceRecoveryJournal = createDeviceRecoveryJournal();
+var deviceRecoverySync = createDeviceRecoverySync({
+  journal: deviceRecoveryJournal,
+  deviceId: function () { return config.device.deviceId || ""; },
+  send: function (payload) { return uploader.uploadDeviceRecoveryStage(payload); },
+  retryIntervalMs: 30000
+});
+deviceRecoveryJournal.recordStage("AGENT_LAUNCHED", { entry: "main.module.js" });
 var ocrEngine = createOcr(config, logger);
 if (ocrEngine.setPermissionManager) {
   ocrEngine.setPermissionManager(permissions);
@@ -177,6 +189,8 @@ var context = {
   permissions: permissions,
   storage: storage,
   uploader: uploader,
+  deviceRecoveryJournal: deviceRecoveryJournal,
+  deviceRecoverySync: deviceRecoverySync,
   ocrEngine: ocrEngine,
   screenRecognizer: screenRecognizer,
   matcher: matcher,
@@ -221,6 +235,10 @@ var context = {
 };
 
 context.bizScriptUpdater = createBizScriptUpdater(config, logger, uploader);
+context.accountWarmupCommandBridge = createAccountWarmupCommandBridge(context);
+context.accountWarmupCommandBridge.install();
+context.remoteWakeCommandBridge = createRemoteWakeCommandBridge(context);
+context.remoteWakeCommandBridge.install();
 context.heartbeatService = createHeartbeatService(context);
 context.agentHeartbeatDaemon = createAgentHeartbeatDaemon(context);
 context.taskScheduler = createTaskScheduler(context);

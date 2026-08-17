@@ -183,6 +183,97 @@
       "when": 1785188249129,
       "tag": "0025_publish_task_dispatch",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1785269442158,
+      "tag": "0026_publish_task_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1785316303623,
+      "tag": "0027_publish_busy_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1785557592183,
+      "tag": "0028_publish_routing",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1785888000000,
+      "tag": "0029_account_warmup_vocabulary",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1785974400000,
+      "tag": "0030_interface_publish_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1786060800000,
+      "tag": "0031_publish_external_account_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786406400000,
+      "tag": "0032_remote_wake_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786492800000,
+      "tag": "0033_device_recovery_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786579200000,
+      "tag": "0034_agent_base_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1786665600000,
+      "tag": "0035_mobile_command_executor_claim",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786694400000,
+      "tag": "0036_base_connectivity_threshold",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1786701600000,
+      "tag": "0037_app_ui_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786752000000,
+      "tag": "0038_exit_agent_app_executor_backfill",
+      "breakpoints": true
     }
   ]
 }

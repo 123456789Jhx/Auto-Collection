@@ -467,6 +467,29 @@ function createUploader(config, logger, storage) {
     }
   }
 
+  function uploadDeviceRecoveryStage(payload) {
+    if (!config.upload.enabled) {
+      return { enabled: false, success: false, message: "upload disabled" };
+    }
+    if (!isRegistered()) {
+      return { enabled: true, success: false, skipped: true, message: "device not registered" };
+    }
+    try {
+      var response = postJson(endpoint("/mobile/device-recovery/stages"), payload);
+      return {
+        enabled: true,
+        success: response.statusCode >= 200 && response.statusCode < 300,
+        statusCode: response.statusCode
+      };
+    } catch (error) {
+      logger.warn("device recovery stage upload failed", {
+        stage: payload && payload.stage,
+        message: String(error)
+      });
+      return { enabled: true, success: false, message: String(error) };
+    }
+  }
+
   function uploadRuntimeLog(level, message, context) {
     if (!config.upload.enabled) {
       return { enabled: false, success: false, message: "upload disabled" };
@@ -894,7 +917,7 @@ function createUploader(config, logger, storage) {
     }
 
     try {
-      var url = endpoint("/mobile/commands?deviceId=" + encodeURIComponent(deviceId));
+      var url = endpoint("/mobile/commands?deviceId=" + encodeURIComponent(deviceId) + "&executorType=AGENT");
       if (shouldLogRequestStart("pollCommands")) {
         logger.info("后台控制指令拉取开始", { url: url, deviceId: deviceId });
       }
@@ -907,6 +930,10 @@ function createUploader(config, logger, storage) {
       }
       var payload = JSON.parse(body || "{}");
       var commands = payload.data || [];
+      for (var i = 0; i < commands.length; i++) {
+        ackCommand(commands[i].id, "RUNNING", { executorType: "AGENT" });
+      }
+      commands.deviceRecoveryRequestSucceeded = true;
       if (commands.length > 0 || shouldLogRequestStart("pollCommandsEmpty")) {
         logger.info("后台控制指令拉取完成", {
           statusCode: statusCode,
@@ -1242,6 +1269,7 @@ function createUploader(config, logger, storage) {
   return {
     upload: upload,
     uploadHeartbeat: uploadHeartbeat,
+    uploadDeviceRecoveryStage: uploadDeviceRecoveryStage,
     uploadRuntimeLog: uploadRuntimeLog,
     uploadLiveCommentAction: uploadLiveCommentAction,
     uploadLogFile: uploadLogFile,

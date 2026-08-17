@@ -116,8 +116,8 @@ export function DeviceAccountBindingControl({ device, onSaved }: DeviceAccountBi
               <Form.Item label="抖音号 ID" name="douyinAccountId">
                 <Input placeholder="可留空" />
               </Form.Item>
-              <Form.Item label="微信视频号名称" name="wechatChannelsName">
-                <Input placeholder="可留空，仅记录" />
+              <Form.Item label="微信视频号名称（用于确认该设备可发视频号）" name="wechatChannelsName">
+                <Input placeholder="可留空，仅用于视频号能力检查，不参与主路由" />
               </Form.Item>
             </>
           ) : null}

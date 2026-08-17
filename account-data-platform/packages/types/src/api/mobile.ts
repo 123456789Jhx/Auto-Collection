@@ -80,6 +80,19 @@ export const mobileHeartbeatSchema = z.object({
   reportedAt: z.string().optional()
 });
 
+export const mobileBaseHeartbeatSchema = z.object({
+  deviceId: z.string(),
+  screenState: z.enum(["locked", "unlocked", "unknown"]).default("unknown"),
+  agentState: z.enum(["running", "stopped"]),
+  reportedAt: z.string().optional()
+});
+
+export const mobileBaseConnectivityHeartbeatSchema = z.object({
+  deviceId: z.string().trim().min(1).max(64),
+  screenState: z.enum(["locked", "unlocked", "unknown"]).default("unknown"),
+  appUiState: z.enum(["foreground", "background", "not_running", "unknown"]).default("unknown")
+}).strict();
+
 export const mobileAgentUpdateEventSchema = z.object({
   deviceId: z.string(),
   fromVersion: z.string().optional(),
@@ -132,15 +145,99 @@ export const mobileLogFileSchema = z.object({
 
 export const mobileCommandAckSchema = z.object({
   deviceId: z.string(),
-  status: z.enum(["FETCHED", "DONE", "FAILED", "IGNORED"]),
+  status: z.enum(["FETCHED", "CLAIMED", "RUNNING", "DONE", "FAILED", "IGNORED", "TIMED_OUT"]),
   result: z.record(z.unknown()).optional()
+});
+
+export const exitAgentAppStageSchema = z.object({
+  name: z.enum(["STOP_AGENT", "REMOVE_APP_TASK", "LOCK_SCREEN"]),
+  status: z.enum(["SUCCESS", "SKIPPED", "FAILED"]),
+  reason: z.string().trim().min(1).optional()
+}).strict();
+
+const stopAgentExitStageSchema = exitAgentAppStageSchema.extend({
+  name: z.literal("STOP_AGENT")
+});
+
+const removeAppTaskExitStageSchema = exitAgentAppStageSchema.extend({
+  name: z.literal("REMOVE_APP_TASK")
+});
+
+const lockScreenExitStageSchema = exitAgentAppStageSchema.extend({
+  name: z.literal("LOCK_SCREEN")
+});
+
+export const exitAgentAppResultSchema = z.object({
+  commandType: z.literal("EXIT_AGENT_APP"),
+  result: z.enum(["DONE", "PARTIAL", "FAILED"]),
+  stages: z.tuple([
+    stopAgentExitStageSchema,
+    removeAppTaskExitStageSchema,
+    lockScreenExitStageSchema
+  ])
+}).strict().superRefine((value, context) => {
+  const [stopAgent, removeAppTask, lockScreen] = value.stages;
+  const stopOrRemoveFailed = stopAgent.status === "FAILED" || removeAppTask.status === "FAILED";
+  const lockFailed = lockScreen.status === "FAILED";
+  if (value.result === "DONE" && (stopOrRemoveFailed || lockFailed)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["result"],
+      message: "exit_done_requires_all_stages_non_failed"
+    });
+  }
+  if (value.result === "PARTIAL" && (stopOrRemoveFailed || !lockFailed)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["result"],
+      message: "exit_partial_requires_only_lock_screen_failure"
+    });
+  }
+  if (value.result === "FAILED" && !stopOrRemoveFailed) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["result"],
+      message: "exit_failed_requires_stop_or_remove_failure"
+    });
+  }
+});
+
+export const mobileBaseCommandAckSchema = z.object({
+  deviceId: z.string().trim().min(1).max(64),
+  claimToken: z.string().uuid(),
+  status: z.enum(["DONE", "FAILED"]),
+  result: z.record(z.unknown()).optional()
+}).strict().superRefine((value, context) => {
+  if (!value.result || !("commandType" in value.result || "result" in value.result || "stages" in value.result)) return;
+  const parsed = exitAgentAppResultSchema.safeParse(value.result);
+  if (parsed.success) {
+    const expectedStatus = parsed.data.result === "FAILED" ? "FAILED" : "DONE";
+    if (value.status !== expectedStatus) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "exit_ack_transport_status_mismatch"
+      });
+    }
+    return;
+  }
+  parsed.error.issues.forEach((issue) => context.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ["result", ...issue.path],
+    message: issue.message
+  }));
 });
 
 export type MobileTaskConfig = z.infer<typeof mobileTaskConfigSchema>;
 export type MobileCollectionRecordPayload = z.infer<typeof mobileCollectionRecordSchema>;
 export type MobileHeartbeatPayload = z.infer<typeof mobileHeartbeatSchema>;
+export type MobileBaseHeartbeatPayload = z.infer<typeof mobileBaseHeartbeatSchema>;
+export type MobileBaseConnectivityHeartbeatPayload = z.infer<typeof mobileBaseConnectivityHeartbeatSchema>;
 export type MobileRuntimeLogPayload = z.infer<typeof mobileRuntimeLogSchema>;
 export type MobileLiveCommentActionPayload = z.infer<typeof mobileLiveCommentActionSchema>;
 export type MobileLogFilePayload = z.infer<typeof mobileLogFileSchema>;
 export type MobileCommandAckPayload = z.infer<typeof mobileCommandAckSchema>;
+export type MobileBaseCommandAckPayload = z.infer<typeof mobileBaseCommandAckSchema>;
+export type ExitAgentAppStage = z.infer<typeof exitAgentAppStageSchema>;
+export type ExitAgentAppResult = z.infer<typeof exitAgentAppResultSchema>;
 export type MobileAgentUpdateEventPayload = z.infer<typeof mobileAgentUpdateEventSchema>;

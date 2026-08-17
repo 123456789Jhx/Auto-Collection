@@ -1,14 +1,21 @@
-import { Alert } from "antd";
+import { Alert, Form } from "antd";
+import { useEffect, useMemo } from "react";
 import { BooleanField } from "./BooleanField";
 import { EnumField } from "./EnumField";
 import { NumberField } from "./NumberField";
-import { normalizeObjectSchema, type DynamicFieldProps } from "./schema";
+import {
+  isFieldVisible,
+  normalizeObjectSchema,
+  removeInactiveConditionalValues,
+  type DynamicFieldProps
+} from "./schema";
 import { StringArrayField } from "./StringArrayField";
 import { StringField } from "./StringField";
 
 type Props = {
   schema?: Record<string, unknown>;
   namePrefix?: string;
+  hiddenFieldKeys?: readonly string[];
 };
 
 function renderField(props: DynamicFieldProps) {
@@ -23,19 +30,30 @@ function renderField(props: DynamicFieldProps) {
   return <Alert key={fieldKey} type="error" showIcon message={`字段 ${fieldKey} 使用了不支持的 Schema`} />;
 }
 
-export function DynamicConfigForm({ schema, namePrefix = "configPayload" }: Props) {
-  const normalized = normalizeObjectSchema(schema);
+export function DynamicConfigForm({ schema, namePrefix = "configPayload", hiddenFieldKeys = [] }: Props) {
+  const normalized = useMemo(() => normalizeObjectSchema(schema), [schema]);
+  const form = Form.useFormInstance();
+  const values = Form.useWatch(namePrefix, form) as Record<string, unknown> | undefined;
+
+  useEffect(() => {
+    if (!normalized || !values) return;
+    const cleanedValues = removeInactiveConditionalValues(normalized, values);
+    if (cleanedValues !== values) form.setFieldValue(namePrefix, cleanedValues);
+  }, [form, namePrefix, normalized, values]);
+
   if (!normalized) {
     return <Alert type="error" showIcon message="当前脚本类型缺少有效的配置 Schema" />;
   }
   return (
     <div>
-      {Object.entries(normalized.properties).map(([fieldKey, fieldSchema]) => renderField({
-        fieldKey,
-        schema: fieldSchema,
-        required: normalized.required.includes(fieldKey),
-        namePrefix
-      }))}
+      {Object.entries(normalized.properties)
+        .filter(([fieldKey, fieldSchema]) => !hiddenFieldKeys.includes(fieldKey) && isFieldVisible(fieldSchema, values ?? {}))
+        .map(([fieldKey, fieldSchema]) => renderField({
+          fieldKey,
+          schema: fieldSchema,
+          required: normalized.required.includes(fieldKey),
+          namePrefix
+        }))}
     </div>
   );
 }

@@ -55,30 +55,70 @@ function createWechatChannelsPublishUi(context) {
     }
   }
 
-  function visibleText() {
-    var value = snapshot();
-    return String(value.combinedText || value.visibleText || "");
+  function normalizeVisibleText(value) {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    if (!value || typeof value !== "object") return "";
+    var fields = ["combinedText", "visibleText", "text", "rawText", "screenText", "ocrText"];
+    for (var i = 0; i < fields.length; i++) {
+      var candidate = value[fields[i]];
+      if (typeof candidate === "string" || typeof candidate === "number" || typeof candidate === "boolean") {
+        return String(candidate);
+      }
+    }
+    return "";
+  }
+
+  var stateOcr = { at: 0, text: "" };
+  function visibleText() { return normalizeVisibleText(snapshot()); }
+  function stateText() {
+    var textValue = visibleText();
+    if (textValue) return textValue;
+    var now = Date.now();
+    if (!context.screenRecognizer || !context.screenRecognizer.extractScreen || now - stateOcr.at < 900) return stateOcr.text;
+    stateOcr.at = now;
+    try {
+      var screenSize = size();
+      var richSnapshot = context.screenRecognizer.extractScreen({ full: { x: 0, y: 0, w: screenSize.width, h: screenSize.height } });
+      stateOcr.text = normalizeVisibleText(richSnapshot);
+      if (richSnapshot && richSnapshot.image && richSnapshot.image.recycle) richSnapshot.image.recycle();
+    } catch (error) { stateOcr.text = ""; }
+    return stateOcr.text;
   }
 
   function selectedBottomTab() {
-    var labels = ["信息", "通讯录", "发现", "我"];
+    var tabs = [
+      { canonical: "信息", labels: ["信息", "微信"] },
+      { canonical: "通讯录", labels: ["通讯录"] },
+      { canonical: "发现", labels: ["发现"] },
+      { canonical: "我", labels: ["我"] }
+    ];
     var screen = size();
-    for (var i = 0; i < labels.length; i++) {
-      var node = findOne([
-        descMatches("^" + labels[i] + ".*(已选中|选中).*$"),
-        text(labels[i])
-      ], 180);
-      if (!node) continue;
-      try {
-        var bounds = node.bounds();
-        if (bounds.centerY() < screen.height * 0.72) continue;
-        var target = node;
-        for (var depth = 0; depth < 4 && target; depth++) {
-          var description = String(target.desc && target.desc() || "");
-          if ((target.selected && target.selected()) || /已选中|选中/.test(description)) return labels[i];
-          target = target.parent && target.parent();
-        }
-      } catch (error) {}
+    for (var i = 0; i < tabs.length; i++) {
+      for (var labelIndex = 0; labelIndex < tabs[i].labels.length; labelIndex++) {
+        var label = tabs[i].labels[labelIndex];
+        var node = findOne([
+          descMatches("^" + label + ".*(已选中|选中).*$"),
+          text(label)
+        ], 180);
+        if (!node) continue;
+        try {
+          var bounds = node.bounds();
+          if (bounds.centerY() < screen.height * 0.72) continue;
+          var target = node;
+          for (var depth = 0; depth < 4 && target; depth++) {
+            var description = String(target.desc && target.desc() || "");
+            if ((target.selected && target.selected()) || /已选中|选中/.test(description)) return tabs[i].canonical;
+            target = target.parent && target.parent();
+          }
+        } catch (error) {}
+      }
+    }
+    var textValue = stateText();
+    if (/微信(?:\(\d+\))?/.test(textValue) && /通讯录/.test(textValue) && /发现/.test(textValue) && /我/.test(textValue) && !/视频号|朋友圈|搜一搜/.test(textValue)) {
+      if (logger && logger.info) logger.info("视频号微信底栏 OCR 回退识别", { bottomTab: "信息", visibleTextSample: textValue.slice(0, 160) });
+      return "信息";
     }
     return "";
   }
@@ -112,6 +152,29 @@ function createWechatChannelsPublishUi(context) {
     launchWechat();
   }
 
+  function dismissVersionUpdateInvite() {
+    var textValue = visibleText();
+    if (!/新版本|内测邀请|立即安装|以后再说/.test(textValue)) return false;
+    var later = findOne([
+      textMatches("^(以后再说|暂不|取消)$"),
+      descMatches("^(以后再说|暂不|取消)$")
+    ], 700);
+    if (!clickNode(later, "微信内测邀请以后再说")) return false;
+    if (logger && logger.info) logger.info("微信新版本内测邀请已关闭", { visibleTextSample: textValue.slice(0, 160) });
+    waitMs(450);
+    return true;
+  }
+
+  function selectWechatHomeTab() {
+    var home = findOne([text("微信"), desc("微信"), text("信息"), desc("信息")], 800);
+    var clickedBySelector = clickNode(home, "微信首页底栏");
+    if (!clickedBySelector) {
+      var screen = size();
+      click(Math.floor(screen.width * 0.125), Math.floor(screen.height * 0.9));
+    }
+    if (logger && logger.warn) logger.warn("视频号微信首页页签回退点击", { selectorMatched: !!home, clickedBySelector: clickedBySelector });
+    waitMs(800);
+  }
   function clickText(label, timeoutMs) {
     var node = findOne([
       text(label),
@@ -123,7 +186,14 @@ function createWechatChannelsPublishUi(context) {
     waitMs(700);
   }
 
-  function openDiscover() { clickText("发现", 1200); }
+  function openDiscover() {
+    var discover = findOne([text("发现"), desc("发现"), textContains("发现"), descContains("发现")], 1200);
+    if (!clickNode(discover, "发现")) {
+      var screen = size();
+      click(Math.floor(screen.width * 0.625), Math.floor(screen.height * 0.9));
+    }
+    waitMs(700);
+  }
   function openChannels() { clickText("视频号", 1600); }
 
   function openMine() {
@@ -227,7 +297,9 @@ function createWechatChannelsPublishUi(context) {
   }
 
   function completeTitle() { clickText("完成", 1200); }
-
+  function openCoverSettings() { clickText("封面设置", 1500); } function chooseCoverFromAlbum() { clickText("从相册选择", 1500); }
+  function clickCoverGalleryItem(index) { clickGalleryItem(Number(index || 0)); }
+  function completeCoverSelection() { clickText("完成", 1200); } function completeCoverSettings() { clickText("完成", 1200); }
   function fillDescription(value) {
     var node = firstEditText();
     try {
@@ -238,33 +310,6 @@ function createWechatChannelsPublishUi(context) {
       }
     } catch (error) {}
     throw new Error("视频号描述输入失败");
-  }
-
-  function selectTopic(topic) {
-    var escaped = String(topic || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    var node = findOne([
-      textMatches("^#?" + escaped + ".*$"),
-      descMatches("^#?" + escaped + ".*$")
-    ], 450);
-    if (!node) return false;
-    clickNode(node, "话题" + topic);
-    waitMs(220);
-    return true;
-  }
-
-  function listSelectedTopics() {
-    var result = [];
-    var seen = {};
-    var nodes;
-    try { nodes = textMatches("^#.+").find(); } catch (error) { nodes = []; }
-    for (var i = 0; i < nodes.length; i++) {
-      try {
-        if (String(nodes[i].className() || "").indexOf("EditText") >= 0) continue;
-        var value = String(nodes[i].text() || nodes[i].desc() || "").replace(/^#/, "").trim();
-        if (value && !seen[value]) { seen[value] = true; result.push(value); }
-      } catch (error2) {}
-    }
-    return result;
   }
 
   function publish() { clickText("发表", 1400); }
@@ -293,12 +338,14 @@ function createWechatChannelsPublishUi(context) {
     };
   }
 
-  function has(pattern) { return pattern.test(visibleText()); }
+  function has(pattern) { return pattern.test(stateText()); }
 
   return {
     inspectStartupState: inspectStartupState,
     launchWechat: launchWechat,
     forceRestartWechat: forceRestartWechat,
+    selectWechatHomeTab: selectWechatHomeTab,
+    dismissVersionUpdateInvite: dismissVersionUpdateInvite,
     snapshot: snapshot,
     openDiscover: openDiscover,
     openChannels: openChannels,
@@ -313,20 +360,30 @@ function createWechatChannelsPublishUi(context) {
     confirmTitle: confirmTitle,
     tapOutsideTitle: tapOutsideTitle,
     completeTitle: completeTitle,
+    openCoverSettings: openCoverSettings,
+    chooseCoverFromAlbum: chooseCoverFromAlbum,
+    clickCoverGalleryItem: clickCoverGalleryItem,
+    completeCoverSelection: completeCoverSelection,
+    completeCoverSettings: completeCoverSettings,
     fillDescription: fillDescription,
-    selectTopic: selectTopic,
-    listSelectedTopics: listSelectedTopics,
     publish: publish,
     waitForPublishOutcome: waitForPublishOutcome,
     readPublishedResult: readPublishedResult,
     states: {
-      discoverReady: function () { return inspectStartupState().bottomTab === "信息"; },
-      channelsReady: function () { return has(/视频号/); },
-      mineReady: function () { return has(/视频号|关注|朋友|推荐/); },
-      publishMenuReady: function () { return has(/发表视频|发布视频|从相册选择/); },
-      albumReady: function () { return has(/相册|从相册选择/); },
-      titleReady: function () { return has(/添加标题|下一步|编辑/); },
-      exportComplete: function () { return !has(/正在导出|导出中|合成中/) && has(/添加描述|谁可以看|发表/); },
+      wechatHomeReady: function () { return inspectStartupState().bottomTab === "信息"; },
+      discoverReady: function () { return has(/视频号|朋友圈|直播/); },
+      channelsReady: function () { return has(/视频号/) && has(/关注|朋友|推荐|直播/); },
+      mineReady: function () { return has(/我的视频号|作品|私密|动态|发表视频|发布视频/); },
+      publishMenuReady: function () { return has(/发表视频|发布视频|从相册选择|拍摄/); },
+      galleryReady: function () { return has(/最近|全部|视频|图片|所有照片|选择视频/); },
+      nextReady: function () { return has(/下一步/); },
+      titleReady: function () { return has(/轻触添加标题|添加标题/); },
+      titleInputReady: function () { return !!firstEditText(); },
+      exportStarted: function () { return has(/正在导出|导出中|合成中|封面设置|添加描述/); },
+      exportComplete: function () { return !has(/正在导出|导出中|合成中/) && has(/封面设置|添加描述|谁可以看|发表/); },
+      coverSourceReady: function () { return has(/封面设置|从相册选择|拍一张/); },
+      coverGalleryReady: function () { return has(/最近|全部|图片|所有照片|选择封面/); },
+      descriptionReady: function () { return has(/添加描述|更容易被推荐|谁可以看|发表/); },
       publishReady: function () { return has(/发表|谁可以看|添加描述/); }
     }
   };

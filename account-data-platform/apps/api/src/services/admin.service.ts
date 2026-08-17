@@ -1,4 +1,4 @@
-import { paginationQuerySchema, type UpdateDevicePayload, type UpdateDeviceTaskConfigPayload, type UpdateTaskPayload } from "@pkg/types";
+import { paginationQuerySchema, type UpdateBaseConnectivityThresholdPayload, type UpdateDevicePayload, type UpdateDeviceTaskConfigPayload, type UpdateTaskPayload } from "@pkg/types";
 import { randomBytes } from "node:crypto";
 import { db } from "../repositories/db";
 import { collectorDevices } from "@pkg/db/schema";
@@ -11,8 +11,10 @@ import { getLiveCommentDeviceSummaries, listLiveCommentActions } from "../reposi
 import { countCollectionRecords, getRecordDateSummaries, getRecordDeviceSummaries, getSceneCountsSince, listCollectionRecords } from "../repositories/record.repository";
 import { findDeviceTaskConfig, listTasks, resolveTaskConfig, updateTask, upsertDeviceTaskConfig } from "../repositories/task.repository";
 import { createCommand } from "./command.service";
+import { assertPublishAccountBindingsAvailable, syncPublishAccountBindings } from "../repositories/publish-routing.repository";
 import { listResponse } from "../lib/response";
 import { parseOptionalDate } from "../lib/date";
+import { deriveBaseConnectivity } from "./base-connectivity-status";
 
 function startOfToday() {
   const date = new Date();
@@ -24,23 +26,67 @@ function utcDateKey(date = new Date()) {
   return date.toISOString().slice(0, 10);
 }
 
-function minutesSince(value: Date | string | null) {
+const AGENT_OFFLINE_AFTER_MS = 32_000;
+
+function millisecondsSince(value: Date | string | null) {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return null;
-  return Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
+  return Math.max(0, Date.now() - date.getTime());
 }
 
-function mapDeviceStatus<T extends { lastHeartbeatAt: Date | string | null; status: string }>(device: T) {
+function minutesSince(value: Date | string | null) {
+  const elapsedMs = millisecondsSince(value);
+  return elapsedMs === null ? null : Math.round(elapsedMs / 60000);
+}
+
+export function mapDeviceStatus<T extends {
+  lastHeartbeatAt: Date | string | null;
+  status: string;
+  baseStatus?: string | null;
+  baseLastHeartbeatAt?: Date | string | null;
+  baseOfflineThresholdSeconds?: number | null;
+  screenState?: string | null;
+  appUiState?: string | null;
+  desiredAgentState?: string | null;
+}>(device: T) {
+  const heartbeatAgeMs = millisecondsSince(device.lastHeartbeatAt);
   const heartbeatAgeMinutes = minutesSince(device.lastHeartbeatAt);
-  const online = heartbeatAgeMinutes !== null && heartbeatAgeMinutes <= 3;
+  const online = device.status !== "stopped" && heartbeatAgeMs !== null && heartbeatAgeMs <= AGENT_OFFLINE_AFTER_MS;
   const effectiveStatus = online ? device.status : "offline";
+  const baseConnectivity = deriveBaseConnectivity({
+    lastReceivedAt: device.baseLastHeartbeatAt ?? null,
+    offlineThresholdSeconds: device.baseOfflineThresholdSeconds
+  });
+  const baseHeartbeatAge = baseConnectivity.elapsedSeconds === null ? null : baseConnectivity.elapsedSeconds * 1000;
+  const baseReachable = device.baseStatus === "online" && baseConnectivity.status === "ONLINE";
+  const connectivityStatus = !baseReachable
+    ? "unreachable"
+    : online
+    ? "base_online_agent_running"
+    : "base_online_agent_unreachable";
   return {
     ...device,
     status: effectiveStatus,
     reportedStatus: device.status,
     heartbeatAgeMinutes,
-    effectiveStatus
+    effectiveStatus,
+    agentStatus: device.status === "stopped" ? "stopped" : online ? device.status : "agent_unreachable",
+    agentLastHeartbeatAt: device.lastHeartbeatAt,
+    agentHeartbeatAge: heartbeatAgeMs,
+    agentReachable: online,
+    baseStatus: baseReachable ? "online" : "unknown",
+    baseLastHeartbeatAt: device.baseLastHeartbeatAt ?? null,
+    baseHeartbeatAge,
+    baseReachable,
+    baseConnectivityStatus: baseConnectivity.status,
+    baseConnectivityElapsedSeconds: baseConnectivity.elapsedSeconds,
+    baseOfflineThresholdSeconds: baseConnectivity.offlineThresholdSeconds,
+    baseReconnectProgressPercent: baseConnectivity.reconnectProgressPercent,
+    connectivityStatus,
+    screenState: baseReachable ? (device.screenState ?? "unknown") : "unknown",
+    appUiState: baseReachable ? (device.appUiState ?? "unknown") : "unknown",
+    desiredAgentState: device.desiredAgentState ?? "running"
   };
 }
 
@@ -194,10 +240,24 @@ export async function getDeviceDailyProgress(deviceCode: string, rawQuery: unkno
 }
 
 export async function updateDevice(deviceCode: string, payload: UpdateDevicePayload) {
+  if (payload.accountProfile !== undefined) {
+    await assertPublishAccountBindingsAvailable(deviceCode, payload.accountProfile);
+  }
   const updated = await updateDeviceByCode(deviceCode, payload);
   if (!updated) {
     throw new Error("设备不存在");
   }
+  if (payload.accountProfile !== undefined) {
+    await syncPublishAccountBindings(deviceCode, payload.accountProfile, "admin");
+  }
+  return hideDeviceSecret(mapDeviceStatus(updated));
+}
+
+export async function updateBaseConnectivityThreshold(deviceCode: string, payload: UpdateBaseConnectivityThresholdPayload) {
+  const updated = await updateDeviceByCode(deviceCode, {
+    baseOfflineThresholdSeconds: payload.offlineThresholdSeconds
+  });
+  if (!updated) throw new Error("DEVICE_NOT_FOUND");
   return hideDeviceSecret(mapDeviceStatus(updated));
 }
 

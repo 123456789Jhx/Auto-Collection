@@ -31,7 +31,23 @@ function testFailedTaskReturnsAgentToIdleStateWithFailureMessage() {
   assert.strictEqual(patch.lastMessage, "任务失败，待命中：target_search_open_failed");
 }
 
+function testFreshAgentStartsIdleWithoutAutoStart() {
+  var patch = collectorApp.createStartupIdleStatePatch({ autoStart: false, manualOverride: false });
+
+  assert.strictEqual(patch.running, false);
+  assert.strictEqual(patch.paused, false);
+  assert.strictEqual(patch.stopRequested, false);
+  assert.strictEqual(patch.lastMessage, "未执行任务");
+}
+
+function testStartupIdleDoesNotOverrideActiveOrManualState() {
+  assert.strictEqual(collectorApp.createStartupIdleStatePatch({ autoStart: true, manualOverride: false }), null);
+  assert.strictEqual(collectorApp.createStartupIdleStatePatch({ autoStart: false, manualOverride: true }), null);
+}
+
 testFinishedTaskReturnsAgentToIdleState();
 testFailedTaskReturnsAgentToIdleStateWithFailureMessage();
+testFreshAgentStartsIdleWithoutAutoStart();
+testStartupIdleDoesNotOverrideActiveOrManualState();
 
 console.log("collector-app finish state tests passed");

@@ -12,7 +12,9 @@ function createSelectPublishMaterialStep(ui, chooseVideoMaterial) {
       var decision = chooseVideoMaterial(ui.readFirstGalleryItems());
       if (!decision.valid) throw materialError(decision.reason || "素材未正确上传");
       ui.clickGalleryItem(decision.index);
-      ui.clickNextIfPresent();
+      var nextClicked = ui.clickNextIfPresent(8000);
+      if (nextClicked === false) throw new Error("视频素材已选中，但未找到下一步按钮");
+      if (nextClicked === true) ui.clickNextIfPresent(3000, true);
       return decision;
     } catch (error) {
       if (error && error.publishStatus) throw error;

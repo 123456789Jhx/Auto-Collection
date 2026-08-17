@@ -33,6 +33,18 @@ function validateBounds(label: string, schema: DynamicFieldSchema, value: unknow
   }
 }
 
+const publishTimeSlotPattern = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function normalizePublishTimeSlots(value: string[]) {
+  return [...new Set(value.map((slot) => slot.trim()).filter(Boolean))].sort();
+}
+
+export function validatePublishTimeSlots(value: unknown) {
+  if (!Array.isArray(value) || value.some((slot) => typeof slot !== "string" || !publishTimeSlotPattern.test(slot.trim()))) {
+    throw new Error("发布时间窗必须为 HH:mm，例如 11:00");
+  }
+}
+
 function validateValues(label: string, schema: DynamicFieldSchema, value: unknown) {
   if (schema.enum && !schema.enum.some((item) => Object.is(item, value))) {
     throw new Error(`${label}不在可选范围内`);
@@ -51,6 +63,7 @@ export function fieldRules(fieldKey: string, schema: DynamicFieldSchema, require
       validateType(label, schema, value);
       validateBounds(label, schema, value);
       validateValues(label, schema, value);
+      if (fieldKey === "publishTimeSlots") validatePublishTimeSlots(value);
     }
   });
   return rules;

@@ -1,4 +1,4 @@
-﻿function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedScreenRecognizer, injectedLiveTargetMatcher) {
+function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedScreenRecognizer, injectedLiveTargetMatcher) {
   var autojsUtils = require(files.join(config.runtime.scriptDir, "utils/autojs-utils.js"));
   var liveCardGeometry = require(files.join(config.runtime.scriptDir, "platforms/douyin/live-card-geometry.js"));
   var createScreenRecognizer = require(files.join(config.runtime.scriptDir, "core/screen-recognizer.js")).createScreenRecognizer;
@@ -3867,11 +3867,37 @@
     if (!autojsUtils.safeClick(inputNode, 3, logger)) {
       return { success: false, failureReason: "comment_input_click_failed" };
     }
-    autojsUtils.sleepRandom(500, 900);
+    if (options.afterInputClickDelayMs) {
+      sleep(Math.max(0, Number(options.afterInputClickDelayMs) || 0));
+    } else if (!options.skipDefaultInputDelay) {
+      autojsUtils.sleepRandom(500, 900);
+    }
+    if (options.shouldStop && options.shouldStop()) {
+      return { success: false, failureReason: "stopped_before_comment_input" };
+    }
+    var focusedInput = inputNode;
     try {
-      setText(replyText);
+      var editText = className("android.widget.EditText").findOne(800);
+      if (editText) focusedInput = editText;
+    } catch (focusError) {}
+    logger.info("直播评论文本输入开始", { length: replyText.length });
+    var inputSucceeded = false;
+    try {
+      if (focusedInput && focusedInput.setText) {
+        inputSucceeded = focusedInput.setText(replyText) !== false;
+      }
+      if (!inputSucceeded && typeof setText === "function") {
+        inputSucceeded = setText(replyText) !== false;
+      }
     } catch (error) {
       return { success: false, failureReason: "set_text_failed:" + String(error) };
+    }
+    if (!inputSucceeded) {
+      return { success: false, failureReason: "set_text_failed" };
+    }
+    logger.info("直播评论文本输入完成", { length: replyText.length });
+    if (options.shouldStop && options.shouldStop()) {
+      return { success: false, failureReason: "stopped_after_comment_input" };
     }
     autojsUtils.sleepRandom(300, 700);
 

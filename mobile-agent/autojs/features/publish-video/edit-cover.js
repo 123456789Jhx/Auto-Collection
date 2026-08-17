@@ -7,7 +7,7 @@ function createEditCoverStep(ui) {
     }
     try {
       ui.openCoverAlbum();
-      ui.clickGalleryItem(0);
+      ui.clickGalleryItem(0, true);
       ui.clickNextIfPresent();
       ui.closeCoverDiagnostic();
       ui.saveCover();

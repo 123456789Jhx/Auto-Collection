@@ -4,12 +4,13 @@ import { basename, extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { config } from "../config";
 
-const allowedExtensions = new Set([".zip", ".json", ".sha256", ".mp4", ".jpg"]);
+const allowedExtensions = new Set([".zip", ".json", ".sha256", ".mp4", ".jpg", ".apk"]);
 
 function contentTypeFor(extension: string) {
   if (extension === ".zip") return "application/zip";
   if (extension === ".mp4") return "video/mp4";
   if (extension === ".jpg") return "image/jpeg";
+  if (extension === ".apk") return "application/vnd.android.package-archive";
   return "text/plain; charset=utf-8";
 }
 

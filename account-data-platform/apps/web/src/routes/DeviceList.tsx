@@ -13,6 +13,22 @@ export type DeviceRow = {
   effectiveStatus: string;
   lastHeartbeatAt?: string;
   heartbeatAgeMinutes?: number | null;
+  agentStatus?: string;
+  agentLastHeartbeatAt?: string | null;
+  agentHeartbeatAge?: number | null;
+  agentReachable?: boolean;
+  baseStatus?: string;
+  baseLastHeartbeatAt?: string | null;
+  baseHeartbeatAge?: number | null;
+  baseReachable?: boolean;
+  baseConnectivityStatus?: "ONLINE" | "RECONNECTING" | "OFFLINE";
+  baseConnectivityElapsedSeconds?: number | null;
+  baseOfflineThresholdSeconds?: number;
+  baseReconnectProgressPercent?: number;
+  connectivityStatus?: "unreachable" | "base_online_agent_running" | "base_online_agent_unreachable" | string;
+  screenState?: "locked" | "unlocked" | "unknown" | string;
+  appUiState?: "foreground" | "background" | "not_running" | "unknown" | string;
+  desiredAgentState?: "running" | "stopped" | string;
   appVersion?: string | null;
   targetVersion?: string | null;
   enabled?: boolean;
@@ -56,6 +72,18 @@ export function statusTone(value?: string | null) {
   return "green";
 }
 
+export function agentStatus(device: DeviceRow) {
+  return device.agentStatus || device.effectiveStatus || device.status;
+}
+
+export function agentHeartbeatAt(device: DeviceRow) {
+  return device.agentLastHeartbeatAt || device.lastHeartbeatAt;
+}
+
+export function baseStatus(device: DeviceRow) {
+  return device.baseStatus || "unknown";
+}
+
 export function taskTone(value?: string | null) {
   if (value === "live_comment") return "purple";
   if (value === "commerce_card_live_comment") return "amber";
@@ -68,10 +96,13 @@ export function enabledText(value?: boolean) {
   return value === false ? "禁用" : "启用";
 }
 
-function bindingAccountName(device: DeviceRow) {
-  const profile = device.accountProfile;
-  const value = profile?.douyinAccountName;
-  return typeof value === "string" ? value.trim() : "";
+function bindingStatus(device: DeviceRow) {
+  const douyinAccountName = device.accountProfile?.douyinAccountName;
+  const wechatChannelsName = device.accountProfile?.wechatChannelsName;
+  return {
+    douyin: typeof douyinAccountName === "string" ? douyinAccountName.trim() : "",
+    hasChannelsCapability: typeof wechatChannelsName === "string" && wechatChannelsName.trim().length > 0
+  };
 }
 
 export function DeviceList({
@@ -96,7 +127,7 @@ export function DeviceList({
           <thead>
             <tr>
               <th>设备</th>
-              <th>当前状态</th>
+              <th>底座 / Agent</th>
               <th>当前任务</th>
               <th>平台 / 启用</th>
               <th>版本 / IP</th>
@@ -108,7 +139,7 @@ export function DeviceList({
           <tbody>
             {devices.length === 0 ? <tr><td className="ops-empty" colSpan={columnCount}>没有符合条件的设备</td></tr> : null}
             {devices.map((device) => {
-              const accountName = bindingAccountName(device);
+              const binding = bindingStatus(device);
               return (
                 <tr
                   key={device.id || device.deviceCode}
@@ -119,7 +150,10 @@ export function DeviceList({
                     <div className="ops-title">{deviceDisplayName(device)}</div>
                     <div className="ops-small">{deviceSubTitle(device)}</div>
                   </td>
-                  <td><span className={`ops-tag ${statusTone(device.effectiveStatus || device.status)}`}>{statusText(device.effectiveStatus || device.status)}</span></td>
+                  <td>
+                    <div><span className={`ops-tag ${statusTone(baseStatus(device))}`}>{statusText(baseStatus(device))}</span></div>
+                    <div className="ops-small"><span className={`ops-tag ${statusTone(agentStatus(device))}`}>{statusText(agentStatus(device))}</span></div>
+                  </td>
                   <td><span className={`ops-tag ${taskTone(device.currentTask)}`}>{taskText(device.currentTask)}</span></td>
                   <td>
                     <div>{device.platform || "-"}</div>
@@ -129,9 +163,12 @@ export function DeviceList({
                     <div>{device.appVersion || "-"} / {device.targetVersion || "-"}</div>
                     <div className="ops-small">{device.lastIp || "-"}</div>
                   </td>
-                  <td>{formatDateTime(device.lastHeartbeatAt)}</td>
+                  <td>{formatDateTime(agentHeartbeatAt(device))}</td>
                   {showBindingStatus ? (
-                    <td><span className={`ops-tag ${accountName ? "green" : "gray"}`}>{accountName || "未绑定"}</span></td>
+                    <td>
+                      <div>抖音：{binding.douyin || "未绑定"}</div>
+                      <div className="ops-small">视频号能力：{binding.hasChannelsCapability ? "已绑定" : "未绑定"}</div>
+                    </td>
                   ) : null}
                   <td>
                     <div className="ops-actions-cell" onClick={(event) => event.stopPropagation()}>

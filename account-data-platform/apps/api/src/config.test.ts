@@ -12,6 +12,15 @@ describe("api config", () => {
     expect(config.legacyBusinessFrozen).toBe(false);
   });
 
+  test("development does not enable mobile registration secret checks", () => {
+    const config = resolveConfig({
+      NODE_ENV: "development",
+      MOBILE_REGISTRATION_SECRET: "legacy-local-secret"
+    });
+
+    expect(config.mobileRegistrationSecret).toBe("");
+  });
+
   test("parses the legacy business freeze switch as a boolean", () => {
     expect(resolveConfig({ LEGACY_BUSINESS_FROZEN: "true" }).legacyBusinessFrozen).toBe(true);
     expect(resolveConfig({ LEGACY_BUSINESS_FROZEN: "TRUE" }).legacyBusinessFrozen).toBe(true);

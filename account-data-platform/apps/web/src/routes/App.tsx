@@ -1,44 +1,44 @@
-import { BarChartOutlined, DatabaseOutlined, FileTextOutlined, LockOutlined, LoginOutlined, LogoutOutlined, MobileOutlined, UserOutlined, VideoCameraAddOutlined } from "@ant-design/icons";
+import { CloudSyncOutlined, FileTextOutlined, FireOutlined, LockOutlined, LoginOutlined, LogoutOutlined, MobileOutlined, UserOutlined, VideoCameraAddOutlined } from "@ant-design/icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Form, Input, Layout, Menu, Space, Spin, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { clearAdminToken, getAdminToken, getCurrentAdmin, loginAdmin, setAdminToken, type AdminUser } from "../lib/api-client";
-import { DashboardPage } from "./DashboardPage";
-import { DevicesPage } from "./DevicesPage";
+import { AccountWarmupModulePage } from "./AccountWarmupModulePage";
 import { LogsPage } from "./LogsPage";
-import { RecordsPage } from "./RecordsPage";
 import { RemoteScriptsPage } from "./RemoteScriptsPage";
 import { PublishTasksPage } from "./PublishTasksPage";
 import { PublishVideoModulePage } from "./PublishVideoModulePage";
 import { TaskSchedulerPage } from "./TaskSchedulerPage";
 import { TasksPage } from "./TasksPage";
+import { UpdateCenterPage } from "./UpdateCenterPage";
+import { RemoteWakePage } from "../features/remote-wake/RemoteWakePage";
 
 const { Header, Sider, Content } = Layout;
 
 const pages = {
-  dashboard: { title: "工作台" },
   publishVideo: { title: "视频发布" },
+  accountWarmup: { title: "养号" },
   scheduler: { title: "任务调度" },
   tasks: { title: "配置" },
-  devices: { title: "设备" },
   remoteScripts: { title: "远程脚本" },
   publishTasks: { title: "发布任务" },
-  records: { title: "采集记录" },
-  logs: { title: "日志中心" }
+  updateCenter: { title: "更新中心" },
+  logs: { title: "日志中心" },
+  remoteWake: { title: "远程唤醒" }
 };
 
 type PageKey = keyof typeof pages;
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
 
 function renderPage(page: PageKey) {
-  if (page === "dashboard") return <DashboardPage />;
   if (page === "publishVideo") return <PublishVideoModulePage />;
+  if (page === "accountWarmup") return <AccountWarmupModulePage />;
   if (page === "scheduler") return <TaskSchedulerPage />;
   if (page === "tasks") return <TasksPage />;
-  if (page === "devices") return <DevicesPage />;
   if (page === "remoteScripts") return <RemoteScriptsPage />;
   if (page === "publishTasks") return <PublishTasksPage />;
-  if (page === "records") return <RecordsPage />;
+  if (page === "updateCenter") return <UpdateCenterPage />;
+  if (page === "remoteWake") return <RemoteWakePage />;
   return <LogsPage />;
 }
 
@@ -49,9 +49,13 @@ type LoginFormValues = {
 
 function pageFromPath(): PageKey {
   if (window.location.pathname === "/publish-video") return "publishVideo";
+  if (window.location.pathname === "/account-warmup") return "accountWarmup";
   if (window.location.pathname === "/publish-tasks") return "publishTasks";
-  if (window.location.pathname === "/devices") return "devices";
-  return window.location.pathname === "/remote-scripts" ? "remoteScripts" : "dashboard";
+  if (window.location.pathname === "/remote-scripts") return "remoteScripts";
+  if (window.location.pathname === "/update-center") return "updateCenter";
+  if (window.location.pathname === "/logs") return "logs";
+  if (window.location.pathname === "/remote-wake") return "remoteWake";
+  return "publishVideo";
 }
 
 function LoginPage({ onLogin }: { onLogin: (user: AdminUser) => void }) {
@@ -108,10 +112,14 @@ export function App() {
     setPage(nextPage);
     const nextPath = nextPage === "publishVideo"
       ? "/publish-video"
+      : nextPage === "accountWarmup"
+      ? "/account-warmup"
       : nextPage === "remoteScripts"
       ? "/remote-scripts"
       : nextPage === "publishTasks" ? "/publish-tasks"
-      : nextPage === "devices" ? "/devices" : "/";
+      : nextPage === "updateCenter" ? "/update-center"
+      : nextPage === "remoteWake" ? "/remote-wake"
+      : nextPage === "logs" ? "/logs" : "/publish-video";
     if (window.location.pathname !== nextPath) {
       window.history.pushState({}, "", nextPath);
     }
@@ -180,13 +188,13 @@ export function App() {
           selectedKeys={[page]}
           onClick={(item) => navigateToPage(item.key as PageKey)}
           items={[
-            { key: "dashboard", icon: <BarChartOutlined />, label: "工作台" },
             { key: "publishVideo", icon: <VideoCameraAddOutlined />, label: "视频发布" },
+            { key: "accountWarmup", icon: <FireOutlined />, label: "养号" },
             // LEGACY_FREEZE: 保留调度与配置页面代码，恢复业务时再放回两个菜单项。
-            { key: "devices", icon: <MobileOutlined />, label: "设备" },
             // LEGACY_FREEZE: 远程脚本与发布任务保留旧 URL，只隐藏独立菜单入口。
-            { key: "records", icon: <DatabaseOutlined />, label: "采集记录" },
-            { key: "logs", icon: <FileTextOutlined />, label: "日志中心" }
+            { key: "updateCenter", icon: <CloudSyncOutlined />, label: "更新中心" },
+            { key: "logs", icon: <FileTextOutlined />, label: "日志中心" },
+            { key: "remoteWake", icon: <MobileOutlined />, label: "远程唤醒" }
           ]}
         />
       </Sider>

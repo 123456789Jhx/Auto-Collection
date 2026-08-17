@@ -1,14 +1,25 @@
-import type { CreateMobileCommandPayload, MobileCommandAckPayload } from "@pkg/types";
+import {
+  accountWarmupRunPayloadSchema,
+  accountWarmupStopPayloadSchema,
+  exitAgentAppPayloadSchema,
+  exitAgentAppResultSchema,
+  videoWarmupStopPayloadSchema,
+  type CreateMobileCommandPayload,
+  type MobileBaseCommandAckPayload,
+  type MobileCommandAckPayload
+} from "@pkg/types";
 import { config } from "../config";
 import {
   createMobileCommand,
+  createExitAgentAppCommandAtomic,
+  findBaseCommandForAck,
   findMobileCommandByIdempotencyKey,
-  findPendingCommandsByDeviceCode,
+  claimPendingCommandByDeviceId,
   ignorePendingCommandsByDeviceId,
   listMobileCommands,
-  updateMobileCommandStatus
+  updateClaimedBaseCommandStatus
 } from "../repositories/command.repository";
-import { findDeviceByCode, markDeviceCommandIssued, resolveDeviceByToken } from "../repositories/device.repository";
+import { findDeviceByCode, markDeviceCommandIssued, resolveDeviceByToken, updateDesiredAgentState } from "../repositories/device.repository";
 import { findTaskByCode } from "../repositories/task.repository";
 import {
   acknowledgeTaskAssignmentCommandAtomic,
@@ -16,7 +27,27 @@ import {
   findActiveTaskAssignmentForDeviceAny
 } from "../repositories/task-assignment.repository";
 import { supersededCommandTypesFor } from "./command-policy";
+import { desiredAgentStateForCommand, supersededAgentControlCommandsFor } from "./agent-control";
+import type { CommandExecutor } from "./command-executor";
 import { buildCanonicalSha256 } from "./live-target-config.service";
+
+export class BaseCommandAckValidationError extends Error {
+  readonly details: Record<string, unknown>;
+
+  constructor(details: Record<string, unknown>) {
+    super("BASE_COMMAND_ACK_VALIDATION_FAILED");
+    this.details = details;
+  }
+}
+
+export class BaseCommandAckConflictError extends Error {
+  readonly details: Record<string, unknown>;
+
+  constructor(details: Record<string, unknown>) {
+    super("BASE_COMMAND_ACK_CONFLICT");
+    this.details = details;
+  }
+}
 
 function addSeconds(seconds: number) {
   return new Date(Date.now() + seconds * 1000);
@@ -32,7 +63,11 @@ export async function createCommand(payload: CreateMobileCommandPayload) {
   if (!device) {
     throw new Error("DEVICE_UNREGISTERED");
   }
-  if (payload.assignmentId || payload.commandSequence || payload.idempotencyKey) {
+  if (
+    payload.assignmentId
+    || payload.commandSequence
+    || (payload.idempotencyKey && payload.commandType !== "EXIT_AGENT_APP")
+  ) {
     throw new AssignmentRuntimeError("ASSIGNMENT_COMMAND_ROUTE_REQUIRED", {
       assignmentId: payload.assignmentId ?? null
     });
@@ -47,32 +82,87 @@ export async function createCommand(payload: CreateMobileCommandPayload) {
     }
   }
 
-  const supersededCommandTypes = supersededCommandTypesFor(payload.commandType);
+  const supersededCommandTypes = [
+    ...supersededCommandTypesFor(payload.commandType),
+    ...supersededAgentControlCommandsFor(payload.commandType)
+  ];
   if (supersededCommandTypes.length > 0) {
     await ignorePendingCommandsByDeviceId(device.id, supersededCommandTypes, "superseded_by_new_state_command");
   }
 
-  const command = await createMobileCommand({
-    tenantId: config.tenantId,
-    deviceId: device.id,
-    taskId: task?.id,
-    assignmentId: payload.assignmentId,
-    commandSequence: payload.commandSequence,
-    idempotencyKey: payload.idempotencyKey,
-    commandType: payload.commandType,
-    payloadJson: {
-      ...(payload.payload ?? {}),
-      ...(payload.assignmentId ? { assignmentId: payload.assignmentId } : {}),
-      ...(payload.commandSequence ? { commandSequence: payload.commandSequence } : {})
-    },
-    status: "PENDING",
-    issuedAt: new Date(),
-    expiresAt: addSeconds(payload.expiresInSeconds),
-    createdBy: "admin",
-    updatedBy: "admin"
-  });
-  await markDeviceCommandIssued(device.id);
-  return command;
+  const commandPayload = payload.commandType === "ACCOUNT_WARMUP_RUN"
+    ? accountWarmupRunPayloadSchema.parse(payload.payload)
+    : payload.commandType === "ACCOUNT_WARMUP_STOP"
+      ? accountWarmupStopPayloadSchema.parse(payload.payload)
+      : payload.commandType === "VIDEO_WARMUP_STOP"
+        ? videoWarmupStopPayloadSchema.parse(payload.payload)
+      : payload.commandType === "EXIT_AGENT_APP"
+        ? exitAgentAppPayloadSchema.parse(payload.payload ?? {})
+      : payload.payload ?? {};
+  const videoBatchId = payload.commandType === "VIDEO_WARMUP_STOP"
+    ? videoWarmupStopPayloadSchema.parse(payload.payload).batchId
+    : undefined;
+  const idempotencyKey = payload.commandType === "VIDEO_WARMUP_STOP"
+    ? `video-warmup-stop:${videoBatchId}:${device.deviceCode}`
+    : payload.idempotencyKey;
+
+  if (payload.commandType === "EXIT_AGENT_APP") {
+    const result = await createExitAgentAppCommandAtomic({
+      tenantId: config.tenantId,
+      deviceId: device.id,
+      taskId: task?.id,
+      commandType: payload.commandType,
+      idempotencyKey,
+      payloadJson: commandPayload,
+      status: "PENDING",
+      issuedAt: new Date(),
+      expiresAt: addSeconds(payload.expiresInSeconds),
+      createdBy: "admin",
+      updatedBy: "admin"
+    });
+    if (result.outcome === "created") {
+      await markDeviceCommandIssued(device.id);
+    }
+    return result.command;
+  }
+
+  if (idempotencyKey) {
+    const existing = await findMobileCommandByIdempotencyKey(idempotencyKey);
+    if (existing) return existing;
+  }
+
+  try {
+    const command = await createMobileCommand({
+      tenantId: config.tenantId,
+      deviceId: device.id,
+      taskId: task?.id,
+      assignmentId: payload.assignmentId,
+      commandSequence: payload.commandSequence,
+      idempotencyKey,
+      commandType: payload.commandType,
+      payloadJson: {
+        ...commandPayload,
+        ...(payload.assignmentId ? { assignmentId: payload.assignmentId } : {}),
+        ...(payload.commandSequence ? { commandSequence: payload.commandSequence } : {})
+      },
+      status: "PENDING",
+      issuedAt: new Date(),
+      expiresAt: addSeconds(payload.expiresInSeconds),
+      createdBy: "admin",
+      updatedBy: "admin"
+    });
+    await markDeviceCommandIssued(device.id);
+    const desiredAgentState = desiredAgentStateForCommand(payload.commandType);
+    if (desiredAgentState) {
+      await updateDesiredAgentState(device.id, desiredAgentState);
+    }
+    return command;
+  } catch (error) {
+    if (!idempotencyKey || !isUniqueViolation(error)) throw error;
+    const raced = await findMobileCommandByIdempotencyKey(idempotencyKey);
+    if (!raced) throw error;
+    return raced;
+  }
 }
 
 type ScriptConfigUpdatedCommandInput = {
@@ -141,19 +231,102 @@ async function resolveCommandDevice(deviceCode: string, deviceToken?: string) {
   return device;
 }
 
-export async function pollCommands(deviceCode: string, deviceToken?: string) {
+export async function pollCommands(deviceCode: string, executorType: CommandExecutor, deviceToken?: string) {
   const device = await resolveCommandDevice(deviceCode, deviceToken);
-  const commands = await findPendingCommandsByDeviceCode(device.deviceCode);
-  await Promise.all(commands.filter((item) => item.status === "PENDING").map((item) => updateMobileCommandStatus(item.id, "FETCHED")));
-  return commands.map((item) => ({
-    id: item.id,
-    assignmentId: item.assignmentId,
-    commandSequence: item.commandSequence,
-    commandType: item.commandType,
-    payload: item.payloadJson ?? {},
-    issuedAt: item.issuedAt,
-    expiresAt: item.expiresAt
-  }));
+  const command = await claimPendingCommandByDeviceId(device.id, executorType);
+  if (!command) return [];
+  return [{
+    id: command.id,
+    assignmentId: command.assignmentId,
+    commandSequence: command.commandSequence,
+    commandType: command.commandType,
+    payload: command.payloadJson ?? {},
+    claimToken: command.claimToken,
+    issuedAt: command.issuedAt,
+    expiresAt: command.expiresAt
+  }];
+}
+
+export async function acknowledgeBaseCommand(
+  commandId: string,
+  payload: MobileBaseCommandAckPayload,
+  deviceToken?: string
+) {
+  const device = await resolveCommandDevice(payload.deviceId, deviceToken);
+  const command = await findBaseCommandForAck(commandId, device.id, payload.claimToken);
+  if (!command) throw new Error("BASE_COMMAND_CLAIM_NOT_FOUND");
+
+  const result = validateBaseCommandAck(command.commandType, payload.status, payload.result);
+  if (command.status === "DONE" || command.status === "FAILED") {
+    if (command.status === payload.status && equivalentCommandResult(command.resultJson, result)) {
+      return command;
+    }
+    throw new BaseCommandAckConflictError({
+      commandId: command.id,
+      storedStatus: command.status,
+      requestedStatus: payload.status
+    });
+  }
+
+  if (command.status !== "CLAIMED" && command.status !== "RUNNING") {
+    throw new Error("BASE_COMMAND_CLAIM_NOT_FOUND");
+  }
+
+  const updated = await updateClaimedBaseCommandStatus(
+    commandId,
+    device.id,
+    payload.claimToken,
+    payload.status,
+    result
+  );
+  if (updated) return updated;
+
+  const raced = await findBaseCommandForAck(commandId, device.id, payload.claimToken);
+  if (raced?.status === payload.status
+    && (raced.status === "DONE" || raced.status === "FAILED")
+    && equivalentCommandResult(raced.resultJson, result)) {
+    return raced;
+  }
+  if (raced?.status === "DONE" || raced?.status === "FAILED") {
+    throw new BaseCommandAckConflictError({
+      commandId: raced.id,
+      storedStatus: raced.status,
+      requestedStatus: payload.status
+    });
+  }
+  throw new Error("BASE_COMMAND_CLAIM_NOT_FOUND");
+}
+
+function validateBaseCommandAck(
+  commandType: string,
+  status: MobileBaseCommandAckPayload["status"],
+  result: Record<string, unknown> | undefined
+) {
+  const normalizedResult = result ?? {};
+  if (commandType !== "EXIT_AGENT_APP") {
+    if (normalizedResult.commandType === "EXIT_AGENT_APP") {
+      throw new BaseCommandAckValidationError({ message: "exit_result_requires_exit_agent_app_command" });
+    }
+    return normalizedResult;
+  }
+
+  const parsed = exitAgentAppResultSchema.safeParse(result);
+  if (!parsed.success) {
+    throw new BaseCommandAckValidationError({ issues: parsed.error.issues });
+  }
+  const expectedTransportStatus = parsed.data.result === "FAILED" ? "FAILED" : "DONE";
+  if (status !== expectedTransportStatus) {
+    throw new BaseCommandAckValidationError({
+      message: "exit_ack_transport_status_mismatch",
+      expectedStatus: expectedTransportStatus,
+      receivedStatus: status
+    });
+  }
+  return parsed.data;
+}
+
+function equivalentCommandResult(left: Record<string, unknown> | null, right: Record<string, unknown>) {
+  return buildCanonicalSha256(left ?? {}) === buildCanonicalSha256(right);
 }
 
 export async function acknowledgeCommand(commandId: string, payload: MobileCommandAckPayload, deviceToken?: string) {

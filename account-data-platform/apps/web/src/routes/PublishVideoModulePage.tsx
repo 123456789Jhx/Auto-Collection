@@ -1,12 +1,15 @@
 import { Tabs, Typography } from "antd";
 import { useState } from "react";
 import { DeviceBindingList } from "./DeviceBindingList";
+import { PublishExecutionSettingsPage } from "./PublishExecutionSettingsPage";
+import { PublishPastePage } from "./PublishPastePage";
+import { PublishSchedulesPage } from "./PublishSchedulesPage";
 import { PublishTasksContent } from "./PublishTasksPage";
-import { RemoteScriptsContent } from "./RemoteScriptsPage";
-import { PublishTaskOperations } from "./PublishTaskOperations";
+import { SingleInterfacePublishPage } from "./SingleInterfacePublishPage";
 
 export function PublishVideoModulePage() {
   const [activeTab, setActiveTab] = useState("task-dashboard");
+  const goToDashboard = () => setActiveTab("task-dashboard");
 
   return (
     <div className="ops-page publish-video-module-page">
@@ -23,18 +26,28 @@ export function PublishVideoModulePage() {
             children: <div className="publish-tasks-page"><PublishTasksContent /></div>
           },
           {
-            key: "task-operations",
-            label: "任务操作",
-            children: <PublishTaskOperations onTaskCreated={() => setActiveTab("task-dashboard")} />
+            key: "paste-publish",
+            label: "粘贴发布",
+            children: <PublishPastePage onTaskCreated={goToDashboard} />
           },
           {
-            key: "business-config",
-            label: "业务配置",
-            children: <RemoteScriptsContent fixedScriptKey="publish_video" title="业务配置" />
+            key: "single-interface-publish",
+            label: "接口发布",
+            children: <SingleInterfacePublishPage />
+          },
+          {
+            key: "publish-schedules",
+            label: "接口定时",
+            children: <PublishSchedulesPage />
+          },
+          {
+            key: "execution-settings",
+            label: "发布设置",
+            children: <PublishExecutionSettingsPage />
           },
           {
             key: "device-binding",
-            label: "设备绑定",
+            label: "设备账号",
             children: <DeviceBindingList />
           }
         ]}

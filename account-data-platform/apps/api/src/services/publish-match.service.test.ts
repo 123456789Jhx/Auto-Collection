@@ -17,16 +17,19 @@ const disabledDeviceCode = `node11-disabled-${suffix.slice(0, 12)}`;
 const recentUnboundDeviceCode = `node11-unbound-a-${suffix.slice(0, 10)}`;
 const olderUnboundDeviceCode = `node11-unbound-b-${suffix.slice(0, 10)}`;
 const offlineUnboundDeviceCode = `node11-offline-${suffix.slice(0, 12)}`;
+const channelMatchedDeviceCode = "node11-channel-" + suffix.slice(0, 12);
+const channelMisleadingDeviceCode = "node11-channel-douyin-" + suffix.slice(0, 10);
+const channelUnsupportedDeviceCode = "node11-channel-unsupported-" + suffix.slice(0, 10);
 let configId = "";
 let matchedDeviceId = "";
 let newerMatchedDeviceId = "";
-let recentUnboundDeviceId = "";
-let olderUnboundDeviceId = "";
+let channelMatchedDeviceId = "";
+let channelUnsupportedDeviceId = "";
 
 const baseTask = {
   title: "节点11发布任务",
   description: "外部接口匹配测试 #农业",
-  coverUrl: null,
+  coverUrl: "https://media.example.test/node11-cover.jpg",
   videoUrl: "https://media.example.test/node11.mp4",
   platform: "抖音",
   status: "待发布",
@@ -74,7 +77,7 @@ beforeAll(async () => {
       accountProfile: {
         douyinAccountId: "test-001",
         douyinAccountName: "测试号001",
-        wechatChannelsName: ""
+        wechatChannelsName: "视频号测试01"
       },
       createdBy: "node11-test",
       updatedBy: "node11-test"
@@ -137,12 +140,52 @@ beforeAll(async () => {
       accountProfile: {},
       createdBy: "node11-test",
       updatedBy: "node11-test"
+    },
+    {
+      deviceCode: channelMatchedDeviceCode,
+      deviceName: "节点11视频号绑定设备",
+      enabled: true,
+      status: "online",
+      lastHeartbeatAt: heartbeatNow,
+      accountProfile: {
+        douyinAccountName: "不同的抖音号",
+        wechatChannelsName: "视频号测试01"
+      },
+      createdBy: "node11-test",
+      updatedBy: "node11-test"
+    },
+    {
+      deviceCode: channelMisleadingDeviceCode,
+      deviceName: "节点11仅视频号同名设备",
+      enabled: true,
+      status: "online",
+      lastHeartbeatAt: heartbeatNow,
+      accountProfile: {
+        douyinAccountName: "另一个抖音号",
+        wechatChannelsName: "视频号测试01"
+      },
+      createdBy: "node11-test",
+      updatedBy: "node11-test"
+    },
+    {
+      deviceCode: channelUnsupportedDeviceCode,
+      deviceName: "节点11未绑定视频号设备",
+      enabled: true,
+      status: "online",
+      lastHeartbeatAt: heartbeatNow,
+      accountProfile: {
+        douyinAccountId: "channels-unsupported-id",
+        douyinAccountName: "缺视频号能力",
+        wechatChannelsName: ""
+      },
+      createdBy: "node11-test",
+      updatedBy: "node11-test"
     }
   ]).returning();
   matchedDeviceId = devices[0].id;
   newerMatchedDeviceId = devices[1].id;
-  recentUnboundDeviceId = devices[3].id;
-  olderUnboundDeviceId = devices[4].id;
+  channelMatchedDeviceId = devices[6].id;
+  channelUnsupportedDeviceId = devices[8].id;
 });
 
 afterAll(async () => {
@@ -156,7 +199,10 @@ afterAll(async () => {
     disabledDeviceCode,
     recentUnboundDeviceCode,
     olderUnboundDeviceCode,
-    offlineUnboundDeviceCode
+    offlineUnboundDeviceCode,
+    channelMatchedDeviceCode,
+    channelMisleadingDeviceCode,
+    channelUnsupportedDeviceCode
   ]));
   delete process.env[tokenEnv];
 });
@@ -165,10 +211,12 @@ describe("publish task matching", () => {
   test("trims an account name and chooses the earliest updated online binding idempotently", async () => {
     const task = { ...baseTask, accountName: "  测试号001  " };
     const first = await claimAndMatchPublishTask(configId, "node11-test", {
+      accountName: "测试号001",
       fetch: fetchTask(task),
       logger: () => undefined
     });
     const repeated = await claimAndMatchPublishTask(configId, "node11-test", {
+      accountName: "测试号001",
       fetch: fetchTask(task),
       logger: () => undefined
     });
@@ -190,6 +238,7 @@ describe("publish task matching", () => {
 
   test("stores unmatched tasks with the required note", async () => {
     const result = await claimAndMatchPublishTask(configId, "node11-test", {
+      accountName: "测试号001",
       fetch: fetchTask({ ...baseTask, taskId: `${baseTask.taskId}-unmatched`, accountName: "禁用号" }),
       logger: () => undefined
     });
@@ -199,41 +248,100 @@ describe("publish task matching", () => {
     expect(result.task?.matchNote).toBe("无绑定该抖音号的设备：禁用号");
   });
 
-  test("matches an unspecified account to the freshest online unbound device", async () => {
+  test("matches a Douyin task by account ID when its account name is unavailable", async () => {
     const result = await claimAndMatchPublishTask(configId, "node11-test", {
-      fetch: fetchTask({ ...baseTask, taskId: `${baseTask.taskId}-unbound`, accountName: null }),
+      accountName: "测试号001",
+      fetch: fetchTask({ ...baseTask, taskId: baseTask.taskId + "-douyin-id", accountName: "test-001" }),
       logger: () => undefined
     });
 
     expect(result.task?.status).toBe("MATCHED");
-    expect(result.task?.accountName).toBe("");
-    expect(result.task?.matchedDeviceId).toBe(recentUnboundDeviceId);
-    expect(result.task?.matchedDeviceId).not.toBe(olderUnboundDeviceId);
+    expect(result.task?.matchedDeviceId).toBe(matchedDeviceId);
   });
 
-  test("stores unmatched when an unspecified account has no online unbound device", async () => {
-    await db.update(collectorDevices).set({ enabled: false }).where(inArray(
-      collectorDevices.id,
-      [recentUnboundDeviceId, olderUnboundDeviceId]
-    ));
-    try {
-      const result = await claimAndMatchPublishTask(configId, "node11-test", {
-        fetch: fetchTask({ ...baseTask, taskId: `${baseTask.taskId}-no-unbound`, accountName: null }),
-        logger: () => undefined
-      });
-      expect(result.task?.status).toBe("UNMATCHED");
-      expect(result.task?.matchedDeviceId).toBeNull();
-      expect(result.task?.matchNote).toBe("无可用的未绑定设备");
-    } finally {
-      await db.update(collectorDevices).set({ enabled: true }).where(inArray(
-        collectorDevices.id,
-        [recentUnboundDeviceId, olderUnboundDeviceId]
-      ));
-    }
+  test("matches a WeChat Channels task by the same Douyin account name and requires channel capability", async () => {
+    const result = await claimAndMatchPublishTask(configId, "node11-test", {
+      accountName: "测试号001",
+      fetch: fetchTask({
+        ...baseTask,
+        taskId: baseTask.taskId + "-channels-douyin-name",
+        platform: "视频号",
+        accountName: "测试号001"
+      }),
+      logger: () => undefined
+    });
+
+    expect(result.task?.status).toBe("MATCHED");
+    expect(result.task?.matchedDeviceId).toBe(matchedDeviceId);
+    expect(result.task?.matchedDeviceId).not.toBe(channelMatchedDeviceId);
+  });
+
+  test("matches a WeChat Channels task by the same Douyin account ID", async () => {
+    const result = await claimAndMatchPublishTask(configId, "node11-test", {
+      accountName: "测试号001",
+      fetch: fetchTask({
+        ...baseTask,
+        taskId: baseTask.taskId + "-channels-douyin-id",
+        platform: "视频号",
+        accountName: "test-001"
+      }),
+      logger: () => undefined
+    });
+
+    expect(result.task?.status).toBe("MATCHED");
+    expect(result.task?.matchedDeviceId).toBe(matchedDeviceId);
+  });
+
+  test("does not route a WeChat Channels task using only a matching channel name", async () => {
+    const result = await claimAndMatchPublishTask(configId, "node11-test", {
+      accountName: "测试号001",
+      fetch: fetchTask({
+        ...baseTask,
+        taskId: baseTask.taskId + "-channels-name-only",
+        platform: "视频号",
+        accountName: "视频号测试01"
+      }),
+      logger: () => undefined
+    });
+
+    expect(result.task?.status).toBe("UNMATCHED");
+    expect(result.task?.matchedDeviceId).toBeNull();
+    expect(result.task?.matchNote).toBe("无绑定该抖音号的设备：视频号测试01");
+  });
+
+  test("stores unmatched when the matched device has no WeChat Channels binding", async () => {
+    const result = await claimAndMatchPublishTask(configId, "node11-test", {
+      accountName: "测试号001",
+      fetch: fetchTask({
+        ...baseTask,
+        taskId: baseTask.taskId + "-channels-capability",
+        platform: "视频号",
+        accountName: "缺视频号能力"
+      }),
+      logger: () => undefined
+    });
+
+    expect(result.task?.status).toBe("UNMATCHED");
+    expect(result.task?.matchedDeviceId).toBeNull();
+    expect(result.task?.matchNote).toBe("未发布：该设备未绑定视频号");
+    expect(channelUnsupportedDeviceId).not.toBe("");
+  });
+
+  test("stores unmatched when an external task omits the Douyin account", async () => {
+    const result = await claimAndMatchPublishTask(configId, "node11-test", {
+      accountName: "测试号001",
+      fetch: fetchTask({ ...baseTask, taskId: baseTask.taskId + "-no-account", accountName: null }),
+      logger: () => undefined
+    });
+
+    expect(result.task?.status).toBe("UNMATCHED");
+    expect(result.task?.matchedDeviceId).toBeNull();
+    expect(result.task?.matchNote).toBe("外部任务缺少抖音账号");
   });
 
   test("does not persist when the external API returns null", async () => {
     const result = await claimAndMatchPublishTask(configId, "node11-test", {
+      accountName: "测试号001",
       fetch: fetchTask(null),
       logger: () => undefined
     });

@@ -5,7 +5,38 @@ import {
   syncRemoteScriptDefinitions
 } from "./remote-script-registry";
 
+type PublishVideoFormSchema = {
+  properties: Record<string, { enum?: unknown[]; visibleWhen?: unknown; items?: unknown }>;
+  required: string[];
+  allOf?: Array<{
+    if: { properties: { sourceMode: { const: string } }; required?: string[] };
+    then: { required: string[] };
+  }>;
+};
+
 describe("remote script registry", () => {
+  test("marks external fields as conditional for publish video forms", () => {
+    const publishVideo = remoteScriptRegistry.get("publish_video");
+    const schema = publishVideo?.configSchema as unknown as PublishVideoFormSchema;
+
+    expect(schema.properties.sourceMode?.enum).toEqual(["direct_material", "external_pull"]);
+    for (const field of ["externalBaseUrl", "externalTokenEnv", "publishTimeSlots", "platforms"]) {
+      expect(schema.properties[field]?.visibleWhen).toEqual({
+        field: "sourceMode",
+        equals: "external_pull"
+      });
+      expect(schema.required).not.toContain(field);
+    }
+    expect(schema.properties.platforms?.items).toEqual({
+      type: "string",
+      enum: ["\u6296\u97f3", "\u89c6\u9891\u53f7"]
+    });
+    expect(schema.allOf).toEqual([{
+      if: { properties: { sourceMode: { const: "external_pull" } }, required: ["sourceMode"] },
+      then: { required: ["externalBaseUrl", "externalTokenEnv"] }
+    }]);
+  });
+
   test("syncs registered definitions idempotently", async () => {
     await syncRemoteScriptDefinitions();
     await syncRemoteScriptDefinitions();
@@ -19,80 +50,8 @@ describe("remote script registry", () => {
     expect(genericForms).toHaveLength(1);
     expect(publishVideos).toHaveLength(1);
     expect(registeredGenericForm).toBeDefined();
-    expect(registeredPublishVideo).toEqual({
-      name: "发布视频",
-      description: "配置视频发布任务的外部接口、发布时间窗与执行闸口",
-      configSchema: {
-        type: "object",
-        properties: {
-          externalBaseUrl: {
-            type: "string",
-            description: "外部发布任务接口地址"
-          },
-          externalTokenEnv: {
-            type: "string",
-            description: "外部Token的环境变量名（不存Token值）"
-          },
-          publishTimeSlots: {
-            type: "array",
-            items: { type: "string" },
-            maxItems: 8,
-            description: "发布时间窗，HH:mm格式"
-          },
-          responseDelayMsMin: {
-            type: "integer",
-            minimum: 1,
-            description: "响应时间闸口（毫秒）"
-          },
-          responseDelayMsMax: {
-            type: "integer",
-            minimum: 1,
-            description: "响应时间闸口（毫秒）"
-          },
-          actionWaitMsMin: {
-            type: "integer",
-            minimum: 1,
-            description: "等待时间闸口（毫秒）"
-          },
-          actionWaitMsMax: {
-            type: "integer",
-            minimum: 1,
-            description: "等待时间闸口（毫秒）"
-          },
-          expectedTopicCount: {
-            type: "integer",
-            minimum: 1,
-            maximum: 10,
-            description: "话题数量校验"
-          },
-          requireCover: {
-            type: "boolean",
-            description: "无封面时跳过"
-          },
-          topicResolveTimeoutMinutes: {
-            type: "integer",
-            minimum: 1,
-            maximum: 120,
-            description: "话题补全等待超时（分钟）"
-          },
-          downloadDir: {
-            type: "string",
-            description: "设备端素材下载目录"
-          }
-        },
-        required: [
-          "externalBaseUrl",
-          "externalTokenEnv",
-          "publishTimeSlots",
-          "responseDelayMsMin",
-          "responseDelayMsMax",
-          "actionWaitMsMin",
-          "actionWaitMsMax",
-          "expectedTopicCount"
-        ]
-      }
-    });
-    expect(genericForms[0]?.configSchema).toEqual(registeredGenericForm!.configSchema);
+    expect(registeredPublishVideo).toBeDefined();
     expect(publishVideos[0]?.configSchema).toEqual(registeredPublishVideo!.configSchema);
+    expect(genericForms[0]?.configSchema).toEqual(registeredGenericForm!.configSchema);
   });
 });

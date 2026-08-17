@@ -1,4 +1,7 @@
-import { publishTaskResultPayloadSchema } from "@pkg/types";
+import {
+  interfacePublishPhoneResultPayloadSchema,
+  publishTaskResultPayloadSchema
+} from "@pkg/types";
 import { Hono } from "hono";
 import { validationError } from "../lib/validation";
 import { mobileAuth } from "../middleware/mobile-auth";
@@ -11,11 +14,18 @@ type MobileVariables = {
   deviceToken: string;
 };
 
-export const mobilePublishTaskRoutes = new Hono<{ Variables: MobileVariables }>();
+const phoneResultSchema = publishTaskResultPayloadSchema.or(interfacePublishPhoneResultPayloadSchema);
 
-mobilePublishTaskRoutes.use("*", mobileAuth);
+export type MobilePublishTaskResultReporter = typeof reportPublishTaskResult;
 
-mobilePublishTaskRoutes.get("/:id/topics", async (c) => {
+export function createMobilePublishTaskRoutes(
+  reporter: MobilePublishTaskResultReporter = reportPublishTaskResult,
+  authenticate = true
+) {
+  const routes = new Hono<{ Variables: MobileVariables }>();
+  if (authenticate) routes.use("*", mobileAuth);
+
+routes.get("/:id/topics", async (c) => {
   const deviceId = c.req.query("deviceId") || "";
   if (!deviceId) {
     return c.json({ error: { code: "VALIDATION_ERROR", message: "deviceId is required", details: {} } }, 400);
@@ -32,10 +42,10 @@ mobilePublishTaskRoutes.get("/:id/topics", async (c) => {
     }
     throw error;
   }
-});
+  });
 
-mobilePublishTaskRoutes.post("/:id/result", async (c) => {
-  const parsed = publishTaskResultPayloadSchema.safeParse(c.get("mobileBody"));
+routes.post("/:id/result", async (c) => {
+  const parsed = phoneResultSchema.safeParse(c.get("mobileBody"));
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const result = {
@@ -45,7 +55,7 @@ mobilePublishTaskRoutes.post("/:id/result", async (c) => {
       publishedUrl: parsed.data.publishedUrl,
       platformContentId: parsed.data.platformContentId
     };
-    return c.json(await reportPublishTaskResult(
+    return c.json(await reporter(
       c.req.param("id"),
       result,
       `mobile:${parsed.data.deviceId}`
@@ -65,4 +75,9 @@ mobilePublishTaskRoutes.post("/:id/result", async (c) => {
     }
     throw error;
   }
-});
+  });
+
+  return routes;
+}
+
+export const mobilePublishTaskRoutes = createMobilePublishTaskRoutes();

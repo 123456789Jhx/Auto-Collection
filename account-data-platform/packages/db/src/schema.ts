@@ -2,6 +2,7 @@ import { relations, sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -44,6 +45,12 @@ export const collectorDevices = pgTable(
     capabilitiesReportedAt: timestamp("capabilities_reported_at", { withTimezone: true }),
     status: varchar("status", { length: 32 }).notNull().default("online"),
     lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
+    baseStatus: varchar("base_status", { length: 32 }).notNull().default("unknown"),
+    baseLastHeartbeatAt: timestamp("base_last_heartbeat_at", { withTimezone: true }),
+    baseOfflineThresholdSeconds: integer("base_offline_threshold_seconds").notNull().default(15),
+    screenState: varchar("screen_state", { length: 32 }).notNull().default("unknown"),
+    appUiState: varchar("app_ui_state", { length: 32 }).notNull().default("unknown"),
+    desiredAgentState: varchar("desired_agent_state", { length: 32 }).notNull().default("running"),
     ...auditColumns
   },
   (table) => [
@@ -241,21 +248,26 @@ export const mobileCommands = pgTable(
     commandSequence: integer("command_sequence"),
     idempotencyKey: varchar("idempotency_key", { length: 160 }),
     commandType: varchar("command_type", { length: 32 }).notNull(),
+    executorType: varchar("executor_type", { length: 16 }).notNull().default("AGENT"),
     status: varchar("status", { length: 32 }).notNull().default("PENDING"),
     payloadJson: jsonb("payload_json").$type<Record<string, unknown>>(),
     resultJson: jsonb("result_json").$type<Record<string, unknown>>(),
     issuedAt: timestamp("issued_at", { withTimezone: true }).notNull().defaultNow(),
     fetchedAt: timestamp("fetched_at", { withTimezone: true }),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    claimToken: varchar("claim_token", { length: 64 }),
     acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     ...auditColumns
   },
   (table) => [
     index("idx_mobile_commands_tenant_device_status").on(table.tenantId, table.deviceId, table.status),
+    index("idx_mobile_commands_executor_pending").on(table.tenantId, table.deviceId, table.executorType, table.status, table.createdAt),
     index("idx_mobile_commands_tenant_created_at").on(table.tenantId, table.createdAt),
     index("idx_mobile_commands_tenant_assignment").on(table.tenantId, table.assignmentId),
     uniqueIndex("uniq_mobile_commands_tenant_assignment_sequence").on(table.tenantId, table.assignmentId, table.commandSequence).where(sql`${table.assignmentId} is not null and ${table.commandSequence} is not null and ${table.deletedAt} is null`),
-    uniqueIndex("uniq_mobile_commands_tenant_idempotency_key").on(table.tenantId, table.idempotencyKey).where(sql`${table.idempotencyKey} is not null and ${table.deletedAt} is null`)
+    uniqueIndex("uniq_mobile_commands_tenant_idempotency_key").on(table.tenantId, table.idempotencyKey).where(sql`${table.idempotencyKey} is not null and ${table.deletedAt} is null`),
+    uniqueIndex("uniq_mobile_commands_active_executor_channel").on(table.tenantId, table.deviceId, table.executorType).where(sql`${table.status} in ('CLAIMED', 'RUNNING') and ${table.deletedAt} is null`)
   ]
 );
 
@@ -620,6 +632,34 @@ export const agentUpdateEvents = pgTable(
   ]
 );
 
+export const accountWarmupVocabulary = pgTable(
+  "account_warmup_vocabulary",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    kind: varchar("kind", { length: 32 }).$type<"RELATED_TERM" | "COMMENT">().notNull(),
+    value: varchar("value", { length: 100 }).notNull(),
+    normalizedValue: text("normalized_value").notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }).notNull().defaultNow(),
+    ...auditColumns
+  },
+  (table) => [
+    uniqueIndex("uniq_warmup_vocabulary_tenant_kind_normalized").on(
+      table.tenantId,
+      table.kind,
+      table.normalizedValue
+    ),
+    index("idx_warmup_vocabulary_tenant_kind_last_used").on(
+      table.tenantId,
+      table.kind,
+      table.lastUsedAt
+    ),
+    check(
+      "account_warmup_vocabulary_kind_check",
+      sql`${table.kind} in ('RELATED_TERM', 'COMMENT')`
+    )
+  ]
+);
+
 export const collectorDevicesRelations = relations(collectorDevices, ({ many }) => ({
   records: many(collectionRecords),
   heartbeats: many(deviceHeartbeats),
@@ -657,3 +697,7 @@ export const liveTargetsRelations = relations(liveTargets, ({ many }) => ({
 
 export * from "./schema-remote-script";
 export * from "./publish-task-schema";
+export * from "./publish-routing-schema";
+export * from "./publish-interface-schema";
+export * from "./device-recovery-schema";
+export * from "./remote-wake-attempt-schema";

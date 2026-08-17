@@ -1993,7 +1993,7 @@ body {
 
 .publish-task-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -2036,9 +2036,183 @@ body {
   justify-self: start;
 }
 
+.quick-paste-publish-panel {
+  margin-top: 16px;
+}
+
+.quick-paste-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.quick-paste-form,
+.quick-paste-preview {
+  min-width: 0;
+}
+
+.quick-paste-preview {
+  padding: 14px;
+  border: 1px solid var(--ops-line-soft);
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.quick-paste-preview .ant-alert {
+  margin-bottom: 12px;
+}
+
+.quick-paste-topic-list,
+.quick-paste-error-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.quick-paste-error-list {
+  display: grid;
+  gap: 6px;
+  color: var(--ops-red);
+  font-size: 13px;
+}
+
+.quick-paste-preview .ops-json-box {
+  max-height: 240px;
+  overflow: auto;
+}
+
+.publish-log-troubleshooting {
+  display: grid;
+  gap: 14px;
+}
+
+.publish-log-panel {
+  min-width: 0;
+}
+
+.publish-log-panel .ops-panel-head {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.publish-log-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.publish-log-filter-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--ops-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.publish-log-quick-actions {
+  display: grid;
+  grid-template-columns: auto minmax(280px, 1fr) 140px auto;
+  gap: 12px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.publish-log-preset-select,
+.publish-log-refresh-select {
+  min-width: 0;
+}
+
+.publish-log-milestone-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.publish-log-milestone-card {
+  min-height: 118px;
+  padding: 14px;
+  border: 1px solid var(--ops-line-soft);
+  border-left: 4px solid var(--ops-gray);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+}
+
+.publish-log-milestone-card.matched {
+  border-left-color: var(--ops-green);
+}
+
+.publish-log-milestone-card.missing {
+  border-left-color: var(--ops-amber);
+}
+
+.publish-log-milestone-label {
+  color: var(--ops-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.publish-log-milestone-state {
+  margin: 8px 0;
+  color: var(--ops-text);
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.publish-log-milestone-meta {
+  display: grid;
+  gap: 2px;
+  color: var(--ops-muted);
+  font-size: 12px;
+}
+
+.publish-log-context-preview {
+  display: inline-block;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.publish-log-tech-box {
+  max-height: 260px;
+  overflow: auto;
+  margin: 8px 0 14px;
+  padding: 12px;
+  border: 1px solid var(--ops-line-soft);
+  border-radius: 6px;
+  background: #0f172a;
+  color: #d1d5db;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 1080px) {
+  .publish-log-filter-grid,
+  .publish-log-milestone-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .publish-log-quick-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 720px) {
   .publish-task-stats,
-  .publish-task-operations-grid {
+  .publish-task-operations-grid,
+  .publish-log-filter-grid,
+  .publish-log-milestone-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-paste-layout {
     grid-template-columns: 1fr;
   }
 }
@@ -3472,6 +3646,42 @@ body {
 .commerce-preview-details .ops-small {
   margin-top: 10px;
   overflow-wrap: anywhere;
+}
+
+.shared-vocabulary-dropdown {
+  max-width: min(640px, calc(100vw - 32px));
+}
+
+.shared-vocabulary-select,
+.shared-vocabulary-select .ant-select {
+  width: 100%;
+}
+
+.shared-vocabulary-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.shared-vocabulary-option-text {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shared-vocabulary-delete {
+  flex: 0 0 auto;
+}
+
+.shared-vocabulary-query-hint {
+  margin-top: 4px;
+  color: #ad6800;
+  font-size: 12px;
+  line-height: 20px;
 }
 
 @media (max-width: 1100px) {

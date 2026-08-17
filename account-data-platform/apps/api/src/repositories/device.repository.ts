@@ -1,6 +1,6 @@
 import { collectorDevices } from "@pkg/db/schema";
 import type { CommerceCardAgentCapabilities } from "@pkg/types";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { config } from "../config";
 import { db } from "./db";
 
@@ -370,6 +370,74 @@ export async function markDeviceCommandIssued(deviceId: string, database: Device
     .update(collectorDevices)
     .set({ lastCommandAt: new Date(), updatedAt: new Date() })
     .where(eq(collectorDevices.id, deviceId));
+}
+
+export async function updateDesiredAgentState(deviceId: string, desiredAgentState: "running" | "stopped") {
+  const [device] = await db
+    .update(collectorDevices)
+    .set({ desiredAgentState, updatedAt: new Date(), updatedBy: "admin" })
+    .where(and(
+      eq(collectorDevices.tenantId, config.tenantId),
+      eq(collectorDevices.id, deviceId),
+      isNull(collectorDevices.deletedAt)
+    ))
+    .returning();
+  return device ?? null;
+}
+
+export async function saveBaseHeartbeat(deviceId: string, values: {
+  agentState: "running" | "stopped";
+  reportedAt: Date;
+}) {
+  // postgres-js cannot bind a Date nested inside a raw SQL fragment. Keep the
+  // conditional transition atomic, but pass the timestamp as an explicit
+  // timestamptz literal instead of leaking the JavaScript Date object through
+  // the SQL template serializer.
+  const reportedAtSql = values.reportedAt.toISOString();
+  const [device] = await db
+    .update(collectorDevices)
+    .set({
+      ...(values.agentState === "stopped" ? {
+        status: "stopped",
+        lastHeartbeatAt: values.reportedAt
+      } : {
+        status: sql`case when ${collectorDevices.status} = 'stopped' then 'running' else ${collectorDevices.status} end`,
+        lastHeartbeatAt: sql`case when ${collectorDevices.status} = 'stopped' then ${reportedAtSql}::timestamptz else ${collectorDevices.lastHeartbeatAt} end`
+      }),
+      updatedAt: new Date(),
+      updatedBy: "mobile_agent"
+    })
+    .where(and(
+      eq(collectorDevices.tenantId, config.tenantId),
+      eq(collectorDevices.id, deviceId),
+      isNull(collectorDevices.deletedAt)
+    ))
+    .returning();
+  return device ?? null;
+}
+
+export async function saveBaseConnectivityHeartbeat(deviceId: string, values: {
+  receivedAt: Date;
+  screenState: "locked" | "unlocked" | "unknown";
+  appUiState: "foreground" | "background" | "not_running" | "unknown";
+}) {
+  const [device] = await db
+    .update(collectorDevices)
+    .set({
+      baseStatus: "online",
+      baseLastHeartbeatAt: values.receivedAt,
+      screenState: values.screenState,
+      appUiState: values.appUiState,
+      updatedAt: values.receivedAt,
+      updatedBy: "android_base"
+    })
+    .where(and(
+      eq(collectorDevices.tenantId, config.tenantId),
+      eq(collectorDevices.id, deviceId),
+      isNull(collectorDevices.deletedAt)
+    ))
+    .returning();
+  return device ?? null;
 }
 
 export async function countDevices() {

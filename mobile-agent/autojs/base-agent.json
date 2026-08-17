@@ -1,0 +1,5 @@
+{
+  "apiBaseUrl": "https://qk-api.dafengchan.top/api/v1",
+  "heartbeatIntervalMs": 15000,
+  "requestTimeoutMs": 5000
+}

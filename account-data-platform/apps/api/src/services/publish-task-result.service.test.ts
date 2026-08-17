@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { collectorDevices, mobileCommands, publishTasks, remoteScriptConfigs } from "@pkg/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { db } from "../repositories/db";
-import { completePublishTaskTopics, reportPublishTaskResult } from "./publish-task-result.service";
+import { completePublishTaskTopics, reportPublishTaskResult, shouldQueueExternalPublishStatus } from "./publish-task-result.service";
 
 const suffix = crypto.randomUUID().replaceAll("-", "");
 const tokenEnv = `NODE12_RESULT_TOKEN_${suffix}`;
@@ -66,6 +66,7 @@ beforeAll(async () => {
       accountName: "节点12结果号",
       title: "待补话题任务",
       description: "缺话题",
+      coverUrl: "https://media.example.test/topic-cover.jpg",
       videoUrl: "https://media.example.test/topic.mp4",
       status: "DISPATCHED",
       matchedDeviceId: deviceId
@@ -77,6 +78,7 @@ beforeAll(async () => {
       accountName: "节点12结果号",
       title: "补全仍不合格任务",
       description: "缺话题",
+      coverUrl: "https://media.example.test/topic-cover.jpg",
       videoUrl: "https://media.example.test/topic-invalid.mp4",
       status: "TOPIC_PENDING",
       matchNote: "应有5个#，实际0个"
@@ -88,6 +90,7 @@ beforeAll(async () => {
       accountName: "节点12结果号",
       title: "补全后首次匹配任务",
       description: "缺话题",
+      coverUrl: "https://media.example.test/topic-cover.jpg",
       videoUrl: "https://media.example.test/topic-resolve.mp4",
       status: "TOPIC_PENDING",
       matchNote: "应有5个#，实际0个"
@@ -105,32 +108,54 @@ afterAll(async () => {
 });
 
 describe("publish task result mapping", () => {
-  test("reports success to wecom and stores the published fields", async () => {
-    const patches: unknown[] = [];
+  test("delegates tasks with an interface run id after the mature phone action", async () => {
+    const source = await Bun.file(new URL("./publish-task-result.service.ts", import.meta.url)).text();
+    expect(source).toContain("interfaceRunId");
+    expect(source).toContain("publishInterfaceResultService");
+  });
+
+  test("saves the result before enqueueing an EXTERNAL outbox record", async () => {
+    const outboxInputs: unknown[] = [];
     const result = await reportPublishTaskResult(taskIds[0], {
       deviceId: deviceCode,
       status: "SUCCEEDED",
       publishedUrl: "https://douyin.example.test/video/1",
       platformContentId: "douyin-content-1"
     }, "node12-device", {
-      fetch: async (_input, init) => {
-        patches.push(JSON.parse(String(init?.body)));
-        return Response.json({ success: true });
-      },
-      logger: () => undefined
+      enqueueExternalStatus: async (input) => { outboxInputs.push(input); }
     });
 
-    expect(result.status).toBe("REPORTED");
-    expect(result.publishedUrl).toBe("https://douyin.example.test/video/1");
-    expect(result.platformContentId).toBe("douyin-content-1");
-    expect(result.finishedAt).toBeInstanceOf(Date);
-    expect(result.reportedAt).toBeInstanceOf(Date);
-    expect(patches).toEqual([{
-      platform: "抖音",
-      status: "已发布",
+    expect(result).toMatchObject({
+      status: "SUCCEEDED",
       publishedUrl: "https://douyin.example.test/video/1",
-      platformContentId: "douyin-content-1"
-    }]);
+      platformContentId: "douyin-content-1",
+      reportedAt: null
+    });
+    expect(result).toHaveProperty("finishedAt");
+    expect(outboxInputs).toEqual([taskIds[0]]);
+  });
+
+  test("only EXTERNAL terminal results queue an outbox record", () => {
+    expect(shouldQueueExternalPublishStatus("EXTERNAL", "SUCCEEDED")).toBeTrue();
+    expect(shouldQueueExternalPublishStatus("EXTERNAL", "FAILED")).toBeTrue();
+    expect(shouldQueueExternalPublishStatus("NONE", "SUCCEEDED")).toBeFalse();
+    expect(shouldQueueExternalPublishStatus("NONE", "FAILED")).toBeFalse();
+    expect(shouldQueueExternalPublishStatus("EXTERNAL", "TOPIC_PENDING")).toBeFalse();
+  });
+
+  test("keeps the saved result when enqueueing external reporting fails", async () => {
+    const failures: unknown[] = [];
+    const result = await reportPublishTaskResult(taskIds[1], {
+      deviceId: deviceCode,
+      status: "FAILED",
+      error: "素材下载失败"
+    }, "node12-device", {
+      enqueueExternalStatus: async () => { throw new Error("outbox unavailable"); },
+      markExternalReportFailure: async (_taskId, error) => { failures.push(error); }
+    });
+
+    expect(result).toMatchObject({ status: "FAILED", resultError: "素材下载失败" });
+    expect(failures).toHaveLength(1);
   });
 
   test("keeps topic pending for manual completion without patching wecom", async () => {
@@ -147,9 +172,11 @@ describe("publish task result mapping", () => {
       logger: () => undefined
     });
 
-    expect(result.status).toBe("TOPIC_PENDING");
-    expect(result.resultError).toBe("话题数量不足");
-    expect(result.reportedAt).toBeNull();
+    expect(result).toMatchObject({
+      status: "TOPIC_PENDING",
+      resultError: "话题数量不足",
+      reportedAt: null
+    });
     expect(patchCount).toBe(0);
   });
 
@@ -165,6 +192,8 @@ describe("publish task result mapping", () => {
   });
 
   test("matches and dispatches a pre-match topic pending task after valid completion", async () => {
+    await db.delete(mobileCommands).where(eq(mobileCommands.deviceId, deviceId));
+    await db.update(publishTasks).set({ status: "FAILED", matchedDeviceId: null }).where(eq(publishTasks.id, taskIds[1]));
     const result = await completePublishTaskTopics(
       taskIds[3],
       "补全完成 #一 #二 #三 #四 #五",

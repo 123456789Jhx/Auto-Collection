@@ -104,6 +104,8 @@ test("business-script manifest uses ASCII paths and keeps Chinese display names"
 
     const manifest = JSON.parse(entries.find((entry) => entry.name === "biz-script-manifest.json").contents);
     assert.deepEqual(manifest.files.filter((file) => !/^[\x20-\x7E]+$/.test(file.path)), []);
+    assert(manifest.files.some((file) => file.path === "features/account-warmup/registry.js"));
+    assert(manifest.files.some((file) => file.path === "features/account-warmup/target-live-entry.js"));
     assert.equal(
       manifest.files.find((file) => file.path === "features/publish-video/publish-video-entry.js").displayName,
       "发布视频-入口.js"

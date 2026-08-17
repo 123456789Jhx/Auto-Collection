@@ -5,6 +5,12 @@ import type {
 import { Collapse, Form, Input, Modal, Select } from "antd";
 import { useEffect } from "react";
 import { DynamicConfigForm } from "../components/dynamic-form/DynamicConfigForm";
+import {
+  publishTimingPayloadToMilliseconds,
+  publishTimingPayloadToSeconds,
+  publishTimingSchemaForUi,
+  validatePublishTimingSeconds
+} from "../lib/publish-execution-timing";
 import type {
   RemoteScriptConfig,
   RemoteScriptDefinition,
@@ -21,6 +27,7 @@ type ConfigFormValues = {
 };
 
 type ConfigPayloadFormValue = Record<string, string | number | boolean | string[] | undefined>;
+type PublishSourceMode = "direct_material" | "external_pull";
 
 type SavePayload =
   | { mode: "create"; payload: CreateRemoteScriptConfigPayload }
@@ -31,6 +38,9 @@ type Props = {
   config: RemoteScriptConfig | null;
   definitions: RemoteScriptDefinition[];
   loading: boolean;
+  defaultPublishSourceMode?: PublishSourceMode;
+  lockedPublishSourceMode?: PublishSourceMode;
+  hideAdvancedJson?: boolean;
   onCancel: () => void;
   onSave: (payload: SavePayload) => void;
 };
@@ -43,13 +53,39 @@ function parseConfigPayload(value: string): ConfigPayloadFormValue {
   return parsed as ConfigPayloadFormValue;
 }
 
+const directMaterialDefaults: ConfigPayloadFormValue = {
+  responseDelayMsMin: 700,
+  responseDelayMsMax: 1200,
+  actionWaitMsMin: 900,
+  actionWaitMsMax: 1500,
+  expectedTopicCount: 5,
+  requireCover: true,
+  topicResolveTimeoutMinutes: 30,
+  downloadDir: "/sdcard/",
+  isDefault: false
+};
+const directMaterialExternalFields = [
+  "externalBaseUrl",
+  "externalTokenEnv",
+  "publishTimeSlots",
+  "platforms"
+] as const;
+
 function normalizePublishVideoPayload(
   scriptKey: string | undefined,
-  payload: ConfigPayloadFormValue
+  payload: ConfigPayloadFormValue,
+  defaultPublishSourceMode?: PublishSourceMode
 ) {
   const normalized = { ...payload };
   if (scriptKey !== "publish_video") return normalized;
   delete normalized.dailyLimitPerAccount;
+  if (defaultPublishSourceMode && normalized.sourceMode === undefined) {
+    normalized.sourceMode = defaultPublishSourceMode;
+  }
+  if (normalized.sourceMode === "direct_material") {
+    for (const field of directMaterialExternalFields) delete normalized[field];
+    return { ...directMaterialDefaults, ...normalized, sourceMode: "direct_material" };
+  }
   if (typeof normalized.topicResolveTimeoutMinutes !== "number") {
     return { ...normalized, topicResolveTimeoutMinutes: 30 };
   }
@@ -61,6 +97,9 @@ export function RemoteScriptConfigModal({
   config,
   definitions,
   loading,
+  defaultPublishSourceMode,
+  lockedPublishSourceMode,
+  hideAdvancedJson = false,
   onCancel,
   onSave
 }: Props) {
@@ -72,26 +111,40 @@ export function RemoteScriptConfigModal({
     if (!open) return;
     form.resetFields();
     const scriptKey = config?.scriptKey ?? definitions.find((item) => item.status === "ENABLED")?.scriptKey;
-    const configPayload = normalizePublishVideoPayload(
+    const initialPublishSourceMode = lockedPublishSourceMode
+      ?? (!config ? defaultPublishSourceMode ?? "direct_material" : undefined);
+    const payloadInMilliseconds = normalizePublishVideoPayload(
       scriptKey,
-      (config?.configPayload ?? {}) as ConfigPayloadFormValue
+      (config?.configPayload ?? {}) as ConfigPayloadFormValue,
+      initialPublishSourceMode
     );
+    const configPayload = publishTimingPayloadToSeconds(scriptKey, payloadInMilliseconds);
     form.setFieldsValue({
       scriptKey,
       configName: config?.configName ?? "",
       remark: config?.remark ?? "",
       status: config?.status ?? "ENABLED",
       configPayload,
-      configPayloadText: JSON.stringify(configPayload, null, 2)
+      configPayloadText: JSON.stringify(payloadInMilliseconds, null, 2)
     });
-  }, [config, definitions, form, open]);
+  }, [config, defaultPublishSourceMode, definitions, form, lockedPublishSourceMode, open]);
 
   function submit(values: ConfigFormValues) {
+    const timingValidation = values.scriptKey === "publish_video"
+      ? validatePublishTimingSeconds(values.configPayload ?? {})
+      : null;
+    if (timingValidation) {
+      form.setFields([{ name: ["configPayload", timingValidation.field], errors: [timingValidation.message] }]);
+      return;
+    }
+    const payloadInMilliseconds = publishTimingPayloadToMilliseconds(values.scriptKey, values.configPayload ?? {});
     const common = {
       configName: values.configName.trim(),
       remark: values.remark?.trim() || null,
       status: values.status,
-      configPayload: values.configPayload ?? {}
+      configPayload: values.scriptKey === "publish_video" && lockedPublishSourceMode
+        ? { ...payloadInMilliseconds, sourceMode: lockedPublishSourceMode }
+        : payloadInMilliseconds
     };
     if (config) {
       onSave({ mode: "update", id: config.id, payload: common });
@@ -121,7 +174,19 @@ export function RemoteScriptConfigModal({
         onFinish={submit}
         onValuesChange={(changedValues) => {
           if (!("configPayload" in changedValues)) return;
-          form.setFieldValue("configPayloadText", JSON.stringify(form.getFieldValue("configPayload") ?? {}, null, 2));
+          const configPayload = form.getFieldValue("configPayload") ?? {};
+          if (
+            selectedScriptKey === "publish_video"
+            && lockedPublishSourceMode
+            && configPayload.sourceMode !== lockedPublishSourceMode
+          ) {
+            form.setFieldValue(["configPayload", "sourceMode"], lockedPublishSourceMode);
+          }
+          const payloadInMilliseconds = publishTimingPayloadToMilliseconds(
+            selectedScriptKey,
+            form.getFieldValue("configPayload") ?? {}
+          );
+          form.setFieldValue("configPayloadText", JSON.stringify(payloadInMilliseconds, null, 2));
         }}
       >
         <Form.Item label="脚本类型" name="scriptKey" rules={[{ required: true, message: "请选择脚本类型" }]}>
@@ -134,8 +199,12 @@ export function RemoteScriptConfigModal({
                 label: item.scriptName || item.displayName || item.scriptKey
               }))}
             onChange={(scriptKey) => {
-              const configPayload = normalizePublishVideoPayload(scriptKey, {});
-              form.setFieldValue("configPayload", configPayload);
+              const configPayload = normalizePublishVideoPayload(
+                scriptKey,
+                {},
+                lockedPublishSourceMode ?? defaultPublishSourceMode ?? "direct_material"
+              );
+              form.setFieldValue("configPayload", publishTimingPayloadToSeconds(scriptKey, configPayload));
               form.setFieldValue("configPayloadText", JSON.stringify(configPayload, null, 2));
             }}
           />
@@ -152,12 +221,18 @@ export function RemoteScriptConfigModal({
         <Form.Item label="备注" name="remark">
           <Input.TextArea rows={2} maxLength={500} showCount />
         </Form.Item>
-        <DynamicConfigForm schema={selectedDefinition?.configSchema} />
-        <Collapse
+        <DynamicConfigForm
+          schema={selectedScriptKey === "publish_video"
+            ? publishTimingSchemaForUi(selectedDefinition?.configSchema)
+            : selectedDefinition?.configSchema}
+          hiddenFieldKeys={selectedScriptKey === "publish_video" && lockedPublishSourceMode ? ["sourceMode"] : undefined}
+        />
+        {!hideAdvancedJson ? (
+          <Collapse
           ghost
           items={[{
             key: "json",
-            label: "JSON 高级编辑",
+            label: "JSON 高级编辑（时间字段保持毫秒）",
             children: (
               <Form.Item
                 name="configPayloadText"
@@ -180,10 +255,11 @@ export function RemoteScriptConfigModal({
                   onChange={(event) => {
                     try {
                       const parsed = parseConfigPayload(event.target.value);
+                      const formPayload = publishTimingPayloadToSeconds(selectedScriptKey, parsed);
                       const current = form.getFieldValue("configPayload") ?? {};
-                      const fieldKeys = Array.from(new Set([...Object.keys(current), ...Object.keys(parsed)]));
+                      const fieldKeys = Array.from(new Set([...Object.keys(current), ...Object.keys(formPayload)]));
                       for (const fieldKey of fieldKeys) {
-                        form.setFieldValue(["configPayload", fieldKey], parsed[fieldKey]);
+                        form.setFieldValue(["configPayload", fieldKey], formPayload[fieldKey]);
                       }
                     } catch {
                       // Keep the last valid dynamic field values until the JSON becomes valid again.
@@ -193,7 +269,8 @@ export function RemoteScriptConfigModal({
               </Form.Item>
             )
           }]}
-        />
+          />
+        ) : null}
       </Form>
     </Modal>
   );

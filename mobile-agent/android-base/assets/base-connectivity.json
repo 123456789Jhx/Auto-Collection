@@ -1,0 +1,4 @@
+{
+  "apiBaseUrl": "https://qk-api.dafengchan.top/api/v1",
+  "requestTimeoutMs": 5000
+}

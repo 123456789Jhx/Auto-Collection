@@ -8,12 +8,24 @@ export type PublishTaskRow = {
   taskId: string;
   title: string;
   description: string;
+  expectedTopicCount: number;
   accountName: string;
   deviceCode: string | null;
   platform: string;
   status: string;
+  source: string;
+  mode: string;
+  reportMode: string;
+  reportStatus: string;
+  reportAttempts: number;
+  reportLastError: string | null;
+  scheduledAt: string | null;
   scheduledSlot: string | null;
   resultError: string | null;
+  failureCode: string | null;
+  dispatchRetryCount: number;
+  nextDispatchAt: string | null;
+  lastDispatchAttemptAt: string | null;
   matchNote: string | null;
   publishedUrl: string | null;
   claimedAt: string;
@@ -29,6 +41,11 @@ export type PublishTaskDashboard = {
     success: number;
     unpublished: number;
     unmatched: number;
+    busy: number;
+    topicPending: number;
+    materialInvalid: number;
+    channelsVerifyPending: number;
+    reportFailed: number;
   };
 };
 
@@ -43,21 +60,11 @@ export function completePublishTaskTopics(id: string, description: string) {
   );
 }
 
-export function claimPublishTaskOnce(configId: string) {
-  return mutate<{
-    claimed: boolean;
-    created: boolean;
-    task: PublishTaskRow | null;
-  }>("/admin/publish-tasks/claim-once", { configId });
-}
-
-export function dispatchPublishTasksNow(configId: string) {
-  return mutate<{
-    configId: string;
-    scheduledSlot: string;
-    dispatched: number;
-    reported: number;
-  }>("/admin/publish-tasks/dispatch-now", { configId });
+export function dispatchExistingPublishTask(taskId: string) {
+  return mutate<{ outcome: string; task: PublishTaskRow }>(
+    "/admin/publish-tasks/" + encodeURIComponent(taskId) + "/dispatch-single",
+    {}
+  );
 }
 
 export function createManualPublishTest(payload: ManualPublishTestPayload) {

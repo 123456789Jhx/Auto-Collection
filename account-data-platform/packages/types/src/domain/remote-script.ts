@@ -3,6 +3,7 @@ import { z } from "zod";
 const MAX_CONFIG_PAYLOAD_BYTES = 16 * 1024;
 
 const remoteScriptStatusSchema = z.enum(["ENABLED", "DISABLED"]);
+const remoteScriptSourceModeSchema = z.enum(["direct_material", "external_pull"]);
 
 const remoteScriptTimestampSchema = z.union([
   z.string().datetime(),
@@ -89,6 +90,7 @@ export const remoteScriptConfigListQuerySchema = z.object({
   scriptKey: z.string().trim().min(1).max(64).optional(),
   status: remoteScriptStatusSchema.optional(),
   keyword: z.string().trim().min(1).max(100).optional(),
+  sourceMode: remoteScriptSourceModeSchema.optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20)
 }).strict();

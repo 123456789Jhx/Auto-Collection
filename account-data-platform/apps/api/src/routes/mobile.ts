@@ -1,5 +1,7 @@
 import {
   mobileAgentUpdateEventSchema,
+  mobileBaseHeartbeatSchema,
+  mobileBaseConnectivityHeartbeatSchema,
   mobileCollectionRecordSchema,
   mobileCommandAckSchema,
   mobileHeartbeatSchema,
@@ -13,21 +15,37 @@ import {
   updateCommerceCardCommentActionSchema
 } from "@pkg/types";
 import { Hono, type Context } from "hono";
+import { z } from "zod";
 import { savedResponse } from "../lib/response";
 import { validationError } from "../lib/validation";
 import { mobileAuth } from "../middleware/mobile-auth";
-import { acknowledgeCommand, pollCommands } from "../services/command.service";
+import {
+  acknowledgeBaseCommand,
+  acknowledgeCommand,
+  BaseCommandAckConflictError,
+  BaseCommandAckValidationError,
+  pollCommands
+} from "../services/command.service";
+import { isCommandExecutor } from "../services/command-executor";
 import { getAgentVersionCheck, saveAgentUpdateEvent } from "../services/agent-version.service";
-import { getCurrentTask, registerDeviceToken, saveCollectionRecord, saveHeartbeat, saveLiveCommentAction, saveLogFile, saveRuntimeLog } from "../services/mobile.service";
+import { getCurrentTask, registerDeviceToken, saveBaseConnectivityHeartbeat, saveBaseHeartbeat, saveCollectionRecord, saveHeartbeat, saveLiveCommentAction, saveLogFile, saveRuntimeLog } from "../services/mobile.service";
 import { getCommentActionByKey, reserveCommentAction, updateCommentAction } from "../services/commerce-card-comment-action.service";
 import { completeTaskAssignment, saveTaskAssignmentEvent, saveTaskAssignmentProgress } from "../services/task-assignment-runtime.service";
 import { AssignmentRuntimeError } from "../repositories/task-assignment.repository";
+import { deviceRecoveryRoutes } from "../features/device-recovery/device-recovery.runtime";
 
 type MobileVariables = {
   mobileBody: Record<string, unknown>;
   clientIp: string;
   deviceToken: string;
 };
+
+const mobileBaseCommandAckEnvelopeSchema = z.object({
+  deviceId: z.string().trim().min(1).max(64),
+  claimToken: z.string().uuid(),
+  status: z.enum(["DONE", "FAILED"]),
+  result: z.record(z.unknown()).optional()
+}).strict();
 
 export const mobileRoutes = new Hono<{ Variables: MobileVariables }>();
 
@@ -79,6 +97,7 @@ function assignmentRuntimeErrorResponse(c: Context<{ Variables: MobileVariables 
 }
 
 mobileRoutes.use("*", mobileAuth);
+mobileRoutes.route("/device-recovery", deviceRecoveryRoutes.mobile);
 
 mobileRoutes.post("/device-token/register", async (c) => {
   const body = mobileBody(c);
@@ -185,6 +204,45 @@ mobileRoutes.post("/heartbeats", async (c) => {
     clientIp: clientIp(c)
   });
   return c.json(savedResponse(heartbeat.id, heartbeat.createdAt));
+});
+
+mobileRoutes.post("/base-heartbeats", async (c) => {
+  const body = mobileBody(c);
+  const parsed = mobileBaseHeartbeatSchema.safeParse(body);
+  if (!parsed.success) {
+    logValidationError("/base-heartbeats", body, parsed.error);
+    return validationError(c, parsed.error);
+  }
+  const device = await saveBaseHeartbeat(parsed.data, clientIp(c), deviceToken(c));
+  mobileLog("base_heartbeat_saved", {
+    deviceId: parsed.data.deviceId,
+    screenState: parsed.data.screenState,
+    reportedAt: parsed.data.reportedAt,
+    clientIp: clientIp(c)
+  });
+  return c.json(savedResponse(device.id, device.updatedAt));
+});
+
+mobileRoutes.post("/base-connectivity/heartbeats", async (c) => {
+  const body = mobileBody(c);
+  const parsed = mobileBaseConnectivityHeartbeatSchema.safeParse(body);
+  if (!parsed.success) {
+    logValidationError("/base-connectivity/heartbeats", body, parsed.error);
+    return validationError(c, parsed.error);
+  }
+  const device = await saveBaseConnectivityHeartbeat(parsed.data, clientIp(c), deviceToken(c));
+  mobileLog("base_connectivity_heartbeat_saved", {
+    deviceId: parsed.data.deviceId,
+    screenState: parsed.data.screenState,
+    appUiState: parsed.data.appUiState,
+    receivedAt: device.baseLastHeartbeatAt,
+    clientIp: clientIp(c)
+  });
+  return c.json({
+    status: "SAVED",
+    receivedAt: device.baseLastHeartbeatAt?.toISOString() ?? new Date().toISOString(),
+    offlineThresholdSeconds: device.baseOfflineThresholdSeconds
+  });
 });
 
 mobileRoutes.post("/runtime-logs", async (c) => {
@@ -331,16 +389,51 @@ mobileRoutes.post("/log-files", async (c) => {
 
 mobileRoutes.get("/commands", async (c) => {
   const deviceId = c.req.query("deviceId");
+  const executorType = c.req.query("executorType");
   if (!deviceId) {
     return c.json({ error: { code: "VALIDATION_ERROR", message: "deviceId is required", details: {} } }, 400);
   }
-  const commands = await pollCommands(deviceId, deviceToken(c));
+  if (!isCommandExecutor(executorType)) {
+    return c.json({ error: { code: "VALIDATION_ERROR", message: "executorType must be BASE or AGENT", details: {} } }, 400);
+  }
+  const commands = await pollCommands(deviceId, executorType, deviceToken(c));
   mobileLog("commands_polled", {
     deviceId,
+    executorType,
     commandCount: commands.length,
     clientIp: clientIp(c)
   });
   return c.json({ data: commands });
+});
+
+mobileRoutes.get("/base-control/commands", async (c) => {
+  const deviceId = c.req.query("deviceId");
+  if (!deviceId) {
+    return c.json({ error: { code: "VALIDATION_ERROR", message: "deviceId is required", details: {} } }, 400);
+  }
+  const commands = await pollCommands(deviceId, "BASE", deviceToken(c));
+  return c.json({ data: commands });
+});
+
+mobileRoutes.post("/base-control/commands/:id/ack", async (c) => {
+  const body = mobileBody(c);
+  const parsed = mobileBaseCommandAckEnvelopeSchema.safeParse(body);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const command = await acknowledgeBaseCommand(c.req.param("id"), parsed.data, deviceToken(c));
+    return c.json(savedResponse(command.id, command.updatedAt));
+  } catch (error) {
+    if (error instanceof BaseCommandAckValidationError) {
+      return c.json({ error: { code: error.message, message: "BASE command acknowledgement result is invalid", details: error.details } }, 400);
+    }
+    if (error instanceof BaseCommandAckConflictError) {
+      return c.json({ error: { code: error.message, message: "BASE command acknowledgement conflicts with the stored terminal result", details: error.details } }, 409);
+    }
+    if (String(error instanceof Error ? error.message : error) === "BASE_COMMAND_CLAIM_NOT_FOUND") {
+      return c.json({ error: { code: "BASE_COMMAND_CLAIM_NOT_FOUND", message: "BASE command claim is stale or invalid", details: {} } }, 409);
+    }
+    throw error;
+  }
 });
 
 mobileRoutes.post("/commands/:id/ack", async (c) => {

@@ -66,24 +66,6 @@ function signedHeaders(config, url, bodyText, method) {
   };
 }
 
-function createTopicQuery(config) {
-  return function queryTopic(taskId) {
-    var baseUrl = String(config.upload.baseUrl || "").replace(/\/$/, "");
-    var deviceId = config.device.deviceId || "";
-    var url = baseUrl + "/mobile/publish-tasks/" + encodeURIComponent(taskId) +
-      "/topics?deviceId=" + encodeURIComponent(deviceId);
-    var response = http.get(url, {
-      timeout: config.upload.timeoutMs,
-      headers: signedHeaders(config, url, "", "GET")
-    });
-    var responseBody = response.body ? response.body.string() : "";
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw new Error("话题补全查询失败：" + response.statusCode + " " + responseBody.slice(0, 160));
-    }
-    return JSON.parse(responseBody || "{}");
-  };
-}
-
 function createResultReporter(config) {
   return {
     report: function (taskId, result) {
@@ -107,8 +89,8 @@ function createDefaultSteps(context, injectedUi) {
   var ui = injectedUi || loadBizModule(context, "features/publish-video/douyin-publish-ui.js")
     .createDouyinPublishUi(context);
   var materialDomain = loadBizModule(context, "domain/material-inspector.js");
-  var topicDomain = loadBizModule(context, "domain/topic-validator.js");
   return {
+    ui: ui,
     open: loadBizModule(context, "features/publish-video/open-douyin-camera.js")
       .createOpenDouyinCameraStep(ui),
     select: loadBizModule(context, "features/publish-video/select-publish-material.js")
@@ -116,7 +98,7 @@ function createDefaultSteps(context, injectedUi) {
     editCover: loadBizModule(context, "features/publish-video/edit-cover.js")
       .createEditCoverStep(ui),
     fill: loadBizModule(context, "features/publish-video/fill-publish-text.js")
-      .createFillPublishTextStep(ui, topicDomain),
+      .createFillPublishTextStep(ui),
     publish: loadBizModule(context, "features/publish-video/execute-publish.js")
       .createExecutePublishStep(ui),
     states: ui.states
@@ -139,15 +121,9 @@ function createPublishVideoHandler(context, dependencies) {
   var materialManager = dependencies.materialManager || loadBizModule(context, "domain/material-dir-manager.js")
     .createPublishMaterialManager({ logger: logger });
   var publishLock = dependencies.publishLock || loadBizModule(context, "domain/publish-task-lock.js")
-    .createPublishTaskLock();
+    .createPublishTaskLock({ logger: logger });
   var executionWatchdog = dependencies.executionWatchdog ||
     loadBizModule(context, "domain/publish-watchdog.js").createPublishExecutorWatchdog({ timeoutMs: 10 * 60 * 1000 });
-  var topicDomain = dependencies.topicDomain || loadBizModule(context, "domain/topic-validator.js");
-  var topicContinuation = dependencies.topicContinuation || loadBizModule(context, "domain/topic-resume.js")
-    .createTopicContinuation({
-      fetchTopic: createTopicQuery(context.config),
-      validateDescriptionTopics: topicDomain.validateDescriptionTopics
-    });
   var activeMaterialDir = "";
   var materialDownloader = dependencies.materialDownloader || {
     download: function (payload) {
@@ -171,6 +147,76 @@ function createPublishVideoHandler(context, dependencies) {
     }
   };
   var resultReporter = dependencies.resultReporter || createResultReporter(context.config);
+  var taskFinalizer = dependencies.taskFinalizer || loadBizModule(context, "domain/publish-task-finalizer.js")
+    .createPublishTaskFinalizer({
+      logger: logger,
+      resultReporter: resultReporter,
+      uploader: uploader,
+      device: context.config.device
+    });
+  var fixedWaitModule = dependencies.fixedWaitFlow ? null : loadBizModule(context, "features/publish-video/open-douyin-camera.js");
+  var fixedWaitFlow = dependencies.fixedWaitFlow || (fixedWaitModule && fixedWaitModule.createFixedWaitPublishFlow &&
+    fixedWaitModule.createFixedWaitPublishFlow({
+      logger: logger,
+      materialDomain: dependencies.materialDomain || loadBizModule(context, "domain/material-inspector.js"),
+      wait: dependencies.mvpWait || function (ms) {
+        if (context.sleep) return context.sleep(ms);
+        if (typeof sleep === "function") return sleep(ms);
+        throw new Error("MVP固定等待不可用");
+      }
+    }));
+
+  var postPublishCleanupModule = dependencies.postPublishCleanup ? null : loadBizModule(
+    context,
+    "features/publish-video/douyin-post-publish-cleanup.js"
+  );
+  var postPublishCleanup = dependencies.postPublishCleanup || (
+    postPublishCleanupModule &&
+    postPublishCleanupModule.createDouyinPostPublishCleanup &&
+    postPublishCleanupModule.createDouyinPostPublishCleanup({
+      logger: logger,
+      wait: dependencies.postPublishCleanupWait,
+      openRecents: dependencies.openRecents,
+      findDouyinCard: dependencies.findDouyinRecentsCard,
+      dismissCard: dependencies.dismissDouyinRecentsCard,
+      isPublishing: dependencies.isDouyinPublishInProgress || function () {
+        var activeUi = douyinSteps().ui;
+        return !!(activeUi && activeUi.isPublishInProgress && activeUi.isPublishInProgress());
+      },
+      cooldownMs: dependencies.postPublishCleanupCooldownMs
+    })
+  );
+
+  function finishSuccessfulPublish(command, payload, publishResult, executionGuard, releaseResources) {
+    var terminalResult = null;
+    function finalizeBeforeReturn() {
+      if (!terminalResult) {
+        terminalResult = finish(command, payload, "SUCCEEDED", "", publishResult, executionGuard, releaseResources);
+      }
+      return terminalResult;
+    }
+    if (!postPublishCleanup || !postPublishCleanup.run) return finalizeBeforeReturn();
+    try {
+      var result = postPublishCleanup.run(payload, { beforeReturnToAgent: finalizeBeforeReturn });
+      if (!result || !result.completed) {
+        logger.warn("抖音发布成功后后台清理未完成", {
+          taskId: payload.taskId || "",
+          reason: result && result.reason || "UNKNOWN"
+        });
+      }
+    } catch (error) {
+      logger.warn("抖音发布成功后后台清理异常", {
+        taskId: payload.taskId || "",
+        message: String(error && error.message || error)
+      });
+    }
+    return finalizeBeforeReturn();
+  }
+  function fixedWaitMvpRequested(payload) {
+    var publishConfig = context.config && (context.config.publish || context.config) || {};
+    return payload.publishFlowMode === "fixed_wait_mvp" || payload.useFixedWaitPublishFlow === true ||
+      publishConfig.publishFlowMode === "fixed_wait_mvp" || publishConfig.useFixedWaitPublishFlow === true;
+  }
 
   function douyinSteps() {
     if (!steps) steps = createDefaultSteps(context, dependencies.ui);
@@ -185,7 +231,6 @@ function createPublishVideoHandler(context, dependencies) {
           gate: dependencies.channelsGate,
           materialDownloader: materialDownloader,
           resultReporter: resultReporter,
-          topicContinuation: topicContinuation
         });
     }
     return channelsHandler;
@@ -215,7 +260,7 @@ function createPublishVideoHandler(context, dependencies) {
     return result;
   }
 
-  function finish(command, payload, status, errorMessage, publishResult, executionGuard) {
+  function finish(command, payload, status, errorMessage, publishResult, executionGuard, releaseResources) {
     logger.info("发布执行器结束", {
       commandId: command.id || "",
       taskId: payload.taskId || "",
@@ -223,71 +268,30 @@ function createPublishVideoHandler(context, dependencies) {
       error: errorMessage || ""
     });
     if (executionGuard && executionGuard.timedOut()) {
+      if (releaseResources) releaseResources();
       return { status: "FAILED", error: "执行器看门狗超时", watchdogTimedOut: true };
     }
-    var report = {
-      deviceId: context.config.device.deviceId || "",
-      deviceToken: context.config.device.deviceToken || "",
-      status: status
-    };
-    if (errorMessage) report.error = errorMessage;
-    if (publishResult && publishResult.publishedUrl) report.publishedUrl = publishResult.publishedUrl;
-    if (publishResult && publishResult.platformContentId) report.platformContentId = publishResult.platformContentId;
-    try {
-      resultReporter.report(payload.taskId, report);
-    } catch (reportError) {
-      var reportFailure = "发布结果回传失败：" + String(reportError);
-      logger.warn(reportFailure, { taskId: payload.taskId, status: status });
-      uploader.ackCommand(command.id, "FAILED", {
-        applied: false,
-        commandType: "PUBLISH_VIDEO_TASK",
-        status: status,
-        message: reportFailure
-      });
-      return { status: status, error: errorMessage || "", reportFailed: true, reportError: reportFailure };
-    }
-    var ackStatus = status === "SUCCEEDED" || status === "TOPIC_PENDING" ? "DONE" : "FAILED";
-    uploader.ackCommand(command.id, ackStatus, {
-      applied: status === "SUCCEEDED",
-      commandType: "PUBLISH_VIDEO_TASK",
+    return taskFinalizer.finalize({
+      command: command,
+      payload: payload,
       status: status,
-      message: errorMessage || "",
-      publishedUrl: report.publishedUrl || "",
-      platformContentId: report.platformContentId || ""
-    });
-    return {
-      status: status,
-      error: errorMessage || "",
-      publishedUrl: report.publishedUrl || "",
-      platformContentId: report.platformContentId || ""
-    };
-  }
-
-  function reportTopicPending(payload, reason) {
-    resultReporter.report(payload.taskId, {
-      deviceId: context.config.device.deviceId || "",
-      deviceToken: context.config.device.deviceToken || "",
-      status: "TOPIC_PENDING",
-      error: reason || "话题待补充"
+      errorMessage: errorMessage,
+      publishResult: publishResult,
+      releaseResources: releaseResources
     });
   }
 
-  function fillWithTopicContinuation(activeSteps, payload, materials) {
-    try {
-      return activeSteps.fill(payload, materials);
-    } catch (error) {
-      if (!error || error.publishStatus !== "TOPIC_PENDING") throw error;
-      var reason = String(error.message || "话题待补充");
-      reportTopicPending(payload, reason);
-      payload.description = topicContinuation.waitForResolvedDescription(payload);
-      return activeSteps.fill(payload, materials);
-    }
+  function fillDescription(activeSteps, payload, materials) {
+    return activeSteps.fill(payload, materials);
   }
 
   function handle(command) {
     if (!command || command.commandType !== "PUBLISH_VIDEO_TASK") return { handled: false };
     var payload = command.payload || command.payloadJson || {};
+    logger.info("REMOTE_BIZ_UPDATE_PROBE_V1", { taskId: payload.taskId || "" });
     logger.info("发布执行器启动", { commandId: command.id || "", taskId: payload.taskId || "" });
+    var resourcesReleased = false;
+    var lockAcquired = false;
     var executionGuard = executionWatchdog.start(function () {
       logger.error("发布执行器看门狗超时", { commandId: command.id || "", taskId: payload.taskId || "" });
       if (context.commandControl) context.commandControl.polling = false;
@@ -302,35 +306,51 @@ function createPublishVideoHandler(context, dependencies) {
         logger.error("发布执行器看门狗ACK失败", { commandId: command.id || "", message: String(error) });
       }
     });
-    if (!publishLock.acquire()) {
+    function releaseResources() {
+      if (resourcesReleased) return;
+      resourcesReleased = true;
       try {
-        return finish(command, payload, "PUBLISH_BUSY", "上一发布任务仍在执行", null, executionGuard);
+        if (lockAcquired && activeMaterialDir) materialManager.endTask(activeMaterialDir);
       } finally {
+        if (lockAcquired) {
+          activeMaterialDir = "";
+          publishLock.release();
+          lockAcquired = false;
+        }
         executionGuard.complete();
       }
     }
+    if (!publishLock.acquire({ taskId: payload.taskId || "", commandId: command.id || "" })) {
+      try {
+        return finish(command, payload, "PUBLISH_BUSY", "上一发布任务仍在执行", null, executionGuard, releaseResources);
+      } finally {
+        releaseResources();
+      }
+    }
+    lockAcquired = true;
     activeMaterialDir = "";
     try {
-      if (!payload.taskId) return finish(command, payload, "MATERIAL_INVALID", "taskId不能为空", null, executionGuard);
-      var topicValidation = topicDomain.validateDescriptionTopics(
-        payload.description,
-        payload.expectedTopicCount
-      );
-      if (!topicValidation.valid) {
-        return finish(command, payload, "TOPIC_PENDING", topicValidation.reason, null, executionGuard);
-      }
+      if (!payload.taskId) return finish(command, payload, "MATERIAL_INVALID", "taskId不能为空", null, executionGuard, releaseResources);
       if (isWechatChannelsTask(payload)) return wechatChannelsHandler().handle(command);
       var materials;
       try {
         materials = materialDownloader.download(payload);
       } catch (downloadError) {
         var downloadReason = String(downloadError && downloadError.message || downloadError || "素材下载失败");
-        return finish(command, payload, "MATERIAL_INVALID", downloadReason, null, executionGuard);
+        return finish(command, payload, "MATERIAL_INVALID", downloadReason, null, executionGuard, releaseResources);
       }
 
       try {
-        var gate = gateFor(payload);
         var activeSteps = douyinSteps();
+        if (fixedWaitMvpRequested(payload)) {
+          if (!fixedWaitFlow) throw new Error("fixed_wait_mvp 发布流程未预加载");
+          var mvpResult = fixedWaitFlow.run(activeSteps, payload, materials, function () {
+            return fillDescription(activeSteps, payload, materials);
+          });
+          logger.info("抖音发布任务执行成功", { taskId: payload.taskId, mode: "fixed_wait_mvp" });
+          return finishSuccessfulPublish(command, payload, mvpResult, executionGuard, releaseResources);
+        }
+        var gate = gateFor(payload);
         logger.info("发布前准备打开App", { taskId: payload.taskId, platform: "DOUYIN" });
         activeSteps.open(payload);
         waitForGate(gate, payload.taskId, "选择发布素材", activeSteps.states.galleryReady);
@@ -338,25 +358,19 @@ function createPublishVideoHandler(context, dependencies) {
         waitForGate(gate, payload.taskId, "编辑封面", activeSteps.states.coverEditReady);
         activeSteps.editCover(materials, payload);
         waitForGate(gate, payload.taskId, "填写标题描述话题", activeSteps.states.publishFormReady);
-        fillWithTopicContinuation(activeSteps, payload, materials);
+        fillDescription(activeSteps, payload, materials);
         waitForGate(gate, payload.taskId, "执行发布与结果判定", activeSteps.states.publishReviewReady);
         var publishResult = activeSteps.publish(payload, materials) || {};
         logger.info("抖音发布任务执行成功", { taskId: payload.taskId });
-        return finish(command, payload, "SUCCEEDED", "", publishResult, executionGuard);
+        return finishSuccessfulPublish(command, payload, publishResult, executionGuard, releaseResources);
       } catch (error) {
         var status = error && error.publishStatus || "FAILED";
         var reason = String(error && error.message || error || "发布步骤失败");
         logger.warn("抖音发布任务执行失败", { taskId: payload.taskId, status: status, reason: reason });
-        return finish(command, payload, status, reason, null, executionGuard);
+        return finish(command, payload, status, reason, null, executionGuard, releaseResources);
       }
     } finally {
-      try {
-        if (activeMaterialDir) materialManager.endTask(activeMaterialDir);
-      } finally {
-        activeMaterialDir = "";
-        publishLock.release();
-        executionGuard.complete();
-      }
+      releaseResources();
     }
   }
 

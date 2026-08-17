@@ -12,11 +12,13 @@ Normal production updates are handled by GitHub Actions:
 - API container internal port: `8080`
 - PostgreSQL and Redis are container-internal only.
 
-Tunnel target URLs:
+公网入口（Cloudflare Tunnel 或反向代理）应保持以下地址：
 
-- Web: `http://127.0.0.1:9026`
-- Mobile API: `http://127.0.0.1:9026/api/v1`
-- Health: `http://127.0.0.1:9026/health`
+- Web: `https://qk.dafengchan.top`
+- Mobile API: `https://qk-api.dafengchan.top/api/v1`
+- Health: `https://qk-api.dafengchan.top/health`
+
+服务器本机检查仍可使用 `http://127.0.0.1:9026`；该回环地址只能给服务器自身使用，不能写入手机 APK。
 
 ## Server Path
 
@@ -61,7 +63,7 @@ Push to `main` or `master`; GitHub Actions builds the images and the self-hosted
 After this stack is up, set the AutoX mobile agent API base URL to:
 
 ```txt
-http://127.0.0.1:9026/api/v1
+https://qk-api.dafengchan.top/api/v1
 ```
 
 Keep old FRP ports unchanged. Production domain binding should point Cloudflare Tunnel at the local service port.

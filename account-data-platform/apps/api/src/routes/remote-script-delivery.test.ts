@@ -124,7 +124,7 @@ describe("remote script offline delivery", () => {
     const updated = await updateResponse.json();
     expect(updated.revision).toBe(2);
 
-    const commandsResponse = await mobileRequest(`/api/v1/mobile/commands?deviceId=${deviceCode}`);
+    const commandsResponse = await mobileRequest(`/api/v1/mobile/commands?deviceId=${deviceCode}&executorType=AGENT`);
     const commands = (await commandsResponse.json()).data;
     expect(commandsResponse.status).toBe(200);
     const updateCommand = commands.find((item: { payload: { revision?: number } }) => item.payload.revision === 2);

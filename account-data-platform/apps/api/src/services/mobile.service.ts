@@ -7,7 +7,7 @@ import { createLiveCommentAction } from "../repositories/live-comment.repository
 import { listMobileLiveTargetsForDevice } from "../repositories/live-target.repository";
 import { createCollectionRecord } from "../repositories/record.repository";
 import { findCurrentTask, findDeviceTaskConfig, findTaskByCode, resolveTaskConfig } from "../repositories/task.repository";
-import { findDeviceByCode, findDeviceByToken, registerDeviceByToken, resolveDeviceByToken, updateDeviceCapabilities } from "../repositories/device.repository";
+import { findDeviceByCode, findDeviceByToken, registerDeviceByToken, resolveDeviceByToken, saveBaseConnectivityHeartbeat as saveDeviceBaseConnectivityHeartbeat, saveBaseHeartbeat as saveDeviceBaseHeartbeat, updateDeviceCapabilities } from "../repositories/device.repository";
 import { findActiveTaskAssignmentForDeviceAny } from "../repositories/task-assignment.repository";
 import { buildDeviceLiveTargetsFromTaskConfig, mergeMobileLiveTargetConfigs } from "./live-target-config.service";
 import {
@@ -15,6 +15,8 @@ import {
   commerceCardWorkflowSnapshotSchema,
   type MobileCollectionRecordPayload,
   type MobileHeartbeatPayload,
+  type MobileBaseHeartbeatPayload,
+  type MobileBaseConnectivityHeartbeatPayload,
   type MobileLiveCommentActionPayload,
   type MobileLogFilePayload,
   type MobileRuntimeLogPayload
@@ -262,6 +264,29 @@ export async function saveHeartbeat(payload: MobileHeartbeatPayload, clientIp?: 
     createdBy: "mobile_agent",
     updatedBy: "mobile_agent"
   });
+}
+
+export async function saveBaseHeartbeat(payload: MobileBaseHeartbeatPayload, clientIp?: string, deviceToken?: string) {
+  const device = await resolveMobileDevice({ deviceId: payload.deviceId, clientIp, deviceToken });
+  const reportedAt = parseOptionalDate(payload.reportedAt) ?? new Date();
+  const saved = await saveDeviceBaseHeartbeat(device.id, {
+    agentState: payload.agentState,
+    reportedAt
+  });
+  if (!saved) throw new Error("DEVICE_UNREGISTERED");
+  return saved;
+}
+
+export async function saveBaseConnectivityHeartbeat(payload: MobileBaseConnectivityHeartbeatPayload, clientIp?: string, deviceToken?: string) {
+  const device = await resolveMobileDevice({ deviceId: payload.deviceId, clientIp, deviceToken });
+  const receivedAt = new Date();
+  const saved = await saveDeviceBaseConnectivityHeartbeat(device.id, {
+    receivedAt,
+    screenState: payload.screenState,
+    appUiState: payload.appUiState
+  });
+  if (!saved) throw new Error("DEVICE_UNREGISTERED");
+  return saved;
 }
 
 export async function saveRuntimeLog(payload: MobileRuntimeLogPayload, clientIp?: string, deviceToken?: string) {

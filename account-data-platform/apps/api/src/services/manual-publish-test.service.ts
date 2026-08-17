@@ -4,12 +4,14 @@ import { findDeviceById } from "../repositories/device.repository";
 import { saveManualPublishTaskDispatched } from "../repositories/publish-task.repository";
 import { createPublishVideoTaskCommand } from "./publish-command.service";
 import { publishVideoConfigSchema } from "./publish-config";
+import { validatePublishMaterial } from "./publish-material.service";
 import { getRemoteScriptConfig } from "./remote-script.service";
 
 type ManualPublishTestErrorCode =
   | "PUBLISH_CONFIG_NOT_ENABLED"
   | "PUBLISH_CONFIG_PAYLOAD_INVALID"
-  | "PUBLISH_DEVICE_NOT_FOUND";
+  | "PUBLISH_DEVICE_NOT_FOUND"
+  | "MATERIAL_INVALID";
 
 export class ManualPublishTestServiceError extends Error {
   constructor(
@@ -43,15 +45,21 @@ export async function createManualPublishTest(
       "发布视频配置缺少下发参数"
     );
   }
+  const materialValidation = validatePublishMaterial(payload);
+  if (!materialValidation.valid) {
+    throw new ManualPublishTestServiceError("MATERIAL_INVALID", materialValidation.code);
+  }
   const device = await findDeviceById(payload.deviceId);
   if (!device) {
     throw new ManualPublishTestServiceError("PUBLISH_DEVICE_NOT_FOUND", "设备不存在");
   }
 
+  const source = payload.source ?? "MANUAL_TEST";
   const createCommand = options.createCommand ?? createPublishVideoTaskCommand;
   return db.transaction(async (transaction) => {
     const task = await saveManualPublishTaskDispatched({
       ...payload,
+      source,
       platform: toPublishPlatform(payload.platform)
     }, actor, transaction);
     const commandResult = await createCommand(task, commandConfig.data, actor, transaction);

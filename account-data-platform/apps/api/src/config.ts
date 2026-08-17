@@ -24,7 +24,7 @@ export function resolveConfig(env: EnvMap = process.env) {
   const isProduction = nodeEnv === "production";
   const jwtSecret = env.JWT_SECRET ?? (isProduction ? "" : "local-dev-jwt-secret");
   const adminPassword = env.ADMIN_PASSWORD ?? (isProduction ? "" : "root");
-  const mobileRegistrationSecret = env.MOBILE_REGISTRATION_SECRET ?? "";
+  const mobileRegistrationSecret = isProduction ? (env.MOBILE_REGISTRATION_SECRET ?? "") : "";
   const mobileRequestSigningRequired = env.MOBILE_REQUEST_SIGNING_REQUIRED === "true";
   const legacyBusinessFrozen = parseBoolean(env.LEGACY_BUSINESS_FROZEN);
 

@@ -1,6 +1,7 @@
 import { Form, Input, Modal, Select } from "antd";
 import { useEffect, useMemo } from "react";
 import type { ManualPublishTestPayload } from "../lib/api-client-publish-tasks";
+import { validatePublishDescriptionTopics } from "../lib/quick-paste-publish";
 import type { RemoteScriptConfig } from "../lib/api-client-remote-scripts";
 import type { DeviceRow } from "./DeviceList";
 
@@ -18,6 +19,11 @@ function isOnline(device: DeviceRow) {
   return ["online", "running"].includes((device.effectiveStatus || device.status).toLowerCase());
 }
 
+function expectedTopicCount(config?: RemoteScriptConfig) {
+  const value = Number(config?.configPayload.expectedTopicCount);
+  return Number.isFinite(value) && value > 0 ? Math.trunc(value) : 5;
+}
+
 export function ManualPublishTestModal({
   open,
   loading,
@@ -28,6 +34,9 @@ export function ManualPublishTestModal({
   onSubmit
 }: Props) {
   const [form] = Form.useForm<ManualPublishTestPayload>();
+  const selectedConfigId = Form.useWatch("configId", form);
+  const selectedConfig = configs.find((config) => config.id === selectedConfigId);
+  const configuredTopicCount = expectedTopicCount(selectedConfig);
   const orderedDevices = useMemo(
     () => [...devices].sort((left, right) => Number(isOnline(right)) - Number(isOnline(left))),
     [devices]
@@ -80,10 +89,12 @@ export function ManualPublishTestModal({
         <Form.Item
           name="coverUrl"
           label="封面 URL"
-          extra="可留空，用于验证手机端“缺少封面素材”失败路径"
-          rules={[{ type: "url", warningOnly: false, message: "请输入有效 URL" }]}
+          rules={[
+            { required: true, message: "请输入封面 URL" },
+            { type: "url", message: "请输入有效 URL" }
+          ]}
         >
-          <Input placeholder="https://" allowClear />
+          <Input placeholder="https://" />
         </Form.Item>
         <Form.Item name="title" label="标题" rules={[{ required: true, whitespace: true, message: "请输入标题" }]}>
           <Input maxLength={500} showCount />
@@ -91,8 +102,17 @@ export function ManualPublishTestModal({
         <Form.Item
           name="description"
           label="描述"
-          extra="描述需含5个#话题"
-          rules={[{ required: true, whitespace: true, message: "请输入描述" }]}
+          extra={"描述需含 " + configuredTopicCount + " 个#话题"}
+          rules={[
+            { required: true, whitespace: true, message: "请输入描述" },
+            {
+              validator: async (_, value: string) => {
+                if (!value?.trim()) return;
+                const validation = validatePublishDescriptionTopics(value, configuredTopicCount);
+                if (!validation.valid) throw new Error(validation.reason);
+              }
+            }
+          ]}
         >
           <Input.TextArea rows={4} showCount />
         </Form.Item>

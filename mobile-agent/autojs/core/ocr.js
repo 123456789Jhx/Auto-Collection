@@ -45,34 +45,87 @@ function createOcr(config, logger) {
     return "";
   }
 
+  function selectEngine() {
+    var autoJsOcr = typeof ocr !== "undefined" ? ocr : null;
+    var paddleOcr = typeof paddle !== "undefined" ? paddle : null;
+    var dollarOcr = typeof $ocr !== "undefined" ? $ocr : null;
+
+    if (autoJsOcr && typeof autoJsOcr.recognizeText === "function") {
+      return {
+        name: "autojs6_mlkit",
+        recognize: function (image) {
+          return autoJsOcr.recognizeText(image, { mode: "mlkit" });
+        }
+      };
+    }
+
+    if (autoJsOcr && typeof autoJsOcr.recognize === "function") {
+      return {
+        name: "legacy_ocr",
+        recognize: function (image) {
+          return autoJsOcr.recognize(image);
+        }
+      };
+    }
+
+    if (paddleOcr && typeof paddleOcr.ocr === "function") {
+      return {
+        name: "paddle",
+        recognize: function (image) {
+          return paddleOcr.ocr(image);
+        }
+      };
+    }
+
+    if (dollarOcr && typeof dollarOcr.recognize === "function") {
+      return {
+        name: "$ocr",
+        recognize: function (image) {
+          return dollarOcr.recognize(image);
+        }
+      };
+    }
+
+    return null;
+  }
+
+  var loggedEngineName = "";
+
+  function recordSelectedEngine(engine) {
+    if (loggedEngineName === engine.name) {
+      return;
+    }
+    loggedEngineName = engine.name;
+    logger.info("OCR engine selected", {
+      engine: engine.name
+    });
+  }
+
   function recognize(image) {
     if (!image) {
       return "";
     }
 
+    var engine = selectEngine();
+    if (!engine) {
+      logger.warn("OCR API unavailable");
+      return "";
+    }
+
+    recordSelectedEngine(engine);
+
     for (var i = 0; i < config.runtime.ocrRetryCount; i++) {
       try {
-        if (typeof ocr !== "undefined" && ocr.recognize) {
-          return normalizeResult(ocr.recognize(image));
-        }
-
-        if (typeof paddle !== "undefined" && paddle.ocr) {
-          return normalizeResult(paddle.ocr(image));
-        }
-
-        if (typeof $ocr !== "undefined" && $ocr.recognize) {
-          var deferred = $ocr.recognize(image);
-          return normalizeResult(deferred);
-        }
-
-        logger.warn("当前运行环境未发现可用 OCR API");
-        return "";
+        return normalizeResult(engine.recognize(image));
       } catch (error) {
-        logger.warn("OCR 识别失败，准备重试", {
+        logger.warn("OCR recognition failed", {
+          engine: engine.name,
           attempt: i + 1,
           message: String(error)
         });
-        sleep(500);
+        if (i + 1 < config.runtime.ocrRetryCount) {
+          sleep(500);
+        }
       }
     }
 

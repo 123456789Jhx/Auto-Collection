@@ -9,6 +9,23 @@ function compareBizVersions(left, right) {
   return 0;
 }
 
+function isValidBizVersion(value) {
+  return /^[0-9]+(?:\.[0-9]+)*$/.test(String(value || ""));
+}
+
+function getBizScriptCheckIntervalMs(upload) {
+  upload = upload || {};
+  if (upload.bizScriptHotReloadEnabled === true) {
+    return Math.max(1000, Number(upload.bizScriptHotReloadIntervalSeconds || 5) * 1000);
+  }
+  return Math.max(1, Number(upload.bizScriptVersionCheckIntervalMinutes || 30)) * 60 * 1000;
+}
+
+function getBizScriptRetryIntervalMs(upload, checkIntervalMs) {
+  var configured = Math.max(1, Number(upload && upload.bizScriptUpdateRetrySeconds || 60)) * 1000;
+  return Math.min(checkIntervalMs, configured);
+}
+
 function joinPath() {
   return Array.prototype.slice.call(arguments).filter(Boolean).join("/").replace(/\/+/g, "/");
 }
@@ -28,10 +45,30 @@ function validateManifest(manifest, expectedVersion) {
   if (!manifest.files || Object.prototype.toString.call(manifest.files) !== "[object Array]" || !manifest.files.length) {
     throw new Error("manifest files are required");
   }
+  var seen = {};
   return manifest.files.map(function (item) {
     if (!item || !/^[0-9a-f]{64}$/i.test(String(item.sha256 || ""))) throw new Error("invalid manifest sha256");
-    return { path: decodeManifestPath(item.path), sha256: String(item.sha256).toLowerCase() };
+    var path = decodeManifestPath(item.path);
+    if (seen[path]) throw new Error("duplicate manifest path: " + path);
+    seen[path] = true;
+    return { path: path, sha256: String(item.sha256).toLowerCase() };
   });
+}
+
+function restartCurrentEngine(engineManager, exitFallback) {
+  try {
+    var engine = engineManager && engineManager.myEngine ? engineManager.myEngine() : null;
+    if (engine && typeof engine.forceStop === "function") {
+      engine.forceStop();
+      return "force_stop";
+    }
+  } catch (error) {
+  }
+  if (typeof exitFallback === "function") {
+    exitFallback();
+    return "exit";
+  }
+  return "unavailable";
 }
 
 function createDefaultDeps(config) {
@@ -46,24 +83,6 @@ function createDefaultDeps(config) {
     if (!files.exists(path)) return;
     try { files.removeDir(path); } catch (error) {
       try { files.remove(path); } catch (error2) {}
-    }
-  }
-
-  function copyDir(source, target) {
-    ensureDir(target);
-    var names = files.listDir(source) || [];
-    for (var i = 0; i < names.length; i++) {
-      var sourcePath = joinPath(source, names[i]);
-      var targetPath = joinPath(target, names[i]);
-      var sourceFile = new java.io.File(sourcePath);
-      if (sourceFile.isDirectory()) {
-        copyDir(sourcePath, targetPath);
-      } else {
-        var parent = new java.io.File(targetPath).getParentFile();
-        if (parent && !parent.exists()) parent.mkdirs();
-        if (files.exists(targetPath)) files.remove(targetPath);
-        files.copy(sourcePath, targetPath);
-      }
     }
   }
 
@@ -123,8 +142,21 @@ function createDefaultDeps(config) {
     exists: function (path) { return files.exists(path); },
     ensureDir: ensureDir,
     remove: remove,
-    copyDir: copyDir,
-    moveDir: function (source, target) { remove(target); copyDir(source, target); remove(source); },
+    copyFile: function (source, target) {
+      var parent = new java.io.File(target).getParentFile();
+      if (parent && !parent.exists()) parent.mkdirs();
+      if (files.exists(target)) files.remove(target);
+      if (!files.copy(source, target)) throw new Error("biz scripts file copy failed: " + source);
+    },
+    renameDir: function (source, target) {
+      if (files.exists(target)) throw new Error("biz scripts rename target exists: " + target);
+      var targetFile = new java.io.File(target);
+      var parent = targetFile.getParentFile();
+      if (parent && !parent.exists()) parent.mkdirs();
+      if (!new java.io.File(source).renameTo(targetFile)) {
+        throw new Error("biz scripts directory rename failed: " + source + " -> " + target);
+      }
+    },
     readText: function (path) { return files.read(path); },
     writeText: function (path, value) { files.write(path, value); },
     sha256File: sha256File,
@@ -137,7 +169,12 @@ function createDefaultDeps(config) {
     },
     unzip: unzip,
     now: function () { return Date.now(); },
-    restart: function () { exit(); }
+    restart: function () {
+      return restartCurrentEngine(
+        typeof engines !== "undefined" ? engines : null,
+        typeof exit === "function" ? exit : null
+      );
+    }
   };
 }
 
@@ -147,7 +184,8 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
   var currentDir = joinPath(root, "current");
   var backupRoot = joinPath(root, "backup");
   var workRoot = joinPath(root, "work");
-  var lastCheckAt = 0;
+  var nextCheckAt = 0;
+  var checking = false;
 
   function report(eventType, fromVersion, toVersion, message, payload) {
     return uploader.uploadAgentUpdateEvent({
@@ -159,10 +197,20 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
     });
   }
 
+  function safeReport(eventType, fromVersion, toVersion, message, payload) {
+    try { return report(eventType, fromVersion, toVersion, message, payload); } catch (error) {
+      logger.warn("业务脚本更新事件上报失败", { eventType: eventType, message: String(error) });
+      return null;
+    }
+  }
+
   function currentVersion() {
     var versionPath = joinPath(currentDir, "version.json");
     if (!deps.exists(versionPath)) return "0.0.0";
-    try { return String(JSON.parse(deps.readText(versionPath)).version || "0.0.0"); } catch (error) { return "0.0.0"; }
+    try {
+      var version = String(JSON.parse(deps.readText(versionPath)).version || "");
+      return isValidBizVersion(version) ? version : "0.0.0";
+    } catch (error) { return "0.0.0"; }
   }
 
   function isDeviceRegistrationReady() {
@@ -189,25 +237,35 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
     if (!latest || latest.channel !== "biz-scripts" || !latest.packageUrl || !latest.version) {
       return { applied: false, rolledBack: false, message: "no biz-scripts update" };
     }
+    if (!isValidBizVersion(latest.version)) {
+      return { applied: false, rolledBack: false, message: "invalid biz-scripts version" };
+    }
+    if (compareBizVersions(latest.version, fromVersion) <= 0) {
+      return { applied: false, rolledBack: false, message: "biz-scripts version is not newer" };
+    }
+    if (!/^[0-9a-f]{64}$/i.test(String(latest.sha256 || ""))) {
+      return { applied: false, rolledBack: false, message: "invalid biz-scripts package sha256" };
+    }
+    var manifestEntry = String(latest.entryFile || "biz-script-manifest.json");
+    if (!/^[A-Za-z0-9._-]+$/.test(manifestEntry) || manifestEntry.indexOf("..") >= 0) {
+      return { applied: false, rolledBack: false, message: "invalid biz-scripts manifest entry" };
+    }
     var workDir = joinPath(workRoot, "work-" + latest.version + "-" + deps.now());
     var zipPath = joinPath(workDir, "package.zip");
     var extractDir = joinPath(workDir, "extract");
     var nextDir = joinPath(workDir, "next");
     var backupDir = joinPath(backupRoot, fromVersion + "-" + deps.now());
-    var backupCreated = false;
+    var activationStarted = false;
+    var activated = false;
+    var rolledBack = false;
     try {
       deps.ensureDir(workDir);
       var size = deps.download(latest.packageUrl, zipPath);
       var packageSha = deps.sha256File(zipPath).toLowerCase();
-      if (latest.sha256 && packageSha !== String(latest.sha256).toLowerCase()) throw new Error("biz scripts package sha256 mismatch");
-      report("DOWNLOADED", fromVersion, latest.version, "biz scripts downloaded", { sha256: packageSha, sizeBytes: size });
+      if (packageSha !== String(latest.sha256).toLowerCase()) throw new Error("biz scripts package sha256 mismatch");
+      safeReport("DOWNLOADED", fromVersion, latest.version, "biz scripts downloaded", { sha256: packageSha, sizeBytes: size });
       deps.unzip(zipPath, extractDir);
-      if (deps.exists(currentDir)) {
-        deps.ensureDir(backupDir);
-        deps.copyDir(currentDir, backupDir);
-        backupCreated = true;
-      }
-      var manifestPath = joinPath(extractDir, latest.entryFile || "biz-script-manifest.json");
+      var manifestPath = joinPath(extractDir, manifestEntry);
       var manifest = JSON.parse(deps.readText(manifestPath));
       var manifestFiles = validateManifest(manifest, latest.version);
       for (var i = 0; i < manifestFiles.length; i++) {
@@ -215,31 +273,46 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
         var actual = deps.sha256File(joinPath(extractDir, file.path)).toLowerCase();
         if (actual !== file.sha256) throw new Error("biz scripts file sha256 mismatch: " + file.path);
       }
-      report("VERIFIED", fromVersion, latest.version, "biz scripts verified", { fileCount: manifestFiles.length });
+      safeReport("VERIFIED", fromVersion, latest.version, "biz scripts verified", { fileCount: manifestFiles.length });
       deps.ensureDir(nextDir);
-      if (deps.exists(joinPath(extractDir, "features"))) deps.copyDir(joinPath(extractDir, "features"), joinPath(nextDir, "features"));
-      if (deps.exists(joinPath(extractDir, "domain"))) deps.copyDir(joinPath(extractDir, "domain"), joinPath(nextDir, "domain"));
-      deps.writeText(joinPath(nextDir, "version.json"), JSON.stringify({ version: latest.version, channel: "biz-scripts" }));
-      deps.remove(currentDir);
-      deps.moveDir(nextDir, currentDir);
-      config.runtime.bizScriptsVersion = latest.version;
-      report("APPLIED", fromVersion, latest.version, "biz scripts applied", { fileCount: manifestFiles.length });
-      logger.info("业务脚本热更新完成", { fromVersion: fromVersion, toVersion: latest.version });
-      deps.restart();
-      return { applied: true, rolledBack: false, version: latest.version };
-    } catch (error) {
-      var rolledBack = false;
-      if (backupCreated) {
-        deps.remove(currentDir);
-        deps.copyDir(backupDir, currentDir);
-        config.runtime.bizScriptsVersion = fromVersion;
-        rolledBack = true;
+      for (var j = 0; j < manifestFiles.length; j++) {
+        deps.copyFile(joinPath(extractDir, manifestFiles[j].path), joinPath(nextDir, manifestFiles[j].path));
       }
-      report("FAILED", fromVersion, latest.version, String(error), {});
-      if (rolledBack) report("ROLLBACK", latest.version, fromVersion, "biz scripts rollback completed", {});
+      deps.writeText(joinPath(nextDir, "version.json"), JSON.stringify({ version: latest.version, channel: "biz-scripts" }));
+      if (deps.exists(currentDir)) {
+        deps.remove(backupDir);
+        deps.renameDir(currentDir, backupDir);
+        activationStarted = true;
+      }
+      deps.renameDir(nextDir, currentDir);
+      activated = true;
+    } catch (error) {
+      if (activationStarted && !activated && deps.exists(backupDir)) {
+        try {
+          deps.remove(currentDir);
+          deps.renameDir(backupDir, currentDir);
+          rolledBack = true;
+        } catch (rollbackError) {
+          logger.warn("业务脚本回滚失败", { message: String(rollbackError), backupDir: backupDir });
+        }
+      }
+      config.runtime.bizScriptsVersion = currentVersion();
+      deps.remove(workDir);
+      safeReport("FAILED", fromVersion, latest.version, String(error), {});
+      if (rolledBack) safeReport("ROLLBACK", latest.version, fromVersion, "biz scripts rollback completed", {});
       logger.warn("业务脚本热更新失败", { message: String(error), rolledBack: rolledBack });
       return { applied: false, rolledBack: rolledBack, message: String(error) };
     }
+
+    deps.remove(workDir);
+    config.runtime.bizScriptsVersion = latest.version;
+    safeReport("APPLIED", fromVersion, latest.version, "biz scripts applied", { fileCount: manifestFiles.length });
+    logger.info("业务脚本热更新完成", { fromVersion: fromVersion, toVersion: latest.version });
+    try { deps.restart(); } catch (restartError) {
+      logger.warn("业务脚本已生效但自动重启失败", { message: String(restartError) });
+      return { applied: true, rolledBack: false, version: latest.version, restartFailed: true };
+    }
+    return { applied: true, rolledBack: false, version: latest.version };
   }
 
   function check(force) {
@@ -247,21 +320,35 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
     if (!isDeviceRegistrationReady()) {
       return { checked: false, deferred: true, reason: "device_not_registered" };
     }
-    var interval = Math.max(1, Number(config.upload.bizScriptVersionCheckIntervalMinutes || 30)) * 60 * 1000;
-    if (!force && lastCheckAt && deps.now() - lastCheckAt < interval) return { checked: false, skipped: true };
-    lastCheckAt = deps.now();
+    var interval = getBizScriptCheckIntervalMs(config.upload);
+    var now = deps.now();
+    if (checking) return { checked: false, skipped: true, reason: "check_in_progress" };
+    if (!force && now < nextCheckAt) return { checked: false, skipped: true };
+    nextCheckAt = now + interval;
+    checking = true;
     var version = currentVersion();
     config.runtime.bizScriptsVersion = version;
-    var result = queryBizScriptVersion(version);
-    if (!result) {
-      lastCheckAt = 0;
-      return { checked: true, updateAvailable: false };
+    try {
+      var result = queryBizScriptVersion(version);
+      if (!result) {
+        nextCheckAt = now + getBizScriptRetryIntervalMs(config.upload, interval);
+        return { checked: true, updateAvailable: false };
+      }
+      safeReport("CHECKED", version, result.latestVersion && result.latestVersion.version, "biz scripts version checked", {
+        updateAvailable: !!result.updateAvailable
+      });
+      if (result.updateAvailable && result.latestVersion) {
+        var applied = applyVersion(result);
+        if (!applied.applied) nextCheckAt = now + getBizScriptRetryIntervalMs(config.upload, interval);
+        return applied;
+      }
+      return { checked: true, updateAvailable: false, version: version };
+    } catch (error) {
+      nextCheckAt = now + getBizScriptRetryIntervalMs(config.upload, interval);
+      throw error;
+    } finally {
+      checking = false;
     }
-    report("CHECKED", version, result.latestVersion && result.latestVersion.version, "biz scripts version checked", {
-      updateAvailable: !!result.updateAvailable
-    });
-    if (result.updateAvailable && result.latestVersion) return applyVersion(result);
-    return { checked: true, updateAvailable: false, version: version };
   }
 
   config.runtime.bizScriptsVersion = currentVersion();
@@ -271,5 +358,6 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
 module.exports = {
   compareBizVersions: compareBizVersions,
   createBizScriptUpdater: createBizScriptUpdater,
+  restartCurrentEngine: restartCurrentEngine,
   validateManifest: validateManifest
 };

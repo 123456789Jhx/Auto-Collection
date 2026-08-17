@@ -44,6 +44,7 @@ test("douyin publish chain uses only baseline modules", () => {
     "domain/publish-task-lock.js": {
       createPublishTaskLock() { return { acquire() { return true; }, release() {} }; }
     },
+    "domain/publish-task-finalizer.js": require("../domain/publish-task-finalizer.js"),
     "domain/publish-watchdog.js": {
       createPublishExecutorWatchdog() {
         return { start() { return { timedOut() { return false; }, complete() {} }; } };
@@ -73,7 +74,8 @@ test("douyin publish chain uses only baseline modules", () => {
     "features/publish-video/fill-publish-text.js": { createFillPublishTextStep() { return function () {}; } },
     "features/publish-video/execute-publish.js": {
       createExecutePublishStep() { return function () { return { platformContentId: "baseline-1" }; }; }
-    }
+    },
+    "features/publish-video/douyin-post-publish-cleanup.js": require("../features/publish-video/douyin-post-publish-cleanup.js")
   };
   const handler = createPublishVideoHandler(createBaselineContext(loadedPaths, overlayPaths, modules), {
     resultReporter: { report() { return { success: true }; } }
@@ -105,6 +107,7 @@ test("cached publish handler handles a command without runtime module loads", ()
     "domain/publish-task-lock.js": {
       createPublishTaskLock() { return { acquire() { return true; }, release() {} }; }
     },
+    "domain/publish-task-finalizer.js": require("../domain/publish-task-finalizer.js"),
     "domain/publish-watchdog.js": {
       createPublishExecutorWatchdog() {
         return { start() { return { timedOut() { return false; }, complete() {} }; } };
@@ -134,7 +137,8 @@ test("cached publish handler handles a command without runtime module loads", ()
     "features/publish-video/fill-publish-text.js": { createFillPublishTextStep() { return function () {}; } },
     "features/publish-video/execute-publish.js": {
       createExecutePublishStep() { return function () { return { platformContentId: "cached-1" }; }; }
-    }
+    },
+    "features/publish-video/douyin-post-publish-cleanup.js": require("../features/publish-video/douyin-post-publish-cleanup.js")
   };
   const context = createBaselineContext(loadedPaths, overlayPaths, modules);
   context.publishModuleCache = modules;

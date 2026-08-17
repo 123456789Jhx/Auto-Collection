@@ -95,24 +95,55 @@ export class ApiError extends Error {
   }
 }
 
+const apiRequestTimeoutMs = 20_000;
+
+async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit, timeoutMs = apiRequestTimeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new ApiError(
+        "请求超时，请稍后重试；如刚刚执行了保存，请刷新列表确认。",
+        408,
+        "API_REQUEST_TIMEOUT",
+        {}
+      );
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 export async function request<T>(path: string, params?: QueryParams): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}${toQuery(params)}`, {
+  const response = await fetchWithTimeout(`${apiBaseUrl}${path}${toQuery(params)}`, {
     headers: authHeaders()
   });
   return handleResponse<T>(response);
 }
 
-export async function mutate<T>(path: string, body: unknown, authenticated = true): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+export async function mutate<T>(path: string, body: unknown, authenticated = true, timeoutMs = apiRequestTimeoutMs): Promise<T> {
+  const response = await fetchWithTimeout(`${apiBaseUrl}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(authenticated ? authHeaders() : {}) },
+    body: JSON.stringify(body)
+  }, timeoutMs);
+  return handleResponse<T>(response);
+}
+
+export async function put<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetchWithTimeout(apiBaseUrl + path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body)
   });
   return handleResponse<T>(response);
 }
 
 export async function patch<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await fetchWithTimeout(`${apiBaseUrl}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body)
@@ -121,7 +152,7 @@ export async function patch<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function remove<T>(path: string): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await fetchWithTimeout(`${apiBaseUrl}${path}`, {
     method: "DELETE",
     headers: authHeaders()
   });
@@ -160,6 +191,12 @@ export function updateDevice(deviceCode: string, payload: {
   accountProfile?: Record<string, unknown> | null;
 }) {
   return patch<unknown>(`/admin/devices/${encodeURIComponent(deviceCode)}`, payload);
+}
+
+export function updateBaseConnectivityThreshold(deviceCode: string, offlineThresholdSeconds: number) {
+  return patch<unknown>(`/admin/devices/${encodeURIComponent(deviceCode)}/base-connectivity`, {
+    offlineThresholdSeconds
+  });
 }
 
 export function rotateDeviceToken(deviceCode: string) {
@@ -246,6 +283,50 @@ export function getLogFileDetail(fileId: string) {
 
 export function getTasks() {
   return request<unknown[]>("/admin/tasks");
+}
+
+export type MobileCommandStatus =
+  | "PENDING"
+  | "FETCHED"
+  | "CLAIMED"
+  | "RUNNING"
+  | "DONE"
+  | "PARTIAL"
+  | "FAILED"
+  | "TIMED_OUT"
+  | "IGNORED";
+
+export type MobileCommandStage = {
+  name: string;
+  status: string;
+  reason?: string | null;
+};
+
+export type MobileCommandResult = {
+  commandType?: string;
+  result?: string;
+  stages?: MobileCommandStage[];
+  [key: string]: unknown;
+};
+
+export type MobileCommand = {
+  id: string;
+  deviceId: string;
+  commandType: string;
+  status: MobileCommandStatus;
+  payloadJson?: Record<string, unknown> | null;
+  resultJson?: MobileCommandResult | null;
+  issuedAt?: string | null;
+  fetchedAt?: string | null;
+  claimedAt?: string | null;
+  acknowledgedAt?: string | null;
+  expiresAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export function getMobileCommands() {
+  return request<MobileCommand[]>("/admin/mobile-commands");
 }
 
 export type { LiveTargetFeatureType };
@@ -521,9 +602,9 @@ export function updateDeviceTaskConfig(deviceCode: string, payload: {
 
 export function createMobileCommand(payload: {
   deviceId: string;
-  commandType: "START" | "PAUSE" | "RESUME" | "STOP" | "REFRESH_CONFIG" | "STATUS" | "RESTART_APP" | "RESTART_AGENT" | "CHECK_UPDATE" | "UPDATE_AGENT" | "UPLOAD_LOG";
+  commandType: "START" | "PAUSE" | "RESUME" | "STOP" | "OPEN_AGENT_APP" | "START_AGENT" | "STOP_AGENT" | "EXIT_AGENT_APP" | "REFRESH_CONFIG" | "STATUS" | "RESTART_APP" | "RESTART_AGENT" | "CHECK_UPDATE" | "UPDATE_AGENT" | "UPLOAD_LOG";
   payload?: Record<string, unknown>;
   expiresInSeconds?: number;
 }) {
-  return mutate<unknown>("/admin/mobile-commands", payload);
+  return mutate<MobileCommand>("/admin/mobile-commands", payload);
 }

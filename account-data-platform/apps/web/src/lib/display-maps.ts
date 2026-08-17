@@ -3,7 +3,9 @@ export function statusText(value?: string | null) {
     booting: "启动中",
     idle: "待命",
     online: "在线",
-    offline: "离线",
+    offline: "Agent 失联",
+    agent_unreachable: "Agent 失联",
+    unknown: "底座待接入",
     running: "运行中",
     paused: "已暂停",
     stopped: "已停止",
@@ -17,7 +19,7 @@ export function statusText(value?: string | null) {
 export function statusColor(value?: string | null) {
   if (value === "error") return "red";
   if (value === "risk_control") return "red";
-  if (value === "offline" || value === "stopped") return "default";
+  if (value === "offline" || value === "stopped" || value === "unknown" || value === "agent_unreachable") return "default";
   if (value === "paused" || value === "idle" || value === "booting" || value === "updating") return "orange";
   return "green";
 }

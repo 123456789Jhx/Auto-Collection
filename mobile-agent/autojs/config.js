@@ -208,8 +208,8 @@ module.exports = {
 
   upload: {
     enabled: true,
-    baseUrl: "http://192.168.7.170:3012/api/v1",
-    url: "http://192.168.7.170:3012/api/v1/mobile/collection-records",
+    baseUrl: "https://qk-api.dafengchan.top/api/v1",
+  url: "https://qk-api.dafengchan.top/api/v1/mobile/collection-records",
     registrationSecret: "",
     timeoutMs: 5000,
     retryCachedOnStart: true,
@@ -231,6 +231,8 @@ module.exports = {
     versionCheckIntervalMinutes: 2,
     versionChannel: "stable",
     bizScriptVersionCheckEnabled: true,
+    bizScriptHotReloadEnabled: true,
+    bizScriptHotReloadIntervalSeconds: 5,
     bizScriptVersionCheckIntervalMinutes: 30,
     deviceIdentityResetKey: ""
   },
@@ -245,7 +247,7 @@ module.exports = {
     swipeDurationMs: 450,
     loopIntervalMs: 800,
     heartbeatMinutes: 1,
-    idleHeartbeatSeconds: 60,
+    idleHeartbeatSeconds: 30,
     agentIdleLoopMs: 1000,
     syncDouyinAccountName: false,
     douyinAccountNameRefreshMinutes: 360,

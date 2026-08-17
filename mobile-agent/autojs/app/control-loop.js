@@ -1,8 +1,16 @@
 function createControlLoop(context) {
   var createRemoteScriptConfigHandler = require("./remote-script-config-handler.js").createRemoteScriptConfigHandler;
   var createPublishVideoPreloader = require("./publish-video-preloader.js").createPublishVideoPreloader;
+  var createSingleInterfacePublishCommandBridge = require("./single-interface-publish-command-bridge.js").createSingleInterfacePublishCommandBridge;
   var remoteScriptConfigHandler = createRemoteScriptConfigHandler(context);
   var publishVideoPreloader = createPublishVideoPreloader(context);
+  var singleInterfacePublishCommandBridge = createSingleInterfacePublishCommandBridge(context, {
+    execute: function (command) {
+      publishVideoPreloader.preload();
+      return publishVideoPreloader.getHandler().handle(command);
+    }
+  });
+  singleInterfacePublishCommandBridge.install();
   var config = context.config;
   var logger = context.logger;
   var uploader = context.uploader;
@@ -22,6 +30,20 @@ function createControlLoop(context) {
 
   function preloadPublishVideoHandler() {
     return publishVideoPreloader.preload();
+  }
+
+  function ensurePublishVideoPreloaded(reason, wasBackendReady) {
+    if (wasBackendReady && publishVideoPreloader.getHandler()) {
+      return { ready: true, cached: true };
+    }
+    try {
+      return preloadPublishVideoHandler();
+    } catch (error) {
+      var payload = { reason: reason || "sync", message: String(error) };
+      logger.error("publish module preload failed", payload);
+      reportRuntimeLog("ERROR", "发布模块预加载失败", payload);
+      return { ready: false, error: error };
+    }
   }
   var assignmentControl = context.assignmentControl || {
     pending: null
@@ -304,7 +326,12 @@ function createControlLoop(context) {
       return;
     }
 
-    var commands = compactControlCommands(uploader.pollCommands(config.device.deviceId));
+    var polledCommands = uploader.pollCommands(config.device.deviceId);
+    var commandChannelReady = !!(polledCommands && polledCommands.deviceRecoveryRequestSucceeded);
+    var commands = compactControlCommands(polledCommands);
+    if (commandChannelReady && context.deviceRecoverySync) {
+      context.deviceRecoverySync.recordStage("COMMAND_CHANNEL_READY", { commandCount: commands.length }, undefined, true);
+    }
     if (commands.length > 0 || force) {
       logger.info("后台控制指令轮询结果", {
         force: force,
@@ -501,6 +528,7 @@ function createControlLoop(context) {
       return { success: false, message: "upload disabled" };
     }
 
+    var wasBackendReady = backendSync.ready === true;
     var tokenResult = uploader.registerDeviceToken();
     if (!tokenResult || !tokenResult.success) {
       backendSync.failureCount += 1;
@@ -523,8 +551,22 @@ function createControlLoop(context) {
       return { success: false, applied: false, message: "device registration failed" };
     }
 
+    if (context.deviceRecoverySync) {
+      context.deviceRecoverySync.recordStage("NETWORK_CONNECTED", { via: "device_registration" }, undefined, true);
+      context.deviceRecoverySync.recordStage("DEVICE_REGISTERED", { statusCode: tokenResult.statusCode || 0 }, undefined, true);
+    }
+
     var configResult = refreshRuntimeConfig();
     if (tokenResult && tokenResult.success && configResult && configResult.applied) {
+      var preloadResult = ensurePublishVideoPreloaded(reason, wasBackendReady);
+      if (!preloadResult.ready) {
+        backendSync.failureCount += 1;
+        backendSync.ready = false;
+        floatyControl.update({
+          lastMessage: "发布模块预加载失败，等待重试"
+        });
+        return { success: false, applied: true, message: "publish module preload failed" };
+      }
       backendSync.failureCount = 0;
       backendSync.ready = true;
       logger.info("backend sync ready", {
@@ -619,6 +661,10 @@ function createControlLoop(context) {
   function handleControlCommand(command) {
     var commandType = command.commandType;
     var payload = command.payload || command.payloadJson || {};
+    if (commandType === "START_AGENT" || commandType === "STOP_AGENT") {
+      logger.info("native base lifecycle command reserved", { commandId: command.id, commandType: commandType });
+      return;
+    }
     logger.info("收到后台控制指令", {
       commandId: command.id,
       commandType: commandType,

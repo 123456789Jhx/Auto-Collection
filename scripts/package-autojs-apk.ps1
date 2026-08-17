@@ -4,6 +4,10 @@ param(
   [string]$AndroidSdkRoot = "D:\DevTools\Android\Sdk",
   [string]$KeystorePath = "D:\DevTools\Android\Keystores\agri-video-collector-dev.jks",
   [string]$OutputDir = "dist\apk",
+  [ValidateSet("development", "production")]
+  [string]$Environment = "production",
+  [string]$ApiBaseUrl = "",
+  [switch]$AllowLoopback,
   [string[]]$NativeAbis = @("arm64-v8a"),
   [switch]$EnableMinify,
   [switch]$SkipBuild
@@ -11,8 +15,60 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$productionApiBaseUrl = "https://qk-api.dafengchan.top/api/v1"
+
+function Normalize-ApiBaseUrl([string]$Value) {
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    throw "API base URL must not be empty."
+  }
+
+  $normalized = $Value.Trim().TrimEnd("/")
+  try {
+    $uri = [System.Uri]$normalized
+  } catch {
+    throw "API base URL is invalid: $Value"
+  }
+  if ($uri.Scheme -notin @("http", "https") -or [string]::IsNullOrWhiteSpace($uri.Host)) {
+    throw "API base URL must use http or https and include a host: $Value"
+  }
+  if (-not [string]::IsNullOrWhiteSpace($uri.Query) -or -not [string]::IsNullOrWhiteSpace($uri.Fragment)) {
+    throw "API base URL must not contain a query string or fragment: $Value"
+  }
+  return $normalized
+}
+
+function Resolve-ApiBaseUrl(
+  [ValidateSet("development", "production")]
+  [string]$SelectedEnvironment,
+  [string]$Override,
+  [bool]$LoopbackAllowed
+) {
+  if ($SelectedEnvironment -eq "production") {
+    if (-not [string]::IsNullOrWhiteSpace($Override)) {
+      $normalizedOverride = Normalize-ApiBaseUrl -Value $Override
+      if ($normalizedOverride -ne $productionApiBaseUrl) {
+        throw "Production builds are pinned to $productionApiBaseUrl. Use -Environment development for another API."
+      }
+    }
+    return $productionApiBaseUrl
+  }
+
+  if ([string]::IsNullOrWhiteSpace($Override)) {
+    throw "Development builds require -ApiBaseUrl with an address reachable from the phone."
+  }
+
+  $normalized = Normalize-ApiBaseUrl -Value $Override
+  $apiHost = ([System.Uri]$normalized).Host.ToLowerInvariant()
+  $isLoopback = $apiHost -in @("localhost", "127.0.0.1", "::1", "0.0.0.0")
+  if ($isLoopback -and -not $LoopbackAllowed) {
+    throw "Development API URL $normalized is a loopback address. Use a LAN/tunnel address, or pass -AllowLoopback only when adb reverse is configured."
+  }
+  return $normalized
+}
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $projectSource = Join-Path $repoRoot "mobile-agent\autojs"
+$androidBaseSource = Join-Path $repoRoot "mobile-agent\android-base"
 $targetProject = Join-Path $AutoJs6Root "app\src\main\assets-inrt\project"
 $outputPath = Join-Path $repoRoot $OutputDir
 
@@ -28,7 +84,9 @@ $sourceConfig = Get-Content -Raw -Encoding UTF8 -Path $projectConfigPath | Conve
 $sourceIconPath = Join-Path $projectSource "assets\app-icon.png"
 $gradleBuildPath = Join-Path $AutoJs6Root "app\build.gradle.kts"
 $inrtManifestPath = Join-Path $AutoJs6Root "app\src\inrt\AndroidManifest.xml"
+$androidBaseManifestPath = Join-Path $androidBaseSource "src\main\AndroidManifest.xml"
 $assetsProjectLauncherPath = Join-Path $AutoJs6Root "app\src\main\java\org\autojs\autojs\inrt\launch\AssetsProjectLauncher.kt"
+$inrtSplashActivityPath = Join-Path $AutoJs6Root "app\src\main\java\org\autojs\autojs\inrt\SplashActivity.kt"
 $rootUtilsPath = Join-Path $AutoJs6Root "app\src\main\java\org\autojs\autojs\util\RootUtils.java"
 $abstractAutoJsPath = Join-Path $AutoJs6Root "app\src\main\java\org\autojs\autojs\AbstractAutoJs.kt"
 $processShellPath = Join-Path $AutoJs6Root "app\src\main\java\org\autojs\autojs\runtime\api\ProcessShell.java"
@@ -73,6 +131,62 @@ function Write-Utf8NoBom([string]$Path, [string]$Value) {
   [System.IO.File]::WriteAllText($Path, $Value, $encoding)
 }
 
+function Set-JsonApiBaseUrl([string]$Path, [string]$ApiBaseUrl) {
+  if (-not (Test-Path -LiteralPath $Path)) {
+    throw "API configuration file not found: $Path"
+  }
+  $config = Get-Content -Raw -Encoding UTF8 -LiteralPath $Path | ConvertFrom-Json
+  $property = $config.PSObject.Properties["apiBaseUrl"]
+  if ($null -eq $property) {
+    throw "apiBaseUrl field not found in staged configuration: $Path"
+  }
+  $config.apiBaseUrl = $ApiBaseUrl
+  Write-Utf8NoBom -Path $Path -Value ($config | ConvertTo-Json -Depth 8)
+}
+
+function Set-StagedApiConfiguration([string]$ProjectTarget, [string]$ApiBaseUrl) {
+  $targetConfigPath = Join-Path $ProjectTarget "config.js"
+  if (-not (Test-Path -LiteralPath $targetConfigPath)) {
+    throw "Config file not found in staged APK project: $targetConfigPath"
+  }
+
+  $targetConfigText = Get-Content -Raw -Encoding UTF8 -LiteralPath $targetConfigPath
+  $baseUrlPattern = '(?m)(baseUrl\s*:\s*")[^"]*(")'
+  $collectionUrlPattern = '(?m)(url\s*:\s*")[^"]*mobile/collection-records(")'
+  if (-not [regex]::IsMatch($targetConfigText, $baseUrlPattern)) {
+    throw "upload.baseUrl field not found in staged AutoJS config: $targetConfigPath"
+  }
+  if (-not [regex]::IsMatch($targetConfigText, $collectionUrlPattern)) {
+    throw "collection upload URL field not found in staged AutoJS config: $targetConfigPath"
+  }
+
+  $replacementApiBaseUrl = $ApiBaseUrl
+  $targetConfigText = [regex]::Replace(
+    $targetConfigText,
+    $baseUrlPattern,
+    [System.Text.RegularExpressions.MatchEvaluator]{
+      param($match)
+      return $match.Groups[1].Value + $replacementApiBaseUrl + $match.Groups[2].Value
+    }
+  )
+  $targetConfigText = [regex]::Replace(
+    $targetConfigText,
+    $collectionUrlPattern,
+    [System.Text.RegularExpressions.MatchEvaluator]{
+      param($match)
+      return $match.Groups[1].Value + $replacementApiBaseUrl + "/mobile/collection-records" + $match.Groups[2].Value
+    }
+  )
+  Write-Utf8NoBom -Path $targetConfigPath -Value $targetConfigText
+
+  Set-JsonApiBaseUrl -Path (Join-Path $ProjectTarget "base-agent.json") -ApiBaseUrl $ApiBaseUrl
+  Set-JsonApiBaseUrl -Path (Join-Path $ProjectTarget "base-connectivity.json") -ApiBaseUrl $ApiBaseUrl
+
+  Write-Host "API base URL injected into staged mobile layers:"
+  Write-Host "  Environment: $Environment"
+  Write-Host "  API: $ApiBaseUrl"
+}
+
 function Get-RegistrationSecretFromConfig([string]$Path) {
   if (-not (Test-Path $Path)) {
     return ""
@@ -87,10 +201,19 @@ function Get-RegistrationSecretFromConfig([string]$Path) {
   return ""
 }
 
-function Resolve-MobileRegistrationSecret([string]$RepoRoot, [string]$PreviousTargetProject) {
+function Resolve-MobileRegistrationSecret(
+  [string]$RepoRoot,
+  [string]$PreviousTargetProject,
+  [ValidateSet("development", "production")]
+  [string]$SelectedEnvironment
+) {
   $value = [string]$env:MOBILE_REGISTRATION_SECRET
   if (-not [string]::IsNullOrWhiteSpace($value)) {
     return $value
+  }
+
+  if ($SelectedEnvironment -eq "development") {
+    return ""
   }
 
   $candidatePaths = @(
@@ -238,9 +361,22 @@ function Write-ApkSizeBreakdown([string]$ApkPath) {
   }
 }
 
-function Write-InrtPermissionOverlay([string]$ManifestPath) {
+function Write-InrtPermissionOverlay([string]$ManifestPath, [string]$AndroidBaseManifestPath) {
   $manifestDir = Split-Path $ManifestPath
   New-Item -ItemType Directory -Force -Path $manifestDir | Out-Null
+  if (-not (Test-Path $AndroidBaseManifestPath)) {
+    throw "Android base manifest not found: $AndroidBaseManifestPath"
+  }
+
+  [xml]$androidBaseManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $AndroidBaseManifestPath
+  $androidBasePermissionLines = @(
+    $androidBaseManifest.manifest.'uses-permission' | ForEach-Object { $_.OuterXml }
+  )
+  $androidBaseComponentLines = @(
+    $androidBaseManifest.manifest.application.ChildNodes |
+      Where-Object { $_.NodeType -eq [System.Xml.XmlNodeType]::Element } |
+      ForEach-Object { $_.OuterXml }
+  )
 
   $removePermissions = @(
     "android.permission.READ_MEDIA_IMAGES",
@@ -257,13 +393,10 @@ function Write-InrtPermissionOverlay([string]$ManifestPath) {
     "android.permission.SCHEDULE_EXACT_ALARM",
     "android.permission.VIBRATE",
     "android.permission.ACCESS_WIFI_STATE",
-    "android.permission.ACCESS_NETWORK_STATE",
     "android.permission.CHANGE_WIFI_STATE",
     "android.permission.CHANGE_NETWORK_STATE",
     "android.permission.CHANGE_WIFI_MULTICAST_STATE",
-    "android.permission.REORDER_TASKS",
     "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
-    "android.permission.RECEIVE_BOOT_COMPLETED",
     "android.permission.POST_NOTIFICATIONS",
     "android.permission.UNLIMITED_TOASTS",
     "android.permission.CAPTURE_VIDEO_OUTPUT",
@@ -293,7 +426,6 @@ function Write-InrtPermissionOverlay([string]$ManifestPath) {
     "android.permission.GET_ACCOUNTS",
     "android.permission.READ_CALENDAR",
     "android.permission.WRITE_CALENDAR",
-    "android.permission.DISABLE_KEYGUARD",
     "android.permission.BLUETOOTH",
     "android.permission.BLUETOOTH_ADMIN",
     "android.permission.BLUETOOTH_CONNECT",
@@ -320,12 +452,13 @@ function Write-InrtPermissionOverlay([string]$ManifestPath) {
     "com.evernote.android.job.v14.PlatformAlarmReceiver",
     "com.evernote.android.job.v21.PlatformJobService",
     "org.autojs.autojs.timing.BootCompletedReceiver",
-    "org.autojs.autojs.inrt.InrtBootCompletedReceiver",
     "org.autojs.autojs.external.receiver.StaticBroadcastReceiver",
     "org.autojs.autojs.external.tasker.FireSettingReceiver",
     "org.autojs.autojs.external.widget.ScriptWidget",
     "org.autojs.autojs.timing.TaskReceiver",
     "org.autojs.autojs.timing.TimedTaskAlarmReceiver"
+    "org.autojs.autojs.inrt.baseagent.BaseAgentForegroundService"
+    "org.autojs.autojs.inrt.baseagent.BaseAgentSystemReceiver"
   )
   $componentLines = $removeComponents | ForEach-Object {
     $tag = if ($_ -like "*Service") { "service" } else { "receiver" }
@@ -334,15 +467,67 @@ function Write-InrtPermissionOverlay([string]$ManifestPath) {
   $manifest = @"
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+$($androidBasePermissionLines -join "`r`n")
 $($permissionLines -join "`r`n")
     <application>
 $($componentLines -join "`r`n")
+$($androidBaseComponentLines -join "`r`n")
     </application>
 </manifest>
 "@
   Write-Utf8NoBom -Path $ManifestPath -Value $manifest
   Write-Host "Inrt permission overlay written:"
   Write-Host "  $ManifestPath"
+}
+
+function Sync-AndroidBase(
+  [string]$SourceRoot,
+  [string]$AutoJsRoot,
+  [string]$ProjectTarget,
+  [string]$SplashActivityPath
+) {
+  $sourceJavaRoot = Join-Path $SourceRoot "src\main\java\com\agri\video\collector\base"
+  $sourceConfigPath = Join-Path $SourceRoot "assets\base-connectivity.json"
+  $targetJavaRoot = Join-Path $AutoJsRoot "app\src\main\java\com\agri\video\collector\base"
+  $legacyBaseAgentRoot = Join-Path $AutoJsRoot "app\src\main\java\org\autojs\autojs\inrt\baseagent"
+
+  if (-not (Test-Path $sourceJavaRoot)) {
+    throw "Android base source not found: $sourceJavaRoot"
+  }
+  if (-not (Test-Path $sourceConfigPath)) {
+    throw "Android base config not found: $sourceConfigPath"
+  }
+  if (-not (Test-Path $SplashActivityPath)) {
+    throw "Inrt SplashActivity not found: $SplashActivityPath"
+  }
+
+  if (Test-Path $legacyBaseAgentRoot) {
+    Remove-Item -LiteralPath $legacyBaseAgentRoot -Recurse -Force
+  }
+  if (Test-Path $targetJavaRoot) {
+    Remove-Item -LiteralPath $targetJavaRoot -Recurse -Force
+  }
+  New-Item -ItemType Directory -Force -Path $targetJavaRoot | Out-Null
+  Copy-Item -Path (Join-Path $sourceJavaRoot "*.kt") -Destination $targetJavaRoot -Force
+  Copy-Item -LiteralPath $sourceConfigPath -Destination (Join-Path $ProjectTarget "base-connectivity.json") -Force
+
+  $splashText = Get-Content -Raw -Encoding UTF8 -LiteralPath $SplashActivityPath
+  $splashText = $splashText.Replace(
+    "import org.autojs.autojs.inrt.baseagent.BaseAgentForegroundService",
+    "import com.agri.video.collector.base.BaseConnectivityService"
+  )
+  $splashText = $splashText.Replace(
+    "BaseAgentForegroundService.start(this)",
+    "BaseConnectivityService.start(this)"
+  )
+  if (-not $splashText.Contains("BaseConnectivityService.start(this)")) {
+    throw "Inrt SplashActivity base service start entry was not found"
+  }
+  Write-Utf8NoBom -Path $SplashActivityPath -Value $splashText
+
+  Write-Host "Android base synchronized from main project:"
+  Write-Host "  Source: $SourceRoot"
+  Write-Host "  Target: $targetJavaRoot"
 }
 
 function Write-LauncherIconResources([string]$SourceIconPath, [string]$ResRoot) {
@@ -560,7 +745,11 @@ if (-not (Test-Path $gradleBuildPath)) {
   throw "AutoJs6 app build script not found: $gradleBuildPath"
 }
 
-Write-InrtPermissionOverlay -ManifestPath $inrtManifestPath
+$selectedApiBaseUrl = Resolve-ApiBaseUrl -SelectedEnvironment $Environment -Override $ApiBaseUrl -LoopbackAllowed $AllowLoopback.IsPresent
+Write-Host "Selected mobile build environment: $Environment"
+Write-Host "Selected mobile API base URL: $selectedApiBaseUrl"
+
+Write-InrtPermissionOverlay -ManifestPath $inrtManifestPath -AndroidBaseManifestPath $androidBaseManifestPath
 Write-LauncherIconResources -SourceIconPath $sourceIconPath -ResRoot (Join-Path $AutoJs6Root "app\src\main\res")
 Patch-InrtUiLaunchFlags -LauncherPath $assetsProjectLauncherPath
 Patch-InrtPreserveUpdatedProject -LauncherPath $assetsProjectLauncherPath
@@ -606,6 +795,17 @@ Set-Content -Path $gradleBuildPath -Value $gradleText -Encoding UTF8
 
 New-Item -ItemType Directory -Force -Path $targetProject | Out-Null
 
+$registrationSecret = Resolve-MobileRegistrationSecret `
+  -RepoRoot $repoRoot `
+  -PreviousTargetProject $targetProject `
+  -SelectedEnvironment $Environment
+if ([string]::IsNullOrWhiteSpace($registrationSecret)) {
+  if ($Environment -eq "production") {
+    throw "MOBILE_REGISTRATION_SECRET is required for production mobile agent APK packages."
+  }
+  Write-Host "Development APK will not embed a mobile registration secret."
+}
+
 Get-ChildItem -LiteralPath $targetProject -Force | Remove-Item -Recurse -Force
 
 $excludedDirs = @("datasource", "build", ".git", ".idea", "node_modules")
@@ -619,15 +819,17 @@ Get-ChildItem -LiteralPath $projectSource -Force | ForEach-Object {
   Copy-Item -LiteralPath $_.FullName -Destination $targetProject -Recurse -Force
 }
 
-$registrationSecret = Resolve-MobileRegistrationSecret -RepoRoot $repoRoot -PreviousTargetProject $targetProject
-if ([string]::IsNullOrWhiteSpace($registrationSecret)) {
-  throw "MOBILE_REGISTRATION_SECRET is required for mobile agent APK packages."
-}
+Sync-AndroidBase `
+  -SourceRoot $androidBaseSource `
+  -AutoJsRoot $AutoJs6Root `
+  -ProjectTarget $targetProject `
+  -SplashActivityPath $inrtSplashActivityPath
 
 $targetConfigPath = Join-Path $targetProject "config.js"
 if (-not (Test-Path $targetConfigPath)) {
   throw "Config file not found in staged APK project: $targetConfigPath"
 }
+Set-StagedApiConfiguration -ProjectTarget $targetProject -ApiBaseUrl $selectedApiBaseUrl
 $targetConfigText = Get-Content -Raw -Encoding UTF8 -LiteralPath $targetConfigPath
 $registrationSecretPattern = '(registrationSecret\s*:\s*)".*?"'
 if (-not [regex]::IsMatch($targetConfigText, $registrationSecretPattern)) {
@@ -653,7 +855,7 @@ $targetConfigText = $versionPatchedConfigText
 Write-Utf8NoBom -Path $targetConfigPath -Value $targetConfigText
 Write-Host "Registration secret and version injected into staged AutoJS config."
 
-$buildId = "AGRI-" + (Get-Date -Format "yyyyMMddHHmmss")
+$buildId = "AGRI-" + $Environment.ToUpperInvariant() + "-" + (Get-Date -Format "yyyyMMddHHmmss")
 $inrtConfig = [ordered]@{
   name = $appName
   main = $sourceConfig.main
@@ -717,9 +919,10 @@ if (-not $apkCandidates) {
 }
 
 $apk = $apkCandidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-$unsignedDest = Join-Path $outputPath ($appName + "-" + $versionName + "-inrt-unsigned.apk")
-$alignedDest = Join-Path $outputPath ($appName + "-" + $versionName + "-inrt-aligned.apk")
-$dest = Join-Path $outputPath ($appName + "-" + $versionName + "-inrt.apk")
+$profileSuffix = if ($Environment -eq "production") { "" } else { "-development" }
+$unsignedDest = Join-Path $outputPath ($appName + "-" + $versionName + "-inrt" + $profileSuffix + "-unsigned.apk")
+$alignedDest = Join-Path $outputPath ($appName + "-" + $versionName + "-inrt" + $profileSuffix + "-aligned.apk")
+$dest = Join-Path $outputPath ($appName + "-" + $versionName + "-inrt" + $profileSuffix + ".apk")
 Copy-Item -LiteralPath $apk.FullName -Destination $unsignedDest -Force
 $nativeLibRoot = Join-Path $AutoJs6Root "app\build\intermediates\merged_native_libs\inrtRelease\mergeInrtReleaseNativeLibs\out\lib"
 $excludedNativeNames = @()

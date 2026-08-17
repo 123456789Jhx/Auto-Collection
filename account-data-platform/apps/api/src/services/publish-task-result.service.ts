@@ -1,30 +1,55 @@
-import type { PublishTaskResultPayload } from "@pkg/types";
+import type { InterfacePublishPhoneResultPayload } from "@pkg/types";
 import {
   findPublishTaskContext,
   savePublishTaskResult,
   updatePublishTaskDescription
 } from "../repositories/publish-dispatch.repository";
-import { publishClientOnlyConfigSchema, publishVideoConfigSchema } from "./publish-config";
+import { publishVideoConfigSchema } from "./publish-config";
 import { matchClaimedPublishTask } from "./publish-match.service";
+import {
+  createPublishStatusOutbox,
+  markPublishTaskReportFailed,
+  markPublishTaskReportNotRequired
+} from "./publish-status-outbox.service";
 import { dispatchMatchedPublishTask } from "./publish-scheduler.service";
 import { PublishTopicsValidationError, validatePublishTopics } from "./publish-topics";
-import { patchTaskStatus, type WecomPublishClientOptions } from "./wecom-publish-client";
+import { publishInterfaceResultService } from "./publish-interface-result.service";
+import type { WecomPublishClientOptions } from "./wecom-publish-client";
 
-type ResultInput = Omit<PublishTaskResultPayload, "deviceToken">;
+export type ResultInput = Omit<InterfacePublishPhoneResultPayload, "deviceToken">;
 
-function externalPlatform(platform: string) {
-  return platform === "WECHAT_CHANNELS" ? "视频号" as const : "抖音" as const;
+type ResultOptions = WecomPublishClientOptions & {
+  enqueueExternalStatus?: (publishTaskId: string, actor: string) => Promise<unknown>;
+  markReportNotRequired?: (publishTaskId: string, actor: string) => Promise<unknown>;
+  markExternalReportFailure?: (publishTaskId: string, error: unknown, actor: string) => Promise<unknown>;
+  reportInterfaceResult?: typeof publishInterfaceResultService.report;
+};
+
+function reportModeFor(task: object) {
+  const reportMode = (task as { reportMode?: unknown }).reportMode;
+  return reportMode === "NONE" ? "NONE" : "EXTERNAL";
+}
+
+export function shouldQueueExternalPublishStatus(reportMode: unknown, status: ResultInput["status"]) {
+  return reportMode === "EXTERNAL" && (status === "SUCCEEDED" || status === "FAILED");
 }
 
 export async function reportPublishTaskResult(
   id: string,
   input: ResultInput,
   actor: string,
-  options: WecomPublishClientOptions = {}
+  options: ResultOptions = {}
 ) {
   const context = await findPublishTaskContext(id);
   if (!context) throw new Error("PUBLISH_TASK_NOT_FOUND");
   if (context.deviceCode !== input.deviceId) throw new Error("PUBLISH_TASK_DEVICE_MISMATCH");
+  if (context.task.interfaceRunId) {
+    return (options.reportInterfaceResult ?? publishInterfaceResultService.report)(
+      context.task.id,
+      input,
+      actor
+    );
+  }
   if (context.task.status === "REPORTED") return context.task;
 
   const finishedAt = new Date();
@@ -41,15 +66,21 @@ export async function reportPublishTaskResult(
   }, actor);
 
   if (input.status !== "SUCCEEDED" && input.status !== "FAILED") return finished;
-  const clientConfig = publishClientOnlyConfigSchema.parse(context.configPayload);
-  await patchTaskStatus(clientConfig, context.task.taskId, {
-    platform: externalPlatform(context.task.platform),
-    status: input.status === "SUCCEEDED" ? "已发布" : "未发布",
-    ...(resultError ? { error: resultError } : {}),
-    ...(input.publishedUrl ? { publishedUrl: input.publishedUrl } : {}),
-    ...(input.platformContentId ? { platformContentId: input.platformContentId } : {})
-  }, options);
-  return savePublishTaskResult(id, { status: "REPORTED", reportedAt: new Date() }, actor);
+
+  const reportMode = reportModeFor(context.task);
+  if (!shouldQueueExternalPublishStatus(reportMode, input.status)) {
+    if (reportMode === "NONE") {
+      await (options.markReportNotRequired ?? markPublishTaskReportNotRequired)(id, actor);
+    }
+    return finished;
+  }
+
+  try {
+    await (options.enqueueExternalStatus ?? createPublishStatusOutbox)(id, actor);
+  } catch (error) {
+    await (options.markExternalReportFailure ?? markPublishTaskReportFailed)(id, error, actor);
+  }
+  return finished;
 }
 
 export async function completePublishTaskTopics(id: string, description: string, actor: string) {
@@ -57,6 +88,9 @@ export async function completePublishTaskTopics(id: string, description: string,
   if (!current) throw new Error("PUBLISH_TASK_NOT_FOUND");
   if (current.task.status !== "TOPIC_PENDING") throw new Error("PUBLISH_TASK_TOPIC_STATE_INVALID");
   const commandConfig = publishVideoConfigSchema.parse(current.configPayload);
+  if (commandConfig.sourceMode !== "external_pull") {
+    throw new Error("PUBLISH_TASK_SOURCE_CONFIG_INVALID");
+  }
   const validation = validatePublishTopics(description, commandConfig.expectedTopicCount);
   if (!validation.valid) throw new PublishTopicsValidationError(validation.reason);
   const updated = await updatePublishTaskDescription(

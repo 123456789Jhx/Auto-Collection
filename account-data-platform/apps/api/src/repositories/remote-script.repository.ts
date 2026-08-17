@@ -143,6 +143,12 @@ export async function listConfigs(query: RemoteScriptConfigListQuery) {
   if (query.keyword) {
     conditions.push(ilike(remoteScriptConfigs.configName, `%${query.keyword}%`));
   }
+  if (query.sourceMode === "direct_material") {
+    conditions.push(sql`${remoteScriptConfigs.configPayload} ->> 'sourceMode' = 'direct_material'`);
+  }
+  if (query.sourceMode === "external_pull") {
+    conditions.push(sql`coalesce(${remoteScriptConfigs.configPayload} ->> 'sourceMode', 'external_pull') = 'external_pull'`);
+  }
   const where = and(...conditions);
   const [data, countRows] = await Promise.all([
     db

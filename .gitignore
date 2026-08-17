@@ -5,6 +5,15 @@ docs/runtime.log
 docs/error
 scripts/__pycache__/
 
+# Codex/agent session state and local runtime artifacts
+.superpowers/
+.workbuddy/
+.codex-topic-description.patch
+tmp/
+account-data-platform/.runtime-logs/
+account-data-platform/backups/
+account-data-platform/tmp/
+
 # Backend/frontend local dependencies and build outputs
 account-data-platform/node_modules/
 account-data-platform/**/node_modules/

@@ -12,6 +12,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: Number(env.WEB_PORT ?? 3022),
+      allowedHosts: ["qk.dafengchan.top"],
       proxy: {
         "/api": {
           target: env.VITE_API_PROXY_TARGET ?? "http://localhost:3012",

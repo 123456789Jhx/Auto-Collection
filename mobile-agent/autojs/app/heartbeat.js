@@ -11,6 +11,35 @@ function createHeartbeatService(context) {
     running: false
   };
   context.realtimeLogSync = realtimeLogSync;
+  var agentConnectionStore = null;
+  try {
+    agentConnectionStore = storages.create("AgriVideoCollectorAgentConnection");
+  } catch (error) {
+  }
+
+  function recordAgentConnection(result, status, message, taskType) {
+    if (!agentConnectionStore) {
+      return;
+    }
+    var now = Date.now();
+    try {
+      agentConnectionStore.put("lastAttemptAt", now);
+      if (result && result.success) {
+        agentConnectionStore.put("lastResult", "success");
+        agentConnectionStore.put("lastSuccessAt", now);
+        agentConnectionStore.put("httpStatus", Number(result.statusCode || 0));
+        agentConnectionStore.put("lastStatus", String(status || "idle"));
+        agentConnectionStore.put("lastMessage", String(message || ""));
+        agentConnectionStore.put("currentTaskType", String(taskType || ""));
+      } else {
+        agentConnectionStore.put("lastResult", "failure");
+        agentConnectionStore.put("lastFailureAt", now);
+        agentConnectionStore.put("httpStatus", Number(result && result.statusCode || 0));
+        agentConnectionStore.put("errorType", String(result && result.message || ""));
+      }
+    } catch (error2) {
+    }
+  }
 
   heartbeat.douyinAccountName = heartbeat.douyinAccountName || "";
   heartbeat.douyinAccountNameLastAt = heartbeat.douyinAccountNameLastAt || 0;
@@ -63,7 +92,10 @@ function createHeartbeatService(context) {
     };
   }
 
-  function checkBizScripts() {
+  function checkBizScripts(status) {
+    if (status !== "idle") {
+      return;
+    }
     if (context.bizScriptUpdater && context.bizScriptUpdater.check) {
       context.bizScriptUpdater.check(false);
     }
@@ -159,7 +191,6 @@ function createHeartbeatService(context) {
       return;
     }
     heartbeat.lastAt = now;
-    checkBizScripts();
     var uploadSceneType = normalizeHeartbeatSceneType(sceneType);
     var elapsedMinutes = Math.round((now - startMs) / 60000);
     var remainingMinutes = Math.max(0, Math.round((endAt - now) / 60000));
@@ -204,13 +235,17 @@ function createHeartbeatService(context) {
       reportedAt: new Date(now).toISOString()
     };
     logger.info("采集心跳", payload);
-    uploader.uploadHeartbeat(payload);
+    var uploadResult = uploader.uploadHeartbeat(payload);
+    recordAgentConnection(uploadResult, payload.status, payload.lastMessage, payload.currentTaskType);
+    if (uploadResult && uploadResult.success && context.deviceRecoverySync) {
+      context.deviceRecoverySync.recordStage("HEARTBEAT_RESTORED", { heartbeatStatus: payload.status }, undefined, true);
+    }
     maybeUploadCurrentLog("heartbeat");
   }
 
   function reportImmediateHeartbeat(sceneType, status, message) {
-    checkBizScripts();
     var heartbeatStatus = status || (floatyControl.state.paused ? "paused" : "running");
+    checkBizScripts(heartbeatStatus);
     var isActiveTask = heartbeatStatus === "running";
     var startedAt = isActiveTask && counters.phaseStartedAt ? new Date(counters.phaseStartedAt).getTime() : 0;
     var activeSceneType = isActiveTask ? normalizeHeartbeatSceneType(sceneType || counters.currentPhase || "") : "";
@@ -247,7 +282,11 @@ function createHeartbeatService(context) {
       reportedAt: new Date().toISOString()
     };
     logger.info("即时状态心跳", payload);
-    uploader.uploadHeartbeat(payload);
+    var uploadResult = uploader.uploadHeartbeat(payload);
+    recordAgentConnection(uploadResult, payload.status, payload.lastMessage, payload.currentTaskType);
+    if (uploadResult && uploadResult.success && context.deviceRecoverySync) {
+      context.deviceRecoverySync.recordStage("HEARTBEAT_RESTORED", { heartbeatStatus: payload.status }, undefined, true);
+    }
     maybeUploadCurrentLog("immediate_heartbeat");
   }
 

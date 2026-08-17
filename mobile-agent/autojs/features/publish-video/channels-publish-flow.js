@@ -30,17 +30,36 @@ function decideWechatStartupCorrection(state) {
   return { action: "FORCE_RESTART", reason: "information_tab_not_selected" };
 }
 
+function dismissKnownWechatInvite(ui) {
+  if (ui && typeof ui.dismissVersionUpdateInvite === "function") ui.dismissVersionUpdateInvite();
+}
+
 function correctWechatStartup(ui) {
+  dismissKnownWechatInvite(ui);
   var state = ui.inspectStartupState();
   var decision = decideWechatStartupCorrection(state);
   if (decision.action === "LAUNCH") {
     ui.launchWechat();
+    dismissKnownWechatInvite(ui);
     state = ui.inspectStartupState();
     decision = decideWechatStartupCorrection(state);
   }
   if (decision.action === "FORCE_RESTART") {
     ui.forceRestartWechat();
+    dismissKnownWechatInvite(ui);
     state = ui.inspectStartupState();
+    decision = decideWechatStartupCorrection(state);
+  }
+  if (decision.action !== "KEEP" && state.foreground && typeof ui.selectWechatHomeTab === "function") {
+    ui.selectWechatHomeTab();
+    state = ui.inspectStartupState();
+    if (state.foreground) {
+      return {
+        corrected: true,
+        state: { foreground: true, bottomTab: "信息", inferred: true },
+        decision: { action: "KEEP", reason: "home_tab_forced_after_restart" }
+      };
+    }
     decision = decideWechatStartupCorrection(state);
   }
   if (decision.action !== "KEEP") {
@@ -55,25 +74,17 @@ function materialError(message) {
   return error;
 }
 
-function topicPending(message) {
-  var error = new Error(message);
-  error.publishStatus = "TOPIC_PENDING";
-  return error;
-}
-
 function createWechatChannelsPublishHandler(context, dependencies) {
   dependencies = dependencies || {};
   var logger = context.logger;
   var uploader = context.uploader;
   var materialDomain = loadBizModule(context, "domain/material-inspector.js");
-  var topicDomain = loadBizModule(context, "domain/topic-validator.js");
   var popupMarker = loadBizModule(context, "features/publish-video/channels-verify-popup.js");
   var ui = dependencies.ui || loadBizModule(context, "features/publish-video/channels-publish-ui.js")
     .createWechatChannelsPublishUi(context);
 
   var materialDownloader = dependencies.materialDownloader;
   var resultReporter = dependencies.resultReporter;
-  var topicContinuation = dependencies.topicContinuation;
   var currentTaskId = "";
   if (!materialDownloader || !resultReporter) {
     throw new Error("视频号发布必须由共享发布入口创建");
@@ -113,34 +124,21 @@ function createWechatChannelsPublishHandler(context, dependencies) {
   }
 
   function performAction(stage, action) {
+    dismissKnownWechatInvite(ui);
     assertNoVerification(stage + "前");
     var result = action();
+    dismissKnownWechatInvite(ui);
     assertNoVerification(stage + "后");
     return result;
   }
 
-  function fillAndValidateTopics(payload) {
-    performAction("填写描述", function () { ui.fillDescription(payload.description); });
-    var requiredTopics = topicDomain.extractTopics(payload.description);
-    for (var i = 0; i < requiredTopics.length; i++) {
-      (function (topic) {
-        performAction("选择话题" + topic, function () { ui.selectTopic(topic); });
-      })(requiredTopics[i]);
-    }
-    return topicDomain.validateTopics(
-      payload.description,
-      ui.listSelectedTopics(),
-      payload.expectedTopicCount
-    );
+  function performActionThenWait(gate, stage, action, stateCheck) {
+    performAction(stage, action);
+    return waitForNext(gate, stage, stateCheck);
   }
 
-  function reportTopicPending(payload, reason) {
-    resultReporter.report(payload.taskId, {
-      deviceId: context.config.device.deviceId || "",
-      deviceToken: context.config.device.deviceToken || "",
-      status: "TOPIC_PENDING",
-      error: reason || "视频号话题待补充"
-    });
+  function fillDescription(payload) {
+    performAction("填写描述", function () { ui.fillDescription(payload.description); });
   }
 
   function finish(command, payload, status, errorMessage, publishResult, popupFeature) {
@@ -174,8 +172,7 @@ function createWechatChannelsPublishHandler(context, dependencies) {
       });
       return { status: status, error: errorMessage || "", reportFailed: true, reportError: reportFailure };
     }
-    var ackStatus = status === "SUCCEEDED" || status === "TOPIC_PENDING" ||
-      status === "CHANNELS_VERIFY_PENDING" ? "DONE" : "FAILED";
+    var ackStatus = status === "SUCCEEDED" || status === "CHANNELS_VERIFY_PENDING" ? "DONE" : "FAILED";
     uploader.ackCommand(command.id, ackStatus, {
       applied: status === "SUCCEEDED",
       commandType: "PUBLISH_VIDEO_TASK",
@@ -219,36 +216,27 @@ function createWechatChannelsPublishHandler(context, dependencies) {
       logger.info("发布前准备打开App", { taskId: payload.taskId, platform: "WECHAT_CHANNELS" });
       correctWechatStartup(ui);
       assertNoVerification("启动校正");
-      waitForNext(gate, "进入发现", ui.states.discoverReady);
-      performAction("进入发现", function () { ui.openDiscover(); });
-      waitForNext(gate, "进入视频号", ui.states.channelsReady);
-      performAction("进入视频号", function () { ui.openChannels(); });
-      waitForNext(gate, "打开我的", ui.states.mineReady);
-      performAction("打开我的", function () { ui.openMine(); });
-      waitForNext(gate, "打开发表视频", ui.states.publishMenuReady);
-      performAction("打开发表视频", function () { ui.openPublishVideo(); });
-      waitForNext(gate, "选择发布素材", ui.states.albumReady);
-      performAction("打开相册", function () { ui.openAlbum(); });
+      performActionThenWait(gate, "进入发现", function () { ui.openDiscover(); }, ui.states.discoverReady);
+      performActionThenWait(gate, "进入视频号", function () { ui.openChannels(); }, ui.states.channelsReady);
+      performActionThenWait(gate, "打开我的", function () { ui.openMine(); }, ui.states.mineReady);
+      performActionThenWait(gate, "打开发表视频", function () { ui.openPublishVideo(); }, ui.states.publishMenuReady);
+      performActionThenWait(gate, "打开相册", function () { ui.openAlbum(); }, ui.states.galleryReady);
       var materialDecision = materialDomain.chooseVideoMaterial(ui.readFirstGalleryItems());
       if (!materialDecision.valid) throw materialError(materialDecision.reason || "素材未正确上传");
-      performAction("选择发布素材", function () { ui.clickGalleryItem(materialDecision.index); });
-      performAction("素材下一步", function () { ui.clickNext(); });
-      waitForNext(gate, "添加标题", ui.states.titleReady);
-      performAction("添加标题", function () { ui.addTitle(); });
+      performActionThenWait(gate, "选择发布素材", function () { ui.clickGalleryItem(materialDecision.index); }, ui.states.nextReady);
+      performActionThenWait(gate, "素材下一步", function () { ui.clickNext(); }, ui.states.titleReady);
+      performActionThenWait(gate, "打开标题输入", function () { ui.addTitle(); }, ui.states.titleInputReady);
       performAction("输入标题", function () { ui.inputTitle(payload.title); });
       performAction("标题对勾", function () { ui.confirmTitle(); });
       performAction("点击标题框外", function () { ui.tapOutsideTitle(); });
-      performAction("完成标题", function () { ui.completeTitle(); });
-      waitForNext(gate, "等待导出", ui.states.exportComplete);
-      var topicResult = fillAndValidateTopics(payload);
-      if (!topicResult.valid) {
-        if (!topicContinuation) throw topicPending(topicResult.reason || "视频号话题待补充");
-        reportTopicPending(payload, topicResult.reason);
-        payload.description = topicContinuation.waitForResolvedDescription(payload);
-        topicResult = fillAndValidateTopics(payload);
-        if (!topicResult.valid) throw topicPending(topicResult.reason || "视频号话题待补充");
-      }
-      waitForNext(gate, "发表视频", ui.states.publishReady);
+      performActionThenWait(gate, "完成标题", function () { ui.completeTitle(); }, ui.states.exportStarted);
+      waitForNext(gate, "等待导出完成", ui.states.exportComplete);
+      performActionThenWait(gate, "打开封面设置", function () { ui.openCoverSettings(); }, ui.states.coverSourceReady);
+      performActionThenWait(gate, "从相册选择封面", function () { ui.chooseCoverFromAlbum(); }, ui.states.coverGalleryReady);
+      performAction("选择封面素材", function () { ui.clickCoverGalleryItem(0); });
+      performActionThenWait(gate, "完成封面选择", function () { ui.completeCoverSelection(); }, ui.states.coverSourceReady);
+      performActionThenWait(gate, "完成封面设置", function () { ui.completeCoverSettings(); }, ui.states.descriptionReady);
+      fillDescription(payload);
       performAction("发表视频", function () { ui.publish(); });
       var outcome = ui.waitForPublishOutcome(60000, function () { assertNoVerification("发表结果等待"); });
       if (!outcome || !outcome.success) throw new Error(outcome && outcome.reason || "视频号发表结果判定失败");

@@ -44,7 +44,7 @@ function requestBody(overrides: Partial<ManualPublishTestPayload> = {}): ManualP
     deviceId,
     platform: "视频号",
     videoUrl: "https://media.example.test/n3-video.mp4",
-    coverUrl: null,
+    coverUrl: "https://media.example.test/n3-cover.jpg",
     title: "N3 手动测试发布",
     description: "#农业 #丰收 #乡村 #种植 #夏收",
     ...overrides
@@ -122,8 +122,12 @@ describe("POST /admin/publish-tasks/manual-test", () => {
       platform: "WECHAT_CHANNELS",
       accountName: "",
       status: "DISPATCHED",
+      source: "MANUAL_TEST",
+      mode: "IMMEDIATE",
+      reportMode: "NONE",
+      reportStatus: "NOT_REQUIRED",
       title: "N3 手动测试发布",
-      coverUrl: null
+      coverUrl: "https://media.example.test/n3-cover.jpg"
     });
     expect(result.task.dispatchedAt).toBeString();
     expect(result.command).toMatchObject({
@@ -142,8 +146,12 @@ describe("POST /admin/publish-tasks/manual-test", () => {
       platform: "WECHAT_CHANNELS",
       accountName: "",
       status: "DISPATCHED",
+      source: "MANUAL_TEST",
+      mode: "IMMEDIATE",
+      reportMode: "NONE",
+      reportStatus: "NOT_REQUIRED",
       videoUrl: "https://media.example.test/n3-video.mp4",
-      coverUrl: null
+      coverUrl: "https://media.example.test/n3-cover.jpg"
     });
     expect(task?.dispatchedAt).toBeInstanceOf(Date);
 
@@ -162,6 +170,38 @@ describe("POST /admin/publish-tasks/manual-test", () => {
       platform: "WECHAT_CHANNELS",
       downloadDir: "/sdcard/Download/n3-manual"
     });
+  });
+
+  test("persists QUICK_PASTE through the existing manual-test endpoint", async () => {
+    const response = await manualRequest({ ...requestBody(), source: "QUICK_PASTE" });
+    const result = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(result.task).toMatchObject({
+      source: "QUICK_PASTE",
+      mode: "IMMEDIATE",
+      reportMode: "NONE",
+      reportStatus: "NOT_REQUIRED"
+    });
+
+    const task = await db.query.publishTasks.findFirst({
+      where: eq(publishTasks.id, result.task.id)
+    });
+    expect(task).toMatchObject({
+      source: "QUICK_PASTE",
+      mode: "IMMEDIATE",
+      reportMode: "NONE",
+      reportStatus: "NOT_REQUIRED"
+    });
+  });
+
+
+  test("rejects a manual task without a cover URL", async () => {
+    const payload: Record<string, unknown> = { ...requestBody() };
+    delete payload.coverUrl;
+    const response = await manualRequest(payload);
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe("VALIDATION_ERROR");
   });
 
   test("rejects a disabled publish configuration", async () => {
@@ -193,7 +233,15 @@ describe("POST /admin/publish-tasks/manual-test", () => {
     expect((await response.json()).error.code).toBe("VALIDATION_ERROR");
   });
 
+  test("rejects an external source through the manual-test endpoint", async () => {
+    const response = await manualRequest({ ...requestBody(), source: "EXTERNAL_PULL" });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe("VALIDATION_ERROR");
+  });
+
   test("rejects incomplete topic repair and dispatches after valid repair", async () => {
+    await db.delete(mobileCommands).where(eq(mobileCommands.deviceId, deviceId));
+    await db.delete(publishTasks).where(eq(publishTasks.configId, enabledConfigId));
     const [task] = await db.insert(publishTasks).values({
       configId: enabledConfigId,
       taskId: `n5b-topics-route-${suffix}`,
@@ -201,6 +249,7 @@ describe("POST /admin/publish-tasks/manual-test", () => {
       accountName: "N5B路由账号",
       title: "N5B 话题补全路由",
       description: "只有 #一个",
+      coverUrl: "https://media.example.test/n5b-topic-cover.jpg",
       videoUrl: "https://media.example.test/n5b-topic.mp4",
       status: "TOPIC_PENDING",
       matchedDeviceId: deviceId,

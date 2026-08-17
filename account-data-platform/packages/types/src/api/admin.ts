@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  accountWarmupRunPayloadSchema,
+  accountWarmupStopPayloadSchema,
+  videoWarmupStopPayloadSchema,
+} from "../domain/account-warmup";
 
 export const adminLoginSchema = z.object({
   username: z.string().trim().min(1),
@@ -210,16 +215,49 @@ export const updateDeviceSchema = z.object({
 
 export type UpdateDevicePayload = z.infer<typeof updateDeviceSchema>;
 
+export const updateBaseConnectivityThresholdSchema = z.object({
+  offlineThresholdSeconds: z.number().int().min(15).max(150)
+}).strict();
+
+export type UpdateBaseConnectivityThresholdPayload = z.infer<typeof updateBaseConnectivityThresholdSchema>;
+
+export const exitAgentAppPayloadSchema = z.object({
+  lockScreen: z.boolean().default(false)
+}).strict();
+
+export type ExitAgentAppPayload = z.infer<typeof exitAgentAppPayloadSchema>;
+
 export const createMobileCommandSchema = z.object({
   deviceId: z.string().min(1),
   taskId: z.string().optional(),
   assignmentId: z.string().uuid().optional(),
   commandSequence: z.number().int().positive().optional(),
   idempotencyKey: z.string().trim().min(1).max(160).optional(),
-  commandType: z.enum(["START", "PAUSE", "RESUME", "STOP", "REFRESH_CONFIG", "STATUS", "RESTART_APP", "RESTART_AGENT", "CHECK_UPDATE", "UPDATE_AGENT", "UPLOAD_LOG"]),
+  commandType: z.enum(["START", "PAUSE", "RESUME", "STOP", "OPEN_AGENT_APP", "START_AGENT", "STOP_AGENT", "EXIT_AGENT_APP", "REFRESH_CONFIG", "STATUS", "RESTART_APP", "RESTART_AGENT", "CHECK_UPDATE", "UPDATE_AGENT", "UPLOAD_LOG", "ACCOUNT_WARMUP_RUN", "ACCOUNT_WARMUP_STOP", "VIDEO_WARMUP_STOP"]),
   payload: z.record(z.unknown()).optional(),
   expiresInSeconds: z.number().int().min(60).max(86400).default(3600)
-});
+}).superRefine((value, context) => {
+  const schema = value.commandType === "ACCOUNT_WARMUP_RUN"
+    ? accountWarmupRunPayloadSchema
+    : value.commandType === "ACCOUNT_WARMUP_STOP"
+      ? accountWarmupStopPayloadSchema
+      : value.commandType === "VIDEO_WARMUP_STOP"
+        ? videoWarmupStopPayloadSchema
+        : value.commandType === "EXIT_AGENT_APP"
+          ? exitAgentAppPayloadSchema
+          : null;
+  if (!schema) return;
+  const parsed = schema.safeParse(value.commandType === "EXIT_AGENT_APP" ? value.payload ?? {} : value.payload);
+  if (parsed.success) return;
+  parsed.error.issues.forEach((issue) => context.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ["payload", ...issue.path],
+    message: issue.message
+  }));
+}).transform((value) => value.commandType === "EXIT_AGENT_APP"
+  ? { ...value, payload: exitAgentAppPayloadSchema.parse(value.payload ?? {}) }
+  : value
+);
 
 export type CreateMobileCommandPayload = z.infer<typeof createMobileCommandSchema>;
 
@@ -279,15 +317,67 @@ export const createTaskAssignmentCommandSchema = z.object({
 export type CreateTaskAssignmentCommandPayload = z.infer<typeof createTaskAssignmentCommandSchema>;
 
 export const createAgentVersionSchema = z.object({
-  version: z.string().min(1),
+  version: z.string().trim().min(1).max(64),
   channel: z.enum(["stable", "gray", "dev", "biz-scripts"]).default("stable"),
-  minSupportedVersion: z.string().optional(),
-  packageUrl: z.string().optional(),
-  sha256: z.string().optional(),
-  entryFile: z.string().default("main.js"),
-  releaseNote: z.string().optional(),
+  minSupportedVersion: z.string().trim().min(1).max(64).optional(),
+  packageUrl: z.string().url().refine((value) => /^https?:\/\//i.test(value), {
+    message: "packageUrl must use http or https"
+  }).optional(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/i, "sha256 must be 64 hexadecimal characters").optional(),
+  entryFile: z.string().trim().min(1).max(100).default("main.js"),
+  releaseNote: z.string().max(5000).optional(),
   forceUpdate: z.boolean().default(false),
   status: z.enum(["DRAFT", "PUBLISHED", "REVOKED"]).default("PUBLISHED")
+}).superRefine((value, context) => {
+  if (value.channel !== "biz-scripts") return;
+  if (!/^\d+(?:\.\d+)+$/.test(value.version)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["version"],
+      message: "biz-scripts version must use dot-separated numbers"
+    });
+  }
+  if (value.status !== "PUBLISHED") return;
+  if (!value.packageUrl) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["packageUrl"], message: "published biz-scripts require packageUrl" });
+  }
+  if (!value.sha256) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["sha256"], message: "published biz-scripts require sha256" });
+  }
+  if (value.entryFile !== "biz-script-manifest.json") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["entryFile"],
+      message: "biz-scripts entryFile must be biz-script-manifest.json"
+    });
+  }
 });
 
 export type CreateAgentVersionPayload = z.infer<typeof createAgentVersionSchema>;
+
+export const agentVersionChannelSchema = z.enum(["stable", "gray", "dev", "biz-scripts"]);
+
+export const agentVersionListQuerySchema = z.object({
+  channel: agentVersionChannelSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(100)
+}).strict();
+
+export type AgentVersionListQuery = z.infer<typeof agentVersionListQuerySchema>;
+
+export const agentUpdateEventListQuerySchema = z.object({
+  channel: agentVersionChannelSchema.default("biz-scripts"),
+  deviceCode: z.string().trim().min(1).max(64).optional(),
+  eventType: z.enum(["CHECKED", "DOWNLOADED", "VERIFIED", "APPLIED", "FAILED", "ROLLBACK"]).optional(),
+  version: z.string().trim().min(1).max(64).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(50)
+}).strict();
+
+export type AgentUpdateEventListQuery = z.infer<typeof agentUpdateEventListQuerySchema>;
+
+export const buildBizScriptReleaseSchema = z.object({
+  releaseNote: z.string().trim().max(5000).optional(),
+  forceUpdate: z.boolean().default(false)
+}).strict();
+
+export type BuildBizScriptReleasePayload = z.infer<typeof buildBizScriptReleaseSchema>;

@@ -47,7 +47,8 @@ function getScriptDir() {
 }
 var SCRIPT_DIR = getScriptDir();
 var MAIN_PATH = files.join(SCRIPT_DIR, "main.js");
-var CHECK_INTERVAL_MS = 60000;
+var agentEngineIdentity = require(files.join(SCRIPT_DIR, "core/agent-engine-identity.js"));
+var CHECK_INTERVAL_MS = 10 * 1000;
 var UPDATE_CHECK_INTERVAL_MS = 2 * 60000;
 var WATCHDOG_LOCK_TTL_MS = 90000;
 var lastUpdateCheckAt = 0;
@@ -61,44 +62,12 @@ function getWatchdogStorage() {
   }
 }
 
-function engineSourceText(engine) {
-  try {
-    var source = engine && engine.getSource && engine.getSource();
-    return source && source.toString ? source.toString() : "";
-  } catch (error) {
-    return "";
-  }
-}
-
-function isCurrentEngine(engine, current) {
-  if (!engine || !current) {
-    return false;
-  }
-  try {
-    if (engine === current) {
-      return true;
-    }
-    if (engine.id !== undefined && current.id !== undefined && engine.id === current.id) {
-      return true;
-    }
-  } catch (error) {
-  }
-  return false;
-}
-
-function isEngineFile(engine, fileName) {
-  var sourceText = engineSourceText(engine);
-  return sourceText === fileName ||
-    sourceText.indexOf("/" + fileName) >= 0 ||
-    sourceText.indexOf("\\" + fileName) >= 0;
-}
-
 function isMainRunning() {
   try {
     var current = engines.myEngine();
     var all = engines.all();
     for (var i = 0; i < all.length; i++) {
-      if (!isCurrentEngine(all[i], current) && isEngineFile(all[i], "main.js")) {
+      if (!agentEngineIdentity.isCurrentEngine(all[i], current) && agentEngineIdentity.isEngineFile(all[i], "main.js")) {
         return true;
       }
     }

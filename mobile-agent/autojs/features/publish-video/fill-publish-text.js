@@ -1,26 +1,12 @@
-// 原中文名：填写标题描述话题.js；职责：填写标题、描述与话题。
-function topicPending(message) {
-  var error = new Error(message);
-  error.publishStatus = "TOPIC_PENDING";
-  return error;
-}
+// 原中文名：填写标题描述话题.js；职责：填写标题与作品描述。
 
-function createFillPublishTextStep(ui, topicDomain) {
+function createFillPublishTextStep(ui) {
   return function fillPublishText(payload) {
     try {
       ui.fillTitleAndDescription(payload.title, payload.description);
-      var requiredTopics = topicDomain.extractTopics(payload.description);
-      for (var i = 0; i < requiredTopics.length; i++) ui.selectTopic(requiredTopics[i]);
-      var validation = topicDomain.validateTopics(
-        payload.description,
-        ui.listSelectedTopics(),
-        payload.expectedTopicCount
-      );
-      if (!validation.valid) throw topicPending(validation.reason || "话题待补充");
-      return validation;
+      return { valid: true };
     } catch (error) {
-      if (error && error.publishStatus) throw error;
-      throw topicPending("填写标题描述话题失败：" + String(error));
+      throw new Error("填写标题和作品描述失败：" + String(error));
     }
   };
 }

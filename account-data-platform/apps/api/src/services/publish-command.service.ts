@@ -2,6 +2,7 @@ import { mobileCommands } from "@pkg/db/schema";
 import { and, eq, isNull } from "drizzle-orm";
 import { config } from "../config";
 import { markDeviceCommandIssued } from "../repositories/device.repository";
+import { validatePublishMaterial } from "./publish-material.service";
 import { db } from "../repositories/db";
 
 type PublishCommandDatabase = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -27,13 +28,17 @@ export type PublishCommandConfig = {
 };
 
 function commandValues(task: PublishCommandTask, commandConfig: PublishCommandConfig) {
+  const materialValidation = validatePublishMaterial(task);
+  if (!materialValidation.valid) {
+    throw new Error("PUBLISH_TASK_MATERIAL_INVALID:" + materialValidation.code);
+  }
   return {
     taskId: task.id,
     platform: task.platform,
     title: task.title,
     description: task.description,
-    coverUrl: task.coverUrl,
-    videoUrl: task.videoUrl,
+    coverUrl: materialValidation.coverUrl,
+    videoUrl: materialValidation.videoUrl,
     responseDelayMsMin: commandConfig.responseDelayMsMin,
     responseDelayMsMax: commandConfig.responseDelayMsMax,
     actionWaitMsMin: commandConfig.actionWaitMsMin,

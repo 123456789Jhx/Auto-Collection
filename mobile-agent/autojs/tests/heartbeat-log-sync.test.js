@@ -4,9 +4,11 @@ var createHeartbeatService = require("../app/heartbeat.js").createHeartbeatServi
 function createContext() {
   var uploadedLogs = [];
   var uploadedHeartbeats = [];
+  var bizScriptChecks = [];
   return {
     uploadedLogs: uploadedLogs,
     uploadedHeartbeats: uploadedHeartbeats,
+    bizScriptChecks: bizScriptChecks,
     context: {
       config: {
         runtime: {
@@ -62,6 +64,12 @@ function createContext() {
         getActiveTaskType: function () {
           return "live";
         }
+      },
+      bizScriptUpdater: {
+        check: function (force) {
+          bizScriptChecks.push(force);
+          return { checked: true };
+        }
       }
     }
   };
@@ -94,7 +102,23 @@ function testCommerceCardImmediateHeartbeatUsesLiveSceneType() {
   assert.strictEqual(fixture.uploadedHeartbeats[0].currentTaskType, "commerce_card_live_comment");
 }
 
+function testBizScriptUpdatesOnlyWhileIdle() {
+  var fixture = createContext();
+  var service = createHeartbeatService(fixture.context);
+  var now = Date.now();
+
+  service.writeHeartbeat("live", now - 1000, now + 1000);
+  ["running", "paused", "stopped", "error"].forEach(function (status) {
+    service.reportImmediateHeartbeat("live", status, status);
+  });
+  assert.strictEqual(fixture.bizScriptChecks.length, 0, "active or transitional heartbeats must not check updates");
+
+  service.reportImmediateHeartbeat("", "idle", "待命中");
+  assert.deepStrictEqual(fixture.bizScriptChecks, [false], "idle heartbeat should check once");
+}
+
 testHeartbeatAutoUploadsCurrentLogWithThrottle();
 testCommerceCardImmediateHeartbeatUsesLiveSceneType();
+testBizScriptUpdatesOnlyWhileIdle();
 
 console.log("heartbeat-log-sync tests passed");

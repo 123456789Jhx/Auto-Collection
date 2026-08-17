@@ -1,6 +1,6 @@
 import { DeleteOutlined, LinkOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Form, InputNumber, Modal, Popconfirm, Select, Table, message, type TableColumnsType } from "antd";
+import { App as AntdApp, Button, Form, InputNumber, Modal, Popconfirm, Select, Table, type TableColumnsType } from "antd";
 import {
   bindRemoteScriptDevice,
   getRemoteScriptBindings,
@@ -29,6 +29,7 @@ type Props = {
 
 export function RemoteScriptBindingsModal({ open, config, onCancel }: Props) {
   const [form] = Form.useForm<BindingFormValues>();
+  const { message } = AntdApp.useApp();
   const queryClient = useQueryClient();
   const bindingsQuery = useQuery({
     queryKey: ["remoteScriptBindings", config?.id],

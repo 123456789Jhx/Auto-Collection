@@ -46,43 +46,14 @@ function getScriptDir() {
   return "/storage/emulated/0/燎原星火";
 }
 var SCRIPT_DIR = getScriptDir();
-
-function engineSourceText(engine) {
-  try {
-    var source = engine && engine.getSource && engine.getSource();
-    return source && source.toString ? source.toString() : "";
-  } catch (error) {
-    return "";
-  }
-}
-
-function isCurrentEngine(engine, current) {
-  if (!engine || !current) {
-    return false;
-  }
-  try {
-    if (engine === current) {
-      return true;
-    }
-    if (engine.id !== undefined && current.id !== undefined && engine.id === current.id) {
-      return true;
-    }
-  } catch (error) {
-  }
-  return false;
-}
-
-function isMainEngine(engine) {
-  var sourceText = engineSourceText(engine);
-  return sourceText.indexOf("/main.js") >= 0 || sourceText.indexOf("\\main.js") >= 0;
-}
+var agentEngineIdentity = require(files.join(SCRIPT_DIR, "core/agent-engine-identity.js"));
 
 function hasOtherMainEngine() {
   try {
     var current = engines.myEngine();
     var all = engines.all();
     for (var i = 0; i < all.length; i++) {
-      if (!isCurrentEngine(all[i], current) && isMainEngine(all[i])) {
+      if (!agentEngineIdentity.isCurrentEngine(all[i], current) && agentEngineIdentity.isEngineFile(all[i], "main.js")) {
         return true;
       }
     }

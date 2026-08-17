@@ -9,6 +9,7 @@ import {
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  App as AntdApp,
   Button,
   Input,
   Popconfirm,
@@ -17,10 +18,9 @@ import {
   Table,
   Tag,
   Typography,
-  message,
   type TableColumnsType
 } from "antd";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createRemoteScriptConfig,
   deleteRemoteScriptConfig,
@@ -49,13 +49,28 @@ function formatDate(value: string) {
 type RemoteScriptsContentProps = {
   fixedScriptKey?: string;
   title?: string;
+  description?: string;
+  publishSourceMode?: PublishSourceMode;
+  hideBindingAction?: boolean;
+  defaultPublishSourceMode?: PublishSourceMode;
 };
+
+export type PublishSourceMode = "direct_material" | "external_pull";
+
+export function getPublishSourceMode(config: RemoteScriptConfig): PublishSourceMode {
+  return config.configPayload.sourceMode === "direct_material" ? "direct_material" : "external_pull";
+}
 
 export function RemoteScriptsContent({
   fixedScriptKey,
-  title = "远程脚本"
+  title = "远程脚本",
+  description,
+  publishSourceMode,
+  hideBindingAction = false,
+  defaultPublishSourceMode
 }: RemoteScriptsContentProps) {
   const queryClient = useQueryClient();
+  const { message } = AntdApp.useApp();
   const [selectedScriptKey, setSelectedScriptKey] = useState<string>();
   const [status, setStatus] = useState<RemoteScriptStatus>();
   const [keywordInput, setKeywordInput] = useState("");
@@ -71,9 +86,27 @@ export function RemoteScriptsContent({
     queryFn: getRemoteScriptDefinitions
   });
   const effectiveScriptKey = fixedScriptKey ?? selectedScriptKey;
+  const queryPage = publishSourceMode ? 1 : page;
+  const queryPageSize = publishSourceMode ? 100 : pageSize;
+  const remoteScriptConfigsKey = [
+    "remoteScriptConfigs",
+    effectiveScriptKey,
+    status,
+    keyword,
+    queryPage,
+    queryPageSize,
+    publishSourceMode
+  ] as const;
   const configsQuery = useQuery({
-    queryKey: ["remoteScriptConfigs", effectiveScriptKey, status, keyword, page, pageSize],
-    queryFn: () => getRemoteScriptConfigs({ scriptKey: effectiveScriptKey, status, keyword, page, pageSize })
+    queryKey: remoteScriptConfigsKey,
+    queryFn: () => getRemoteScriptConfigs({
+      scriptKey: effectiveScriptKey,
+      status,
+      keyword,
+      sourceMode: publishSourceMode,
+      page: queryPage,
+      pageSize: queryPageSize
+    })
   });
   const definitions = useMemo(
     () => (definitionsQuery.data ?? []).filter((item) => !fixedScriptKey || item.scriptKey === fixedScriptKey),
@@ -86,20 +119,52 @@ export function RemoteScriptsContent({
     ])),
     [definitions]
   );
+  const visibleConfigs = useMemo(() => {
+    const configs = configsQuery.data?.data ?? [];
+    if (!publishSourceMode) return configs;
+    return configs.filter((config) => (
+      config.scriptKey === "publish_video" && getPublishSourceMode(config) === publishSourceMode
+    ));
+  }, [configsQuery.data?.data, publishSourceMode]);
 
-  async function refreshList() {
-    await queryClient.invalidateQueries({ queryKey: ["remoteScriptConfigs"] });
+  const duplicateDefaultWarningRef = useRef<string | null>(null);
+  const directDefaultConfigs = useMemo(
+    () => publishSourceMode === "direct_material"
+      ? visibleConfigs.filter((config) => config.configPayload.isDefault === true)
+      : [],
+    [publishSourceMode, visibleConfigs]
+  );
+
+  useEffect(() => {
+    const warningKey = directDefaultConfigs.map((config) => config.id).sort().join(",");
+    if (directDefaultConfigs.length < 2 || warningKey === duplicateDefaultWarningRef.current) return;
+    duplicateDefaultWarningRef.current = warningKey;
+    message.warning("检测到多个默认发布执行配置，请保留一个默认配置。");
+  }, [directDefaultConfigs]);
+
+  function refreshList() {
+    return queryClient.invalidateQueries({ queryKey: remoteScriptConfigsKey, exact: true })
+      .catch(() => message.warning("列表刷新失败，请稍后手动刷新；配置已保存。"));
   }
 
   const saveMutation = useMutation({
     mutationFn: (input: RemoteScriptConfigSavePayload) => input.mode === "create"
       ? createRemoteScriptConfig(input.payload)
       : updateRemoteScriptConfig(input.id, input.payload),
-    onSuccess: async () => {
+    onSuccess: (savedConfig) => {
+      const isDefaultDirectMaterial = getPublishSourceMode(savedConfig) === "direct_material"
+        && savedConfig.configPayload.isDefault === true;
       message.success(editingConfig ? "配置已更新" : "配置已创建");
+      if (isDefaultDirectMaterial) message.info("已设为粘贴发布默认执行配置。");
       setModalOpen(false);
       setEditingConfig(null);
-      await refreshList();
+      void refreshList();
+      if (isDefaultDirectMaterial) {
+        void queryClient.invalidateQueries({
+          queryKey: ["remoteScriptConfigs", "publish_video", "ENABLED", "paste-publish"],
+          exact: true
+        }).catch(() => message.warning("粘贴发布默认配置刷新失败，请手动刷新后确认。"));
+      }
     },
     onError: (error: Error) => message.error(error.message || "配置保存失败")
   });
@@ -107,17 +172,17 @@ export function RemoteScriptsContent({
     mutationFn: (config: RemoteScriptConfig) => updateRemoteScriptConfig(config.id, {
       status: config.status === "ENABLED" ? "DISABLED" : "ENABLED"
     }),
-    onSuccess: async (config) => {
+    onSuccess: (config) => {
       message.success(config.status === "ENABLED" ? "配置已启用" : "配置已停用");
-      await refreshList();
+      void refreshList();
     },
     onError: (error: Error) => message.error(error.message || "状态更新失败")
   });
   const deleteMutation = useMutation({
     mutationFn: deleteRemoteScriptConfig,
-    onSuccess: async () => {
+    onSuccess: () => {
       message.success("配置已删除");
-      await refreshList();
+      void refreshList();
     },
     onError: (error: Error) => message.error(error.message || "删除失败")
   });
@@ -129,6 +194,7 @@ export function RemoteScriptsContent({
       render: (value: string, record) => (
         <div>
           <Typography.Text strong>{value}</Typography.Text>
+          {publishSourceMode === "direct_material" && record.configPayload.isDefault === true ? <Tag color="gold">默认</Tag> : null}
           {record.remark ? <div><Typography.Text type="secondary">{record.remark}</Typography.Text></div> : null}
         </div>
       )
@@ -159,7 +225,7 @@ export function RemoteScriptsContent({
     {
       title: "操作",
       key: "actions",
-      width: 340,
+      width: hideBindingAction ? 240 : 340,
       render: (_, record) => (
         <Space size="small" wrap>
           <Button
@@ -172,9 +238,11 @@ export function RemoteScriptsContent({
           >
             编辑
           </Button>
-          <Button type="text" icon={<LinkOutlined />} onClick={() => setBindingConfig(record)}>
-            绑定设备
-          </Button>
+          {!hideBindingAction ? (
+            <Button type="text" icon={<LinkOutlined />} onClick={() => setBindingConfig(record)}>
+              绑定设备
+            </Button>
+          ) : null}
           <Button
             type="text"
             icon={record.status === "ENABLED" ? <StopOutlined /> : <CheckCircleOutlined />}
@@ -203,7 +271,8 @@ export function RemoteScriptsContent({
       <div className="ops-page-header">
         <div>
           <Typography.Title level={3}>{title}</Typography.Title>
-          <Typography.Text type="secondary">共 {configsQuery.data?.total ?? 0} 条配置</Typography.Text>
+          {description ? <div><Typography.Text type="secondary">{description}</Typography.Text></div> : null}
+          <Typography.Text type="secondary">共 {publishSourceMode ? visibleConfigs.length : configsQuery.data?.total ?? 0} 条配置</Typography.Text>
         </div>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => void configsQuery.refetch()} loading={configsQuery.isFetching} />
@@ -267,10 +336,10 @@ export function RemoteScriptsContent({
           <Table<RemoteScriptConfig>
             rowKey="id"
             columns={columns}
-            dataSource={configsQuery.data?.data ?? []}
+            dataSource={visibleConfigs}
             loading={configsQuery.isLoading || configsQuery.isFetching}
             scroll={{ x: 980 }}
-            pagination={{
+            pagination={publishSourceMode ? false : {
               current: page,
               pageSize,
               total: configsQuery.data?.total ?? 0,
@@ -290,17 +359,22 @@ export function RemoteScriptsContent({
         config={editingConfig}
         definitions={definitions}
         loading={saveMutation.isPending}
+        defaultPublishSourceMode={defaultPublishSourceMode}
+        lockedPublishSourceMode={publishSourceMode}
+        hideAdvancedJson={publishSourceMode === "direct_material"}
         onCancel={() => {
           setModalOpen(false);
           setEditingConfig(null);
         }}
         onSave={(payload) => saveMutation.mutate(payload)}
       />
-      <RemoteScriptBindingsModal
-        open={Boolean(bindingConfig)}
-        config={bindingConfig}
-        onCancel={() => setBindingConfig(null)}
-      />
+      {!hideBindingAction ? (
+        <RemoteScriptBindingsModal
+          open={Boolean(bindingConfig)}
+          config={bindingConfig}
+          onCancel={() => setBindingConfig(null)}
+        />
+      ) : null}
     </>
   );
 }

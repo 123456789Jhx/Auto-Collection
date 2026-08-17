@@ -1,31 +1,34 @@
 {
-  "name": "燎原星火",
-  "main": "launcher.js",
-  "versionName": "1.0.64",
-  "versionCode": 100,
-  "packageName": "com.agri.video.collector",
-  "description": "Agri video collector mobile agent",
-  "build": {
-    "build_id": "AGRI-20260618114441",
-    "build_number": 27,
-    "build_time": 1781754281992
-  },
-  "launchConfig": {
-    "hideLogs": false
-  },
-  "scripts": {},
-  "optimization": {
-    "removeOpenCv": true,
-    "removeMediaInfo": true,
-    "removeBarcodeScanner": true,
-    "removePngQuant": true,
-    "removeTerminalNative": false,
-    "removeOpenCc": true,
-    "removeJiebaAssets": true,
-    "removePinyinData": true,
-    "removeAndroidDevicesDb": true,
-    "excludeTests": true,
-    "enableMinify": false,
-    "unusedResources": true
-  }
+    "name":  "燎原星火",
+    "main":  "launcher.js",
+    "versionName":  "1.0.89",
+    "versionCode":  125,
+    "packageName":  "com.agri.video.collector",
+    "description":  "Agri video collector mobile agent",
+    "build":  {
+                  "build_id":  "AGRI-20260618114441",
+                  "build_number":  27,
+                  "build_time":  1781754281992
+              },
+    "launchConfig":  {
+                         "hideLogs":  false,
+                         "runOnBoot":  false
+                     },
+    "scripts":  {
+
+                },
+    "optimization":  {
+                         "removeOpenCv":  true,
+                         "removeMediaInfo":  true,
+                         "removeBarcodeScanner":  true,
+                         "removePngQuant":  true,
+                         "removeTerminalNative":  false,
+                         "removeOpenCc":  true,
+                         "removeJiebaAssets":  true,
+                         "removePinyinData":  true,
+                         "removeAndroidDevicesDb":  true,
+                         "excludeTests":  true,
+                         "enableMinify":  false,
+                         "unusedResources":  true
+                     }
 }

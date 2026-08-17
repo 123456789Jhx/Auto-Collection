@@ -1,5 +1,7 @@
 import {
   createAgentVersionSchema,
+  accountWarmupVocabularyQuerySchema,
+  accountWarmupVocabularySaveSchema,
   createCommerceCardExecutionApprovalSchema,
   createMobileCommandSchema,
   createTaskAssignmentCommandSchema,
@@ -10,6 +12,7 @@ import {
   resolveCommerceCardCommentActionSchema,
   revokeCommerceCardExecutionApprovalSchema,
   updateDeviceSchema,
+  updateBaseConnectivityThresholdSchema,
   updateDeviceTaskConfigSchema,
   updateTaskSchema
 } from "@pkg/types";
@@ -19,7 +22,7 @@ import { validationError } from "../lib/validation";
 import { adminAuth, type AdminVariables } from "../middleware/admin-auth";
 import { loginAdmin } from "../services/auth.service";
 import { createCommand, getCommands } from "../services/command.service";
-import { clearDeviceToken, deleteDeviceRecord, getDeviceDailyProgress, getDeviceProgressHistory, getDeviceTaskConfig, getDevices, getLiveCommentActions, getLiveCommentDeviceSummary, getLogDates, getLogDeviceSummary, getLogFileDates, getLogFileDetail, getLogFiles, getLogs, getOverview, getRecordDates, getRecordDeviceSummary, getRecords, getTasks, rotateDeviceToken, updateDevice, updateDeviceTaskConfig, updateTaskConfig } from "../services/admin.service";
+import { clearDeviceToken, deleteDeviceRecord, getDeviceDailyProgress, getDeviceProgressHistory, getDeviceTaskConfig, getDevices, getLiveCommentActions, getLiveCommentDeviceSummary, getLogDates, getLogDeviceSummary, getLogFileDates, getLogFileDetail, getLogFiles, getLogs, getOverview, getRecordDates, getRecordDeviceSummary, getRecords, getTasks, rotateDeviceToken, updateBaseConnectivityThreshold, updateDevice, updateDeviceTaskConfig, updateTaskConfig } from "../services/admin.service";
 import { getAgentVersions, publishAgentVersion } from "../services/agent-version.service";
 import { createTaskAssignmentCommandFromAdmin, createTaskAssignmentFromAdmin, getTaskAssignments } from "../services/task-orchestrator.service";
 import { deleteLiveTarget, getCommerceCardFeaturePreviewData, listLiveTargetDetails, replaceLiveTargetDeviceBindings, upsertLiveTarget, upsertLiveTargetFeatureConfig } from "../repositories/live-target.repository";
@@ -27,13 +30,21 @@ import { FeatureAllowlistDeviceNotFoundError, FeatureControlRevisionConflictErro
 import { FeatureActivationNotReadyError, FeatureRolloutRejectedError, getFeatureRolloutControl, listFeatureRolloutControls, updateFeatureRolloutControl } from "../services/feature-rollout-control.service";
 import { ConfigRevisionConflictError, ConfigRevisionRequiredError, liveTargetFeatureConfigSchema, liveTargetFeatureTypeSchema, liveTargetPayloadSchema } from "../services/live-target-config.service";
 import { publishTaskRoutes } from "./publish-tasks";
+import { publishScheduleRoutes } from "./publish-schedules";
 import { AssignmentRuntimeError } from "../repositories/task-assignment.repository";
+import { ExitAgentAppConflictError } from "../repositories/command.repository";
 import { createExecutionApproval, getExecutionApprovals, revokeExecutionApproval } from "../services/commerce-card-execution-approval.service";
 import { resolveCommentAction } from "../services/commerce-card-comment-action.service";
 import { getTaskAssignmentEvents } from "../services/task-assignment-runtime.service";
 import { listRemoteScriptDefinitions } from "../services/remote-script-registry";
 import { remoteScriptConfigRoutes } from "./remote-scripts";
+import { publishInterfaceBindingRoutes } from "./publish-interface-bindings";
+import { publishInterfaceRunRoutes } from "./publish-interface-runs";
+import { publishInterfaceMonitorRoutes } from "./publish-interface-monitor";
+import { singleInterfacePublishRoutes } from "./single-interface-publish";
 import { guardLegacyMobileCommand, guardLegacyTaskAssignment } from "../services/legacy-freeze";
+import { deleteAccountWarmupVocabulary, getAccountWarmupVocabulary, saveAccountWarmupVocabulary } from "../services/account-warmup-vocabulary.service";
+import { deviceRecoveryRoutes } from "../features/device-recovery/device-recovery.runtime";
 
 const adminLoginSchema = z.object({
   username: z.string().trim().min(1),
@@ -96,11 +107,52 @@ adminRoutes.post("/auth/login", async (c) => {
 });
 
 adminRoutes.use("*", adminAuth);
+adminRoutes.route("/device-recovery", deviceRecoveryRoutes.admin);
 
 adminRoutes.get("/auth/me", async (c) => c.json({ user: c.get("admin") }));
 adminRoutes.get("/remote-scripts/definitions", async (c) => c.json(await listRemoteScriptDefinitions()));
 adminRoutes.route("/remote-scripts", remoteScriptConfigRoutes);
 adminRoutes.route("/publish-tasks", publishTaskRoutes);
+adminRoutes.route("/publish-schedules", publishScheduleRoutes);
+adminRoutes.route("/interface-publish/bindings", publishInterfaceBindingRoutes);
+adminRoutes.route("/interface-publish/runs", publishInterfaceRunRoutes);
+adminRoutes.route("/interface-publish/monitor", publishInterfaceMonitorRoutes);
+adminRoutes.route("/single-interface-publish", singleInterfacePublishRoutes);
+adminRoutes.get("/account-warmup/vocabulary", async (c) => {
+  const parsed = accountWarmupVocabularyQuerySchema.safeParse(c.req.query());
+  if (!parsed.success) {
+    return validationError(c, parsed.error);
+  }
+  return c.json(await getAccountWarmupVocabulary(parsed.data));
+});
+adminRoutes.post("/account-warmup/vocabulary", async (c) => {
+  let body: unknown;
+  try { body = await c.req.json(); } catch {
+    return c.json({ error: { code: "VALIDATION_ERROR", message: "Invalid JSON request body", details: {} } }, 400);
+  }
+  const parsed = accountWarmupVocabularySaveSchema.safeParse(body);
+  if (!parsed.success) {
+    return validationError(c, parsed.error);
+  }
+  return c.json(await saveAccountWarmupVocabulary(parsed.data));
+});
+adminRoutes.delete("/account-warmup/vocabulary/:id", async (c) => {
+  const parsed = z.string().uuid().safeParse(c.req.param("id"));
+  if (!parsed.success) {
+    return validationError(c, parsed.error);
+  }
+  const result = await deleteAccountWarmupVocabulary(parsed.data);
+  if (!result) {
+    return c.json({
+      error: {
+        code: "ACCOUNT_WARMUP_VOCABULARY_NOT_FOUND",
+        message: "Account warmup vocabulary entry was not found",
+        details: {}
+      }
+    }, 404);
+  }
+  return c.json(result);
+});
 adminRoutes.get("/overview", async (c) => c.json(await getOverview()));
 adminRoutes.get("/devices", async (c) => c.json(await getDevices()));
 adminRoutes.patch("/devices/:deviceCode", async (c) => {
@@ -108,7 +160,26 @@ adminRoutes.patch("/devices/:deviceCode", async (c) => {
   if (!parsed.success) {
     return validationError(c, parsed.error);
   }
-  return c.json(await updateDevice(c.req.param("deviceCode"), parsed.data));
+  try {
+    return c.json(await updateDevice(c.req.param("deviceCode"), parsed.data));
+  } catch (error) {
+    if (String(error instanceof Error ? error.message : error) === "PUBLISH_ACCOUNT_BINDING_CONFLICT") {
+      return c.json({ error: { code: "PUBLISH_ACCOUNT_BINDING_CONFLICT", message: "该平台账号已绑定其他设备", details: {} } }, 409);
+    }
+    throw error;
+  }
+});
+adminRoutes.patch("/devices/:deviceCode/base-connectivity", async (c) => {
+  const parsed = updateBaseConnectivityThresholdSchema.safeParse(await c.req.json());
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    return c.json(await updateBaseConnectivityThreshold(c.req.param("deviceCode"), parsed.data));
+  } catch (error) {
+    if (String(error instanceof Error ? error.message : error) === "DEVICE_NOT_FOUND") {
+      return c.json({ error: { code: "DEVICE_NOT_FOUND", message: "Device was not found", details: {} } }, 404);
+    }
+    throw error;
+  }
 });
 adminRoutes.delete("/devices/:deviceCode", async (c) => c.json(await deleteDeviceRecord(c.req.param("deviceCode"))));
 adminRoutes.post("/devices/:deviceCode/token", async (c) => c.json(await rotateDeviceToken(c.req.param("deviceCode"))));
@@ -348,6 +419,15 @@ adminRoutes.post("/mobile-commands", async (c) => {
   try {
     return c.json(await createCommand(parsed.data), 201);
   } catch (error) {
+    if (error instanceof ExitAgentAppConflictError) {
+      return c.json({
+        error: {
+          code: error.message,
+          message: "An active EXIT_AGENT_APP command conflicts with this request",
+          details: error.details
+        }
+      }, 409);
+    }
     return assignmentRuntimeErrorResponse(c, error);
   }
 });

@@ -12,6 +12,19 @@ function createFinishedTaskStatePatch(options) {
   };
 }
 
+function createStartupIdleStatePatch(options) {
+  options = options || {};
+  if (options.autoStart || options.manualOverride) {
+    return null;
+  }
+  return {
+    running: false,
+    paused: false,
+    stopRequested: false,
+    lastMessage: "未执行任务"
+  };
+}
+
 function createCollectorApp(context) {
   var config = context.config;
   var logger = context.logger;
@@ -215,6 +228,22 @@ function createCollectorApp(context) {
       return "running";
     }
     return "idle";
+  }
+
+  function checkBizScriptVersion(force) {
+    var status = currentAgentStatus();
+    if (status !== "idle") {
+      return { checked: false, deferred: true, status: status };
+    }
+    if (!context.bizScriptUpdater || !context.bizScriptUpdater.check) {
+      return { checked: false, unavailable: true };
+    }
+    try {
+      return context.bizScriptUpdater.check(force);
+    } catch (error) {
+      logger.warn("biz scripts version check failed", { message: String(error) });
+      return { checked: false, failed: true, message: String(error) };
+    }
   }
 
   function checkAgentVersion(force) {
@@ -1176,6 +1205,19 @@ function createCollectorApp(context) {
       return true;
     }
 
+    var startupIdleState = createStartupIdleStatePatch({
+      autoStart: !!config.schedule.autoStart,
+      manualOverride: !!floatyControl.state.manualOverride
+    });
+    if (startupIdleState) {
+      floatyControl.update(startupIdleState);
+    }
+
+    var bizScriptUpdate = checkBizScriptVersion(true);
+    if (bizScriptUpdate && bizScriptUpdate.applied) {
+      return false;
+    }
+
     try {
       controlLoop.preloadPublishVideoHandler();
     } catch (preloadError) {
@@ -1238,6 +1280,10 @@ function createCollectorApp(context) {
             heartbeatService.reportAgentHeartbeat("idle", "未执行任务", true);
           }
           controlLoop.syncBackendAsync(false, "idle_loop");
+          var bizScriptIdleUpdate = checkBizScriptVersion(false);
+          if (bizScriptIdleUpdate && bizScriptIdleUpdate.applied) {
+            return;
+          }
           checkAgentVersion(false);
           maybeUploadDailyLogs();
           heartbeatService.reportAgentHeartbeat(currentAgentStatus(), floatyControl.state.lastMessage || "未执行任务", false);
@@ -1275,5 +1321,6 @@ function createCollectorApp(context) {
 
 module.exports = {
   createCollectorApp: createCollectorApp,
-  createFinishedTaskStatePatch: createFinishedTaskStatePatch
+  createFinishedTaskStatePatch: createFinishedTaskStatePatch,
+  createStartupIdleStatePatch: createStartupIdleStatePatch
 };
