@@ -43,7 +43,12 @@ export const accountWarmupVideoConfigSchema = z.object({
   secondsPerVideo: z.literal(10).default(10)
 }).strict();
 
-export const accountWarmupFeatureKeySchema = z.enum(["target_live_interaction", "video_warmup"]);
+export const accountWarmupLiveCommentEntryConfigSchema = z.object({
+  targetKeyword: z.string().trim().min(1).max(100),
+  minViewerCount: z.coerce.number().int().min(0).default(300)
+}).strict();
+
+export const accountWarmupFeatureKeySchema = z.enum(["target_live_interaction", "video_warmup", "live_comment_entry"]);
 
 const accountWarmupTargetLiveRunPayloadSchema = z.object({
   featureKey: z.literal("target_live_interaction"),
@@ -57,9 +62,16 @@ const accountWarmupVideoRunPayloadSchema = z.object({
   config: accountWarmupVideoConfigSchema
 }).strict();
 
+const accountWarmupLiveCommentEntryRunPayloadSchema = z.object({
+  featureKey: z.literal("live_comment_entry"),
+  batchId: batchIdSchema,
+  config: accountWarmupLiveCommentEntryConfigSchema
+}).strict();
+
 export const accountWarmupRunPayloadSchema = z.discriminatedUnion("featureKey", [
   accountWarmupTargetLiveRunPayloadSchema,
-  accountWarmupVideoRunPayloadSchema
+  accountWarmupVideoRunPayloadSchema,
+  accountWarmupLiveCommentEntryRunPayloadSchema
 ]);
 
 export const accountWarmupStopPayloadSchema = z.object({
@@ -76,6 +88,7 @@ export const videoWarmupStopPayloadSchema = z.object({
 export type AccountWarmupFeatureKey = z.infer<typeof accountWarmupFeatureKeySchema>;
 export type AccountWarmupTargetLiveConfig = z.infer<typeof accountWarmupTargetLiveConfigSchema>;
 export type AccountWarmupVideoConfig = z.infer<typeof accountWarmupVideoConfigSchema>;
+export type AccountWarmupLiveCommentEntryConfig = z.infer<typeof accountWarmupLiveCommentEntryConfigSchema>;
 export type AccountWarmupRunPayload = z.infer<typeof accountWarmupRunPayloadSchema>;
 export type AccountWarmupStopPayload = z.infer<typeof accountWarmupStopPayloadSchema>;
 export type VideoWarmupStopPayload = z.infer<typeof videoWarmupStopPayloadSchema>;
