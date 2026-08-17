@@ -267,7 +267,7 @@ export const mobileCommands = pgTable(
     index("idx_mobile_commands_tenant_assignment").on(table.tenantId, table.assignmentId),
     uniqueIndex("uniq_mobile_commands_tenant_assignment_sequence").on(table.tenantId, table.assignmentId, table.commandSequence).where(sql`${table.assignmentId} is not null and ${table.commandSequence} is not null and ${table.deletedAt} is null`),
     uniqueIndex("uniq_mobile_commands_tenant_idempotency_key").on(table.tenantId, table.idempotencyKey).where(sql`${table.idempotencyKey} is not null and ${table.deletedAt} is null`),
-    uniqueIndex("uniq_mobile_commands_active_executor_channel").on(table.tenantId, table.deviceId, table.executorType).where(sql`${table.status} in ('CLAIMED', 'RUNNING') and ${table.deletedAt} is null`)
+    uniqueIndex("uniq_mobile_commands_active_executor_channel").on(table.tenantId, table.deviceId, table.executorType).where(sql`${table.status} in ('CLAIMED', 'RUNNING') and ${table.commandType} <> 'ACCOUNT_WARMUP_STOP' and ${table.deletedAt} is null`)
   ]
 );
 

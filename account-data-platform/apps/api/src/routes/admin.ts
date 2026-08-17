@@ -325,7 +325,17 @@ adminRoutes.post("/live-target-device-bindings", async (c) => {
     return liveTargetMutationError(c, error);
   }
 });
-adminRoutes.get("/mobile-commands", async (c) => c.json(await getCommands()));
+adminRoutes.get("/mobile-commands", async (c) => {
+  const batchId = c.req.query("batchId")?.trim() || undefined;
+  const featureKey = c.req.query("featureKey")?.trim() || undefined;
+  if (batchId && !z.string().uuid().safeParse(batchId).success) {
+    return c.json({ error: { code: "VALIDATION_ERROR", message: "batchId 必须是有效 UUID", details: {} } }, 400);
+  }
+  if (featureKey && featureKey.length > 64) {
+    return c.json({ error: { code: "VALIDATION_ERROR", message: "featureKey 过长", details: {} } }, 400);
+  }
+  return c.json(await getCommands({ batchId, featureKey }));
+});
 adminRoutes.get("/task-assignments", async (c) => c.json(await getTaskAssignments()));
 adminRoutes.get("/task-assignments/:id/events", async (c) => {
   try {

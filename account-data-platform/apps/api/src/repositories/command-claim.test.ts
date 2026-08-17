@@ -25,3 +25,12 @@ test("stale native-base claims time out quickly without shortening business Agen
   expect(source).toContain("claimed_at <= now() - interval '45 seconds'");
   expect(source).toContain("expires_at <= now()");
 });
+
+test("allows a matching warmup stop through while its run is active", () => {
+  const source = readFileSync(repositoryPath, "utf8");
+
+  expect(source).toContain("command.command_type = 'ACCOUNT_WARMUP_STOP'");
+  expect(source).toContain("run.command_type = 'ACCOUNT_WARMUP_RUN'");
+  expect(source).toContain("run.status IN ('CLAIMED', 'RUNNING')");
+  expect(source).toContain("OR command.command_type = 'ACCOUNT_WARMUP_STOP'");
+});

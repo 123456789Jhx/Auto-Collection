@@ -55,6 +55,39 @@ function createAccountWarmupCommandBridge(context) {
     return uploader.ackCommand(command.id, status, result || {});
   }
 
+  function reportStage(runState, event) {
+    if (!runState || runState.terminal || runState.stopRequested || !active || active.commandId !== runState.commandId) {
+      return;
+    }
+    event = event || {};
+    var stage = String(event.stage || "").trim();
+    if (!stage) return;
+    runState.stageHistory.push(stage);
+    if (runState.stageHistory.length > 20) {
+      runState.stageHistory.splice(0, runState.stageHistory.length - 20);
+    }
+    var progress = {
+      featureKey: runState.featureKey,
+      batchId: runState.batchId,
+      stage: stage,
+      stageHistory: runState.stageHistory.slice()
+    };
+    Object.keys(event).forEach(function (key) {
+      if (key !== "stage" && key !== "stageHistory" && event[key] !== undefined) {
+        progress[key] = event[key];
+      }
+    });
+    try {
+      ack(runState.command, "RUNNING", progress);
+    } catch (error) {
+      logger.warn("养号阶段进度回执失败", {
+        commandId: runState.commandId,
+        stage: stage,
+        message: String(error)
+      });
+    }
+  }
+
   function interruptWorker(runState) {
     if (!runState || !runState.thread || typeof runState.thread.interrupt !== "function") return false;
     try {
@@ -88,8 +121,23 @@ function createAccountWarmupCommandBridge(context) {
     return cleanupResult || { completed: false, reason: "STOP_CLEANUP_EMPTY_RESULT" };
   }
 
+  function preserveLiveEntryProgress(runState, result) {
+    result = result || {};
+    if (!runState || runState.featureKey !== "live_comment_entry") return result;
+    var preserved = {};
+    Object.keys(result).forEach(function (key) { preserved[key] = result[key]; });
+    preserved.featureKey = runState.featureKey;
+    preserved.batchId = runState.batchId;
+    preserved.stageHistory = runState.stageHistory.slice();
+    if (!preserved.stage && preserved.stageHistory.length) {
+      preserved.stage = preserved.stageHistory[preserved.stageHistory.length - 1];
+    }
+    return preserved;
+  }
+
   function finishCommand(command, status, result) {
     if (!active || active.commandId !== command.id) return false;
+    result = preserveLiveEntryProgress(active, result);
     active.terminal = { status: status, result: result || {} };
     var response;
     try {
@@ -122,6 +170,7 @@ function createAccountWarmupCommandBridge(context) {
       featureKey: String(payload.featureKey || ""),
       stopRequested: false,
       stopCleanupStarted: false,
+      stageHistory: [],
       command: command,
       thread: null
     };
@@ -134,7 +183,10 @@ function createAccountWarmupCommandBridge(context) {
     var thread = startThread(function () {
       try {
         if (!registry) throw preloadError || new Error("account warmup registry is not preloaded");
-        var task = registry.create(String(payload.featureKey || ""), { logger: logger });
+        var task = registry.create(String(payload.featureKey || ""), {
+          logger: logger,
+          reportStage: function (event) { reportStage(runState, event); }
+        });
         var runPayload = {};
         var config = payload.config || {};
         for (var key in config) {
@@ -144,9 +196,14 @@ function createAccountWarmupCommandBridge(context) {
         var result = task.run(runPayload, {
           shouldStop: function () { return !!runState.stopRequested; }
         });
+        if (runState.featureKey === "live_comment_entry" && result && result.status === "STOPPED") {
+          result.status = "LIVE_COMMENT_ENTRY_STOPPED";
+        }
         var done = result && (
           result.status === "TARGET_LIVE_ENTERED" ||
           result.status === "VIDEO_WARMUP_DOUYIN_OPENED" ||
+          result.status === "LIVE_COMMENT_ENTRY_ENTERED" ||
+          result.status === "LIVE_COMMENT_ENTRY_STOPPED" ||
           result.status === "STOPPED"
         );
         finishCommand(command, done ? "DONE" : "FAILED", result || { status: "FAILED" });
@@ -175,16 +232,20 @@ function createAccountWarmupCommandBridge(context) {
     runState.stopRequested = true;
     runState.stopCleanupStarted = true;
     interruptWorker(runState);
-    var cleanupResult = cleanupImmediatelyAfterStop(runState);
+    var cleanupResult = runState.featureKey === "live_comment_entry"
+      ? { completed: true, reason: "LIVE_COMMENT_ENTRY_CLEANUP_SKIPPED" }
+      : cleanupImmediatelyAfterStop(runState);
     ack(command, "DONE", {
-      status: "STOPPED",
+      status: runState.featureKey === "live_comment_entry" ? "LIVE_COMMENT_ENTRY_STOPPED" : "STOPPED",
       targetCommandId: String(payload.targetCommandId || ""),
       cleanup: cleanupResult
     });
-    finishCommand(runState.command, "DONE", {
-      status: "STOPPED",
+    var runStopResult = {
+      status: runState.featureKey === "live_comment_entry" ? "LIVE_COMMENT_ENTRY_STOPPED" : "STOPPED",
       cleanup: cleanupResult
-    });
+    };
+    if (runState.featureKey === "live_comment_entry") runStopResult.stage = "STOPPED";
+    finishCommand(runState.command, "DONE", runStopResult);
   }
 
   function videoStopCommand(command) {

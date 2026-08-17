@@ -19,6 +19,12 @@ function adminRequest(path: string, body: unknown) {
   });
 }
 
+function adminGet(path: string) {
+  return app.request(path, {
+    headers: { Authorization: `Bearer ${adminToken}` }
+  });
+}
+
 beforeAll(async () => {
   const login = await app.request("/api/v1/admin/auth/login", {
     method: "POST",
@@ -121,6 +127,26 @@ describe("account warmup mobile commands", () => {
       }
     });
     expect(response.status).toBe(400);
+  });
+
+  test("filters command progress by batch without the global recent-command window", async () => {
+    const filteredBatchId = crypto.randomUUID();
+    const created = await adminRequest("/api/v1/admin/mobile-commands", {
+      deviceId: deviceCode,
+      commandType: "ACCOUNT_WARMUP_RUN",
+      payload: {
+        featureKey: "live_comment_entry",
+        batchId: filteredBatchId,
+        config: { targetKeyword: "筛选测试", minViewerCount: 300 }
+      }
+    });
+    expect(created.status).toBe(201);
+
+    const response = await adminGet(`/api/v1/admin/mobile-commands?batchId=${filteredBatchId}`);
+    expect(response.status).toBe(200);
+    const commands = await response.json();
+    expect(commands).toHaveLength(1);
+    expect(commands[0].payloadJson.batchId).toBe(filteredBatchId);
   });
 
   test("creates one video stop command per device and batch", async () => {

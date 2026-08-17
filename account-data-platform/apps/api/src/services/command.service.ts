@@ -212,8 +212,8 @@ export async function createScriptConfigUpdatedCommand(input: ScriptConfigUpdate
   }
 }
 
-export async function getCommands() {
-  return listMobileCommands(100);
+export async function getCommands(filter: { batchId?: string; featureKey?: string } = {}) {
+  return listMobileCommands(100, filter);
 }
 
 async function resolveCommandDevice(deviceCode: string, deviceToken?: string) {

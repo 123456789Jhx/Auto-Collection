@@ -188,13 +188,31 @@ export async function ignorePendingCommandsByDeviceId(deviceId: string, commandT
     .returning();
 }
 
-export async function listMobileCommands(limit = 50) {
+export type MobileCommandListFilter = {
+  batchId?: string;
+  featureKey?: string;
+};
+
+export async function listMobileCommands(limit = 50, filter: MobileCommandListFilter = {}) {
+  const conditions = [
+    eq(mobileCommands.tenantId, config.tenantId),
+    isNull(mobileCommands.deletedAt)
+  ];
+  if (filter.batchId) {
+    conditions.push(sql`${mobileCommands.payloadJson} ->> 'batchId' = ${filter.batchId}`);
+  }
+  if (filter.featureKey) {
+    conditions.push(sql`${mobileCommands.payloadJson} ->> 'featureKey' = ${filter.featureKey}`);
+  }
+  // A batch-scoped query must be able to restore every selected device;
+  // the unfiltered admin list keeps its conservative recent-command window.
+  const effectiveLimit = filter.batchId ? Math.max(limit, 1000) : limit;
   return db
     .select()
     .from(mobileCommands)
-    .where(and(eq(mobileCommands.tenantId, config.tenantId), isNull(mobileCommands.deletedAt)))
+    .where(and(...conditions))
     .orderBy(desc(mobileCommands.createdAt))
-    .limit(limit);
+    .limit(effectiveLimit);
 }
 
 export async function findPendingCommandsByDeviceId(deviceId: string, limit = 10) {
@@ -269,14 +287,59 @@ export async function claimPendingCommandByDeviceId(deviceId: string, executorTy
           AND command.status = 'PENDING'
           AND command.deleted_at IS NULL
           AND command.expires_at > now()
-          AND NOT EXISTS (
-            SELECT 1
-            FROM mobile_commands AS active
-            WHERE active.tenant_id = command.tenant_id
-              AND active.device_id = command.device_id
-              AND active.executor_type = command.executor_type
-              AND active.status IN ('CLAIMED', 'RUNNING')
-              AND active.deleted_at IS NULL
+          -- A stop is a control message: it must be claimable while its
+          -- matching run is still active, but it must not open a second
+          -- business worker on the same device.
+          AND (
+            NOT EXISTS (
+              SELECT 1
+              FROM mobile_commands AS active
+              WHERE active.tenant_id = command.tenant_id
+                AND active.device_id = command.device_id
+                AND active.executor_type = command.executor_type
+                AND active.status IN ('CLAIMED', 'RUNNING')
+                AND active.command_type <> 'ACCOUNT_WARMUP_STOP'
+                AND active.deleted_at IS NULL
+            )
+            OR command.command_type = 'ACCOUNT_WARMUP_STOP'
+          )
+          AND (
+            command.command_type = 'ACCOUNT_WARMUP_STOP'
+            OR NOT EXISTS (
+              SELECT 1
+              FROM mobile_commands AS active_stop
+              WHERE active_stop.tenant_id = command.tenant_id
+                AND active_stop.device_id = command.device_id
+                AND active_stop.executor_type = command.executor_type
+                AND active_stop.command_type = 'ACCOUNT_WARMUP_STOP'
+                AND active_stop.status IN ('CLAIMED', 'RUNNING')
+                AND active_stop.deleted_at IS NULL
+            )
+          )
+          AND (
+            command.command_type <> 'ACCOUNT_WARMUP_STOP'
+            OR NOT EXISTS (
+              SELECT 1
+              FROM mobile_commands AS run
+              WHERE run.tenant_id = command.tenant_id
+                AND run.device_id = command.device_id
+                AND run.executor_type = command.executor_type
+                AND run.command_type = 'ACCOUNT_WARMUP_RUN'
+                AND run.status IN ('CLAIMED', 'RUNNING')
+                AND run.deleted_at IS NULL
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM mobile_commands AS run
+              WHERE run.tenant_id = command.tenant_id
+                AND run.device_id = command.device_id
+                AND run.executor_type = command.executor_type
+                AND run.command_type = 'ACCOUNT_WARMUP_RUN'
+                AND run.status IN ('CLAIMED', 'RUNNING')
+                AND run.deleted_at IS NULL
+                AND run.id::text = command.payload_json ->> 'targetCommandId'
+                AND run.payload_json ->> 'batchId' = command.payload_json ->> 'batchId'
+            )
           )
         ORDER BY command.created_at, command.id
         FOR UPDATE SKIP LOCKED
