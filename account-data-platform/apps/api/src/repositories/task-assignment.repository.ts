@@ -6,6 +6,22 @@ import { db } from "./db";
 export const ACTIVE_ASSIGNMENT_STATUSES = ["PENDING", "DISPATCHED", "RUNNING", "PAUSING", "PAUSED", "RESUMING", "BLOCKED"] as const;
 export const TERMINAL_ASSIGNMENT_STATUSES = ["SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED"] as const;
 const LEGACY_INACTIVE_ASSIGNMENT_STATUSES = ["ACKED"] as const;
+const TERMINAL_COMMAND_ACK_STATUSES = ["DONE", "FAILED", "IGNORED", "TIMED_OUT"] as const;
+
+export type TaskAssignmentCommandAckStatus = "FETCHED" | "CLAIMED" | "RUNNING" | "DONE" | "FAILED" | "IGNORED" | "TIMED_OUT";
+
+type TaskAssignmentCommandAckState = {
+  status: string;
+  resultJson: Record<string, unknown> | null;
+  fetchedAt: Date | null;
+  acknowledgedAt: Date | null;
+};
+
+type TaskAssignmentCommandAckInput = {
+  status: TaskAssignmentCommandAckStatus;
+  result: Record<string, unknown>;
+  payloadHash: string;
+};
 
 type DatabaseTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -16,6 +32,42 @@ export class AssignmentRuntimeError extends Error {
     super(code);
     this.details = details;
   }
+}
+
+export function resolveTaskAssignmentCommandAckDisposition(
+  command: Pick<TaskAssignmentCommandAckState, "status" | "resultJson">,
+  input: Pick<TaskAssignmentCommandAckInput, "status" | "payloadHash">
+) {
+  if (TERMINAL_COMMAND_ACK_STATUSES.includes(command.status as typeof TERMINAL_COMMAND_ACK_STATUSES[number])) {
+    const previousHash = command.resultJson && typeof command.resultJson._ackHash === "string"
+      ? command.resultJson._ackHash
+      : "";
+    if (command.status === input.status && previousHash === input.payloadHash) {
+      return "IDEMPOTENT" as const;
+    }
+    throw new AssignmentRuntimeError("COMMAND_ACK_CONFLICT", { currentStatus: command.status });
+  }
+  if (input.status === "RUNNING" && !["CLAIMED", "FETCHED", "RUNNING"].includes(command.status)) {
+    throw new AssignmentRuntimeError("COMMAND_ACK_CONFLICT", { currentStatus: command.status });
+  }
+  return "UPDATE" as const;
+}
+
+export function buildTaskAssignmentCommandAckPatch(
+  command: Pick<TaskAssignmentCommandAckState, "fetchedAt" | "acknowledgedAt">,
+  input: TaskAssignmentCommandAckInput,
+  now: Date
+) {
+  return {
+    status: input.status,
+    resultJson: { ...input.result, _ackHash: input.payloadHash },
+    fetchedAt: input.status === "FETCHED" || input.status === "CLAIMED" ? now : command.fetchedAt,
+    acknowledgedAt: TERMINAL_COMMAND_ACK_STATUSES.includes(input.status as typeof TERMINAL_COMMAND_ACK_STATUSES[number])
+      ? now
+      : command.acknowledgedAt,
+    updatedAt: now,
+    updatedBy: "mobile_agent"
+  };
 }
 
 async function lockAssignment(transaction: DatabaseTransaction, assignmentId: string) {
@@ -515,7 +567,7 @@ export async function completeTaskAssignmentAtomic(input: {
 export async function acknowledgeTaskAssignmentCommandAtomic(input: {
   commandId: string;
   deviceId: string;
-  status: "FETCHED" | "CLAIMED" | "RUNNING" | "DONE" | "FAILED" | "IGNORED" | "TIMED_OUT";
+  status: TaskAssignmentCommandAckStatus;
   result: Record<string, unknown>;
   payloadHash: string;
 }) {
@@ -534,31 +586,16 @@ export async function acknowledgeTaskAssignmentCommandAtomic(input: {
     if (!command) {
       throw new AssignmentRuntimeError("COMMAND_NOT_FOUND");
     }
-    if (["DONE", "FAILED", "IGNORED", "TIMED_OUT"].includes(command.status)) {
-      const previousHash = command.resultJson && typeof command.resultJson._ackHash === "string"
-        ? command.resultJson._ackHash
-        : "";
-      if (command.status === input.status && previousHash === input.payloadHash) {
-        const assignment = command.assignmentId ? await lockAssignment(transaction, command.assignmentId) : null;
-        return { command, assignment, event: null, idempotent: true };
-      }
-      throw new AssignmentRuntimeError("COMMAND_ACK_CONFLICT", { currentStatus: command.status });
-    }
-    if (input.status === "RUNNING" && !["CLAIMED", "FETCHED"].includes(command.status)) {
-      throw new AssignmentRuntimeError("COMMAND_ACK_CONFLICT", { currentStatus: command.status });
+    const disposition = resolveTaskAssignmentCommandAckDisposition(command, input);
+    if (disposition === "IDEMPOTENT") {
+      const assignment = command.assignmentId ? await lockAssignment(transaction, command.assignmentId) : null;
+      return { command, assignment, event: null, idempotent: true };
     }
 
     const now = new Date();
     const [updatedCommand] = await transaction
       .update(mobileCommands)
-      .set({
-        status: input.status,
-        resultJson: { ...input.result, _ackHash: input.payloadHash },
-        fetchedAt: input.status === "FETCHED" || input.status === "CLAIMED" ? now : command.fetchedAt,
-        acknowledgedAt: input.status === "DONE" || input.status === "FAILED" || input.status === "IGNORED" || input.status === "TIMED_OUT" ? now : command.acknowledgedAt,
-        updatedAt: now,
-        updatedBy: "mobile_agent"
-      })
+      .set(buildTaskAssignmentCommandAckPatch(command, input, now))
       .where(eq(mobileCommands.id, command.id))
       .returning();
     if (!command.assignmentId || input.status === "FETCHED" || input.status === "CLAIMED" || input.status === "RUNNING") {

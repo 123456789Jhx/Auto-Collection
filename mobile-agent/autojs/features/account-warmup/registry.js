@@ -13,55 +13,86 @@ function createAccountWarmupRegistry(context) {
   var liveSessionRunnerModule = context.loadBizScript("features/account-warmup/live-session-runner.js");
   var liveTransientPopupModule = context.loadBizScript("features/account-warmup/live-transient-popup.js");
   var videoWarmupFoundationModule = context.loadBizScript("features/account-warmup/video-warmup-foundation.js");
+  var liveCommentEntryModule = context.loadBizScript("features/account-warmup/live-comment-entry.js");
   var postPublishCleanupModule = context.loadBizScript("features/publish-video/douyin-post-publish-cleanup.js");
   var fastSearch = fastSearchModule.createFastTargetSearch({ context: context, logger: context.logger });
-  var interactionRunner = interactionRunnerModule.createAccountWarmupInteractionRunner({
-    context: context,
-    logger: context.logger,
-    createLikePlan: likePlanModule.createLikePlan,
-    createLikeTiming: likeTimingModule.createLikeTiming,
-    createLikeExecutor: likeExecutorModule.createLikeExecutor,
-    createCommentFlow: commentFlowModule.createCommentFlow
-  });
-  var liveTransientPopup = liveTransientPopupModule.createLiveTransientPopupHandler({
-    logger: context.logger
-  });
-  var liveSessionRunner = liveSessionRunnerModule.createLiveSessionRunner({
-    logger: context.logger,
-    interactionRunner: interactionRunner,
-    wait: function (delayMs) { if (typeof sleep === "function") sleep(delayMs); },
-    waitRandom: function (min, max) {
-      var delayMs = Math.floor(min + Math.random() * (max - min + 1));
-      if (typeof sleep === "function") sleep(delayMs);
-      return delayMs;
-    },
-    isLiveRoom: function () { return !!(context.douyin && context.douyin.isLiveRoomVisible && context.douyin.isLiveRoomVisible()); },
-    dismissTransientPopup: function () { return liveTransientPopup.dismiss(); },
-    nextLive: function () {
-      if (!context.douyin || !context.douyin.nextVideo) return false;
-      return context.douyin.nextVideo() !== false;
+  var interactionRunner = null;
+  var liveTransientPopup = null;
+  var liveSessionRunner = null;
+  var finalCleanup = null;
+
+  function getInteractionRunner(logger) {
+    if (!interactionRunner) {
+      interactionRunner = interactionRunnerModule.createAccountWarmupInteractionRunner({
+        context: context,
+        logger: logger || context.logger,
+        createLikePlan: likePlanModule.createLikePlan,
+        createLikeTiming: likeTimingModule.createLikeTiming,
+        createLikeExecutor: likeExecutorModule.createLikeExecutor,
+        createCommentFlow: commentFlowModule.createCommentFlow
+      });
     }
-  });
-  var finalCleanup = postPublishCleanupModule.createDouyinPostPublishCleanup({
-    logger: context.logger,
-    cooldownMs: 0,
-    isPublishing: function () { return false; }
-  });
+    return interactionRunner;
+  }
+
+  function getLiveSessionRunner(logger) {
+    if (!liveSessionRunner) {
+      if (!liveTransientPopup) {
+        liveTransientPopup = liveTransientPopupModule.createLiveTransientPopupHandler({ logger: logger || context.logger });
+      }
+      liveSessionRunner = liveSessionRunnerModule.createLiveSessionRunner({
+        logger: logger || context.logger,
+        interactionRunner: getInteractionRunner(logger),
+        wait: function (delayMs) { if (typeof sleep === "function") sleep(delayMs); },
+        waitRandom: function (min, max) {
+          var delayMs = Math.floor(min + Math.random() * (max - min + 1));
+          if (typeof sleep === "function") sleep(delayMs);
+          return delayMs;
+        },
+        isLiveRoom: function () { return !!(context.douyin && context.douyin.isLiveRoomVisible && context.douyin.isLiveRoomVisible()); },
+        dismissTransientPopup: function () { return liveTransientPopup.dismiss(); },
+        nextLive: function () {
+          if (!context.douyin || !context.douyin.nextVideo) return false;
+          return context.douyin.nextVideo() !== false;
+        }
+      });
+    }
+    return liveSessionRunner;
+  }
+
+  function getFinalCleanup(logger) {
+    if (!finalCleanup) {
+      finalCleanup = postPublishCleanupModule.createDouyinPostPublishCleanup({
+        logger: logger || context.logger,
+        cooldownMs: 0,
+        isPublishing: function () { return false; }
+      });
+    }
+    return finalCleanup;
+  }
   var featureFactories = {
     target_live_interaction: function (options) {
       return targetLiveModule.createTargetLiveEntryTask({
         context: context,
         logger: options && options.logger,
         fastSearch: fastSearch,
-        interactionRunner: interactionRunner,
-        sessionRunner: liveSessionRunner,
-        finalCleanup: finalCleanup
+        interactionRunner: getInteractionRunner(options && options.logger),
+        sessionRunner: getLiveSessionRunner(options && options.logger),
+        finalCleanup: getFinalCleanup(options && options.logger)
       });
     },
     video_warmup: function (options) {
       return videoWarmupFoundationModule.createVideoWarmupFoundationTask({
         context: context,
         logger: options && options.logger || context.logger
+      });
+    },
+    live_comment_entry: function (options) {
+      return liveCommentEntryModule.createLiveCommentEntryTask({
+        context: context,
+        logger: options && options.logger || context.logger,
+        fastSearch: fastSearch,
+        reportStage: options && options.reportStage
       });
     }
   };
@@ -74,7 +105,7 @@ function createAccountWarmupRegistry(context) {
 
   function cleanupAfterStop(payload) {
     payload = payload || {};
-    return finalCleanup.run({ taskId: String(payload.taskId || payload.batchId || "") });
+    return getFinalCleanup().run({ taskId: String(payload.taskId || payload.batchId || "") });
   }
 
   return { create: create, cleanupAfterStop: cleanupAfterStop };
