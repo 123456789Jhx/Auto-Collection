@@ -1,5 +1,6 @@
 import { Tabs, Typography } from "antd";
 import { AccountWarmupPage } from "./AccountWarmupPage";
+import { LiveCommentEntryPage } from "./LiveCommentEntryPage";
 import { VideoWarmupPage } from "./VideoWarmupPage";
 
 export function AccountWarmupModulePage() {
@@ -20,6 +21,11 @@ export function AccountWarmupModulePage() {
             key: "video-warmup",
             label: "视频养号",
             children: <VideoWarmupPage />
+          },
+          {
+            key: "live-comment-entry",
+            label: "抓取评论词",
+            children: <LiveCommentEntryPage />
           }
         ]}
       />
