@@ -107,7 +107,7 @@ export function LiveCommentEntryPage() {
     const plannedDeviceById = new Map((batchPlan?.devices ?? []).map((device) => [device.deviceId, device]));
     return commands
       .filter((command) => command.commandType === "ACCOUNT_WARMUP_RUN" &&
-        command.payloadJson?.featureKey === "live_comment_entry" &&
+        command.payloadJson?.featureKey === "isolated_live_comment_entry" &&
         commandBatchId(command) === activeBatchId)
       .map((command) => {
         const device = deviceById.get(command.deviceId);
@@ -181,7 +181,7 @@ export function LiveCommentEntryPage() {
         const latest = await commandsQuery.refetch();
         if (latest.isError) throw latest.error;
         const runCommands = (latest.data ?? []).filter((command) => command.commandType === "ACCOUNT_WARMUP_RUN" &&
-          command.payloadJson?.featureKey === "live_comment_entry" && commandBatchId(command) === input.batch.batchId);
+          command.payloadJson?.featureKey === "isolated_live_comment_entry" && commandBatchId(command) === input.batch.batchId);
         const missingCodes = new Set(findUndispatchedLiveCommentEntryDevices(input.batch, runCommands)
           .map((device) => device.deviceCode));
         deviceCodes = deviceCodes.filter((deviceCode) => missingCodes.has(deviceCode));

@@ -98,6 +98,18 @@ describe("account warmup command contracts", () => {
     })).toMatchObject({ config: { minViewerCount: 300 } });
   });
 
+  test("accepts an isolated live comment entry payload", () => {
+    expect(accountWarmupRunPayloadSchema.parse({
+      featureKey: "isolated_live_comment_entry",
+      batchId,
+      config: { targetKeyword: "药材种植", minViewerCount: 300 }
+    })).toEqual({
+      featureKey: "isolated_live_comment_entry",
+      batchId,
+      config: { targetKeyword: "药材种植", minViewerCount: 300 }
+    });
+  });
+
   test("defaults the live comment entry viewer floor to 300 and rejects negatives", () => {
     expect(accountWarmupRunPayloadSchema.parse({
       featureKey: "live_comment_entry",

@@ -1,6 +1,6 @@
 import type { AccountWarmupRunPayload, AccountWarmupStopPayload } from "@pkg/types";
 
-type LiveCommentEntryRunPayload = Extract<AccountWarmupRunPayload, { featureKey: "live_comment_entry" }>;
+type LiveCommentEntryRunPayload = Extract<AccountWarmupRunPayload, { featureKey: "isolated_live_comment_entry" }>;
 
 export type LiveCommentEntryCommandInput = {
   deviceId: string;
@@ -108,7 +108,7 @@ export function buildLiveCommentEntryCommands(input: {
     deviceId,
     commandType: "ACCOUNT_WARMUP_RUN",
     payload: {
-      featureKey: "live_comment_entry",
+      featureKey: "isolated_live_comment_entry",
       batchId,
       config: { targetKeyword, minViewerCount }
     },

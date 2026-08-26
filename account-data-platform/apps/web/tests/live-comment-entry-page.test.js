@@ -20,6 +20,8 @@ test("shows inputs, multi-device control, progress and scoped stop actions", () 
   const pageSource = fs.readFileSync(path.join(webRoot, "src/routes/LiveCommentEntryPage.tsx"), "utf8");
   const progressSource = fs.readFileSync(path.join(webRoot, "src/components/account-warmup/LiveCommentEntryProgress.tsx"), "utf8");
   const clientSource = fs.readFileSync(path.join(webRoot, "src/lib/api-client-live-comment-entry.ts"), "utf8");
+  const formSource = fs.readFileSync(path.join(webRoot, "src/lib/live-comment-entry-form.ts"), "utf8");
+  const batchSource = fs.readFileSync(path.join(webRoot, "src/lib/live-comment-entry-batch.ts"), "utf8");
   const visibleSource = `${pageSource}\n${progressSource}`;
 
   for (const text of [
@@ -45,7 +47,12 @@ test("shows inputs, multi-device control, progress and scoped stop actions", () 
   assert(clientSource.includes('commandType: "ACCOUNT_WARMUP_RUN"'));
   assert(clientSource.includes('commandType: "ACCOUNT_WARMUP_STOP"'));
   assert(clientSource.includes('"/admin/mobile-commands"'));
-  assert(clientSource.includes('featureKey: "live_comment_entry"'));
+  assert(pageSource.includes('featureKey === "isolated_live_comment_entry"'));
+  assert(!pageSource.includes('featureKey === "live_comment_entry"'));
+  for (const source of [clientSource, formSource, batchSource]) {
+    assert(source.includes('featureKey: "isolated_live_comment_entry"'));
+    assert(!source.includes('featureKey: "live_comment_entry"'));
+  }
 });
 
 test("shows merged candidates with manual selection and explicit vocabulary upload", () => {

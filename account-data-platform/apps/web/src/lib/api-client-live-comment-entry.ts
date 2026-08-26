@@ -11,7 +11,7 @@ export type LiveCommentEntryMobileCommand = AccountWarmupMobileCommand & {
 
 export function getLiveCommentEntryCommands(batchId?: string) {
   return request<LiveCommentEntryMobileCommand[]>("/admin/mobile-commands", {
-    ...(batchId ? { batchId } : { featureKey: "live_comment_entry" })
+    ...(batchId ? { batchId } : { featureKey: "isolated_live_comment_entry" })
   });
 }
 

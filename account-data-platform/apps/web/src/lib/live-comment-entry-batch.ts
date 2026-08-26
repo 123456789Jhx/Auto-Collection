@@ -25,7 +25,7 @@ type CommandDevice = { deviceId?: string; deviceCode?: string };
 type DispatchCommand = {
   deviceId: string;
   payload: {
-    featureKey: "live_comment_entry";
+    featureKey: "isolated_live_comment_entry";
     batchId: string;
     config: { targetKeyword: string; minViewerCount: number };
   };
@@ -162,7 +162,7 @@ export async function dispatchLiveCommentEntryDevices(input: {
   const commands: DispatchCommand[] = deviceCodes.map((deviceId) => ({
     deviceId,
     payload: {
-      featureKey: "live_comment_entry",
+      featureKey: "isolated_live_comment_entry",
       batchId: input.batch.batchId,
       config: {
         targetKeyword: input.batch.targetKeyword,

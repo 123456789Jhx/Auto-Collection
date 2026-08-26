@@ -25,7 +25,7 @@ test("builds one normalized live-entry command per unique device", () => {
 
   assert.deepEqual(commands.map((command) => command.deviceId), ["device-a", "device-b"]);
   assert(commands.every((command) => command.commandType === "ACCOUNT_WARMUP_RUN"));
-  assert(commands.every((command) => command.payload.featureKey === "live_comment_entry"));
+  assert(commands.every((command) => command.payload.featureKey === "isolated_live_comment_entry"));
   assert(commands.every((command) => command.payload.config.targetKeyword === "药材种植"));
   assert(commands.every((command) => command.payload.config.minViewerCount === 0));
 });
