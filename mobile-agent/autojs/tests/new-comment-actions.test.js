@@ -92,6 +92,30 @@ test("layout keeps the required comment and live-room swipe ratios", function ()
   assert.equal(liveRoomSwipe.endY, Math.round(size.height * 0.22));
 });
 
+test("live-room swipe uses its own layout ratios and explicit overrides", function () {
+  var size = { width: 100, height: 200 };
+  var originalStart = layout.SWIPE_OPTIONS.liveRoomStartY;
+  var originalEnd = layout.SWIPE_OPTIONS.liveRoomEndY;
+  var configured;
+  var overridden;
+  try {
+    layout.SWIPE_OPTIONS.liveRoomStartY = 0.64;
+    layout.SWIPE_OPTIONS.liveRoomEndY = 0.36;
+    configured = layout.getLiveRoomSwitchSwipe(size);
+    overridden = layout.getLiveRoomSwitchSwipe(size, {
+      startYRatio: 0.7,
+      endYRatio: 0.3
+    });
+  } finally {
+    layout.SWIPE_OPTIONS.liveRoomStartY = originalStart;
+    layout.SWIPE_OPTIONS.liveRoomEndY = originalEnd;
+  }
+  assert.equal(configured.startY, Math.round(size.height * 0.64));
+  assert.equal(configured.endY, Math.round(size.height * 0.36));
+  assert.equal(overridden.startY, Math.round(size.height * 0.7));
+  assert.equal(overridden.endY, Math.round(size.height * 0.3));
+});
+
 test("click jitter stays inside node bounds and the screen", function () {
   var calls = [];
   var deps = createGestureDeps({
@@ -205,6 +229,28 @@ test("waitForNode times out with finite polling", function () {
   assert.ok(sleeps <= 3);
 });
 
+test("waitForNode normalizes Infinity and NaN to finite polling", function () {
+  var outcomes = [Infinity, NaN].map(function (timeout) {
+    var lookups = 0;
+    var actions = createScreenActions(createScreenDeps({
+      findNode: function () {
+        lookups += 1;
+        if (lookups > 30) { throw new Error("unbounded lookup"); }
+        return null;
+      }
+    }), layout);
+    return { result: actions.waitForNode({}, timeout), lookups: lookups };
+  });
+
+  assert.deepEqual(outcomes.map(function (item) { return item.result.reason; }), [
+    "NODE_TIMEOUT",
+    "NODE_TIMEOUT"
+  ]);
+  outcomes.forEach(function (item) {
+    assert.ok(item.lookups > 0 && item.lookups <= 30);
+  });
+});
+
 test("readText accepts node text and desc", function () {
   var nodes = [
     { text: function () { return "在线 12 人"; }, desc: function () { return "ignored"; } },
@@ -255,6 +301,22 @@ test("captureRegions recycles image after success and parser error", function ()
   assert.equal(failure.success, false);
   assert.equal(failure.reason, "OCR_FAILED");
   assert.equal(recycled, 2);
+});
+
+test("captureRegions stops after parsing and still recycles the image", function () {
+  var stopped = false;
+  var recycled = 0;
+  var actions = createScreenActions(createScreenDeps({
+    shouldStop: function () { return stopped; },
+    captureScreen: function () {
+      return { image: { recycle: function () { recycled += 1; } }, width: 100, height: 200 };
+    },
+    ocr: function () { return { text: "hello" }; },
+    parseOcr: function () { stopped = true; return "hello"; }
+  }), layout);
+
+  assert.deepEqual(actions.captureRegions(["comment"]), STOP_RESULT);
+  assert.equal(recycled, 1);
 });
 
 test("captureRegions checks stop after an empty capture result", function () {

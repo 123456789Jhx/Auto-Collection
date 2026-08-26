@@ -203,7 +203,21 @@ function getCommentSwipe(screenSize, options) {
 }
 
 function getLiveRoomSwitchSwipe(screenSize, options) {
-  return getSwipe("up", screenSize, options);
+  options = options || {};
+  var up = SWIPE_RATIOS.up;
+  return getSwipe("up", screenSize, {
+    ratios: {
+      startX: up.startX,
+      startY: isNumber(options.startYRatio)
+        ? options.startYRatio
+        : SWIPE_OPTIONS.liveRoomStartY,
+      endX: up.endX,
+      endY: isNumber(options.endYRatio)
+        ? options.endYRatio
+        : SWIPE_OPTIONS.liveRoomEndY
+    },
+    durationMs: options.durationMs
+  });
 }
 
 function getCaptureRegions(screenSize) {

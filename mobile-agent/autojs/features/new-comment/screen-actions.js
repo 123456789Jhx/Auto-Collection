@@ -7,6 +7,10 @@ function createScreenActions(deps, layout) {
   deps = deps || {};
   layout = layout || defaultLayout;
 
+  function finiteNumber(value, fallback) {
+    return typeof value === "number" && isFinite(value) ? value : fallback;
+  }
+
   function checkStop() {
     if (typeof deps.shouldStop !== "function") {
       return null;
@@ -72,8 +76,9 @@ function createScreenActions(deps, layout) {
       return stopped;
     }
     var defaults = layout.WAIT_OPTIONS || {};
-    var timeout = typeof timeoutMs === "number" ? Math.max(0, Math.floor(timeoutMs)) : defaults.timeoutMs;
-    var pollInterval = Math.max(1, Math.floor(defaults.pollIntervalMs || 200));
+    var defaultTimeout = finiteNumber(defaults.timeoutMs, 5000);
+    var timeout = Math.max(0, Math.floor(finiteNumber(timeoutMs, defaultTimeout)));
+    var pollInterval = Math.max(1, Math.floor(finiteNumber(defaults.pollIntervalMs, 200)));
     var maxAttempts = Math.max(1, Math.floor(timeout / pollInterval) + 1);
     var start = now();
     if (!start.success) {
@@ -232,6 +237,10 @@ function createScreenActions(deps, layout) {
       var parsed = typeof deps.parseOcr === "function"
         ? deps.parseOcr(raw, captureRegions.value[index])
         : raw;
+      stopped = checkStop();
+      if (stopped) {
+        return stopped;
+      }
       values.push({
         name: captureRegions.value[index].name,
         region: captureRegions.value[index],
