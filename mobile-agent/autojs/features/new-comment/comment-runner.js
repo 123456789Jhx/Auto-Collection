@@ -13,20 +13,23 @@ function createCommentCaptureRunner(options) {
   var defaultControl = options.control;
   var detector = options.detectPlatformVerification;
   var verificationFailure = options.platformVerificationFailure;
-  function assign(target, source) {
-    Object.keys(source || {}).forEach(function (key) { target[key] = source[key]; });
-    return target;
+  function assign(target, source) { Object.keys(source || {}).forEach(function (key) { target[key] = source[key]; }); return target; }
+  function cloneComments(comments) {
+    return (comments || []).map(function (comment) {
+      var clone = assign({}, comment);
+      clone.sources = (comment.sources || []).map(function (source) { return assign({}, source); });
+      return clone;
+    });
   }
   function stage(name, payload) {
+    var event = assign({}, payload);
+    if (event.comments) event.comments = cloneComments(event.comments);
     if (typeof reportStage === "function") {
-      reportStage(assign({ stage: name }, payload));
-    } else if (typeof stageAlias === "function") {
-      stageAlias(name, payload || {});
-    }
+      event.stage = name;
+      reportStage(event);
+    } else if (typeof stageAlias === "function") stageAlias(name, event);
   }
-  function activeControl(control) {
-    return control || defaultControl;
-  }
+  function activeControl(control) { return control || defaultControl; }
   function stopped(control) {
     var active = activeControl(control);
     try {
@@ -38,11 +41,8 @@ function createCommentCaptureRunner(options) {
       return true;
     }
   }
-
-  function stopReason(value) {
-    return value && (value.reason === "STOP_REQUESTED" || value.reasonCode === "STOP_REQUESTED");
-  }
-
+  function stopReason(value) { return value &&
+    (value.reason === "STOP_REQUESTED" || value.reasonCode === "STOP_REQUESTED"); }
   function normalizeAction(raw, failedStage, fromCaller) {
     if (raw && raw.stopped) return { stopped: true, value: raw.value };
     if (raw && raw.failed) {
@@ -70,7 +70,6 @@ function createCommentCaptureRunner(options) {
     }
     return { value: raw };
   }
-
   function invoke(name, failedStage, args, control) {
     if (stopped(control)) return { stopped: true };
     var raw;
@@ -90,15 +89,8 @@ function createCommentCaptureRunner(options) {
     }
     return result;
   }
-
-  function actionAvailable(name) {
-    return typeof callAction === "function" || typeof runtime[name] === "function";
-  }
-
-  function candidates(pages, scope) {
-    return commentCapture.buildCandidates(pages, scope);
-  }
-
+  function actionAvailable(name) { return typeof callAction === "function" || typeof runtime[name] === "function"; }
+  function candidates(pages, scope) { return commentCapture.buildCandidates(pages, scope); }
   function failure(failedStage, reasonCode, message, details) {
     details = details || {};
     var pages = details.pages || [];
@@ -125,7 +117,6 @@ function createCommentCaptureRunner(options) {
       comments: partial
     };
   }
-
   function stoppedResult(pages, scope, swipeCount) {
     var partial = candidates(pages, scope);
     return {
@@ -138,14 +129,19 @@ function createCommentCaptureRunner(options) {
       comments: partial
     };
   }
-
   function detectedValue(raw) {
     if (!raw) return null;
     if (raw.success === true) raw = raw.value;
     if (!raw) return null;
     if (raw.success === false) {
       if (stopReason(raw)) return { stopped: true };
-      if (raw.reason !== "PLATFORM_VERIFICATION" && raw.reasonCode !== "PLATFORM_VERIFICATION") return null;
+      if (raw.reason !== "PLATFORM_VERIFICATION" && raw.reasonCode !== "PLATFORM_VERIFICATION") {
+        return {
+          failed: true,
+          reasonCode: String(raw.reason || raw.reasonCode || "VERIFICATION_CHECK_FAILED"),
+          message: String(raw.message || "平台验证检查失败")
+        };
+      }
       return assign(assign({}, raw.details), {
         detected: true,
         textSample: String(raw.details && raw.details.textSample || raw.textSample || "")
@@ -158,7 +154,6 @@ function createCommentCaptureRunner(options) {
     }
     return null;
   }
-
   function verificationResult(failedStage, phase, details) {
     details = details || {};
     if (stopped(details.control)) return { stopped: true };
@@ -183,6 +178,9 @@ function createCommentCaptureRunner(options) {
     var detection = detectedValue(raw);
     if (!detection) return null;
     if (detection.stopped) return { stopped: true };
+    if (detection.failed) {
+      return failure(failedStage, detection.reasonCode, detection.message, details);
+    }
     var partial = candidates(details.pages || [], details.scope || {});
     var buildFailure = verificationFailure || function (stageName, found) {
       return {
@@ -202,6 +200,14 @@ function createCommentCaptureRunner(options) {
     result.platformVerification = true;
     result.capturePlatformVerification = true;
     if (result.cleanupRequired === undefined) result.cleanupRequired = true;
+    if (result.textSample === undefined) {
+      result.textSample = String(detection.textSample || "").slice(0, 260);
+    }
+    result.verificationDiagnostics = {
+      risk: detection.risk,
+      pageStructure: detection.pageStructure,
+      actionTrace: detection.actionTrace
+    };
     result.pageIndex = details.pageIndex === undefined ? null : details.pageIndex;
     result.swipeCount = details.swipeCount === undefined ? 0 : details.swipeCount;
     result.pageCount = (details.pages || []).length;
@@ -209,13 +215,10 @@ function createCommentCaptureRunner(options) {
     result.comments = partial;
     return result;
   }
-
   function rawCommentText(value) {
     if (typeof value === "string") return value;
-    value = value || {};
-    return String(value.text || value.commentText || value.rawText || "");
+    value = value || {}; return String(value.text || value.commentText || value.rawText || "");
   }
-
   function waitBetween(min, max, failedStage, reasonCode, details) {
     if (!actionAvailable("waitRandom")) {
       return stopped(details.control) ? stoppedResult(details.pages, details.scope, details.swipeCount) : null;
@@ -227,7 +230,6 @@ function createCommentCaptureRunner(options) {
     }
     return null;
   }
-
   function capture(scope, control) {
     scope = scope || {};
     var configuredMax = Number(commentCapture.COMMENT_SWIPE_COUNT);
@@ -389,10 +391,8 @@ function createCommentCaptureRunner(options) {
       comments: captured
     };
   }
-
   return { capture: capture };
 }
-
 module.exports = {
   COMMENT_OCR_ATTEMPTS: COMMENT_OCR_ATTEMPTS,
   MAX_CONSECUTIVE_NO_NEW_PAGES: MAX_CONSECUTIVE_NO_NEW_PAGES,

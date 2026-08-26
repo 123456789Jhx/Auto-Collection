@@ -1,5 +1,4 @@
 "use strict";
-
 var assert = require("node:assert/strict");
 var fs = require("node:fs");
 var path = require("node:path");
@@ -56,8 +55,7 @@ function runLegacy(runtime, control) {
 }
 
 test("runner exports bounded loop constants", function () {
-  assert.equal(runnerModule.COMMENT_OCR_ATTEMPTS, 3);
-  assert.equal(runnerModule.MAX_CONSECUTIVE_NO_NEW_PAGES, 2);
+  assert.deepEqual([runnerModule.COMMENT_OCR_ATTEMPTS, runnerModule.MAX_CONSECUTIVE_NO_NEW_PAGES], [3, 2]);
 });
 
 test("six-page success result and stage payloads stay equivalent to the legacy runner", function () {
@@ -71,11 +69,9 @@ test("six-page success result and stage payloads stay equivalent to the legacy r
   }
   var legacyRun = runLegacy(runtime());
   var isolatedRun = runIsolated(runtime());
-
   assert.deepEqual(isolatedRun.result, legacyRun.result);
   assert.deepEqual(isolatedRun.events, legacyRun.events);
-  assert.equal(isolatedRun.result.commentSwipeCount, 5);
-  assert.equal(isolatedRun.result.commentPageCount, 6);
+  assert.deepEqual([isolatedRun.result.commentSwipeCount, isolatedRun.result.commentPageCount], [5, 6]);
 });
 
 test("empty OCR retries up to the third attempt before continuing through five swipes", function () {
@@ -89,10 +85,7 @@ test("empty OCR retries up to the third attempt before continuing through five s
     swipeComments: function () { swipes += 1; return true; },
     waitRandom: function () {}
   });
-
-  assert.equal(run.result.status, "LIVE_COMMENT_ENTRY_ENTERED");
-  assert.equal(reads, 8);
-  assert.equal(swipes, 5);
+  assert.deepEqual([run.result.status, reads, swipes], ["LIVE_COMMENT_ENTRY_ENTERED", 8, 5]);
   assert.deepEqual(run.events.filter(function (event) {
     return event.stage === "CAPTURING_COMMENTS" && event.pageIndex === 0;
   }).map(function (event) { return event.ocrAttempt; }), [1, 2, 3]);
@@ -111,14 +104,11 @@ test("two already-swiped no-new pages stop early while duplicate sources remain"
     swipeComments: function () { return true; },
     waitRandom: function () {}
   });
-
-  assert.equal(run.result.status, "LIVE_COMMENT_ENTRY_ENTERED");
-  assert.equal(run.result.captureStopReason, "NO_NEW_COMMENTS");
-  assert.equal(run.result.commentSwipeCount, 2);
-  assert.equal(run.result.commentPageCount, 3);
-  assert.equal(run.result.commentCount, 1);
-  assert.equal(run.result.commentSourceCount, 3);
-  assert.equal(run.result.comments[0].sources.length, 3);
+  assert.deepEqual([
+    run.result.status, run.result.captureStopReason, run.result.commentSwipeCount, run.result.commentPageCount
+  ], ["LIVE_COMMENT_ENTRY_ENTERED", "NO_NEW_COMMENTS", 2, 3]);
+  assert.deepEqual([run.result.commentCount, run.result.commentSourceCount,
+    run.result.comments[0].sources.length], [1, 3, 3]);
 });
 
 test("OCR exceptions exhaust three attempts and preserve prior-page candidates", function () {
@@ -132,19 +122,15 @@ test("OCR exceptions exhaust three attempts and preserve prior-page candidates",
     swipeComments: function () { return true; },
     waitRandom: function () {}
   });
-
-  assert.equal(reads, 4);
-  assert.equal(run.result.status, "LIVE_COMMENT_ENTRY_COMMENT_CAPTURE_FAILED");
-  assert.equal(run.result.failedStage, "CAPTURING_COMMENTS");
-  assert.equal(run.result.reasonCode, "COMMENT_OCR_FAILED");
-  assert.equal(run.result.commentCount, 1);
+  assert.deepEqual([reads, run.result.status, run.result.failedStage, run.result.reasonCode,
+    run.result.commentCount], [4, "LIVE_COMMENT_ENTRY_COMMENT_CAPTURE_FAILED",
+    "CAPTURING_COMMENTS", "COMMENT_OCR_FAILED", 1]);
   assert.equal(run.result.comments[0].commentText, "已抓到的评论");
 });
 
 test("missing OCR and swipe capabilities return legacy failure payloads with partial data", function () {
   var noOcr = runIsolated({ swipeComments: function () { return true; } }).result;
   var noSwipe = runIsolated({ readComments: function () { return { text: "甲：首屏评论" }; } }).result;
-
   assert.deepEqual({ status: noOcr.status, stage: noOcr.failedStage, reason: noOcr.reasonCode }, {
     status: "LIVE_COMMENT_ENTRY_COMMENT_CAPTURE_FAILED",
     stage: "CAPTURING_COMMENTS",
@@ -185,11 +171,8 @@ test("Task2 success envelopes and callAction are unwrapped synchronously", funct
       return { success: true, value: true };
     }
   });
-
-  assert.equal(run.result.status, "LIVE_COMMENT_ENTRY_ENTERED");
-  assert.equal(run.result.commentSwipeCount, 2);
-  assert.equal(run.result.commentSourceCount, 3);
-  assert.equal(reads, 3);
+  assert.deepEqual([run.result.status, run.result.commentSwipeCount, run.result.commentSourceCount, reads],
+    ["LIVE_COMMENT_ENTRY_ENTERED", 2, 3, 3]);
   assert.ok(calls.indexOf("waitRandom") >= 0);
 });
 
@@ -213,18 +196,19 @@ test("platform verification stops at all OCR and swipe boundaries with partial c
         return null;
       }
     });
-
-    assert.equal(run.result.status, "LIVE_COMMENT_ENTRY_PLATFORM_VERIFICATION");
-    assert.equal(run.result.cleanupRequired, true);
-    assert.equal(run.result.platformVerification, true);
-    assert.equal(run.result.commentCount, boundary.comments);
-    assert.equal(run.result.swipeCount, boundary.swipes);
-    assert.equal(reads, boundary.reads);
-    assert.equal(swipes, boundary.swipes);
+    assert.deepEqual([run.result.status, run.result.cleanupRequired, run.result.platformVerification],
+      ["LIVE_COMMENT_ENTRY_PLATFORM_VERIFICATION", true, true]);
+    assert.deepEqual([run.result.commentCount, run.result.swipeCount, reads, swipes],
+      [boundary.comments, boundary.swipes, boundary.reads, boundary.swipes]);
   });
 });
 
 test("Task2 verification failure envelope is recognized as platform verification", function () {
+  var diagnostics = {
+    risk: { signal: "slider" },
+    pageStructure: { title: "安全验证" },
+    actionTrace: ["enter-live", "capture"]
+  };
   var run = runIsolated({
     readComments: function () { throw new Error("must not read"); },
     swipeComments: function () { return true; }
@@ -234,35 +218,132 @@ test("Task2 verification failure envelope is recognized as platform verification
         success: false,
         reason: "PLATFORM_VERIFICATION",
         message: "verification required",
-        details: { textSample: "滑块验证" }
+        details: copy({ textSample: "滑块验证" }, diagnostics)
       };
     }
   });
-
-  assert.equal(run.result.reasonCode, "PLATFORM_VERIFICATION");
-  assert.equal(run.result.textSample, "滑块验证");
-  assert.equal(run.result.commentCount, 0);
+  assert.deepEqual([run.result.reasonCode, run.result.textSample, run.result.commentCount],
+    ["PLATFORM_VERIFICATION", "滑块验证", 0]);
+  assert.deepEqual(run.result.verificationDiagnostics, diagnostics);
 });
 
 test("custom platform verification failure receives the legacy partial-count details", function () {
   var received = null;
+  var diagnostics = {
+    risk: { signal: "captcha" },
+    pageStructure: { title: "完成验证" },
+    actionTrace: ["read-comments"]
+  };
   var run = runIsolated({
     readComments: function () { return { text: "甲：已抓取" }; },
     swipeComments: function () { return true; }
   }, {
     detectPlatformVerification: function (stageName, control, details) {
-      return details.phase === "after" ? { detected: true } : null;
+      return details.phase === "after" ? {
+        success: false,
+        reason: "PLATFORM_VERIFICATION",
+        details: copy({ textSample: "请完成验证" }, diagnostics)
+      } : null;
     },
     platformVerificationFailure: function (stageName, detection, details) {
       received = details;
       return { status: "CUSTOM_VERIFICATION", failedStage: stageName };
     }
   });
+  assert.deepEqual([run.result.status, received.commentCount, received.capturePhase, received.phase],
+    ["CUSTOM_VERIFICATION", 1, true, "after"]);
+  assert.deepEqual([run.result.textSample, run.result.comments[0].commentText], ["请完成验证", "已抓取"]);
+  assert.deepEqual(run.result.verificationDiagnostics, diagnostics);
+});
 
-  assert.equal(run.result.status, "CUSTOM_VERIFICATION");
-  assert.equal(received.commentCount, 1);
-  assert.equal(received.capturePhase, true);
-  assert.equal(received.phase, "after");
+test("verification check failure before OCR terminates without calling capture actions", function () {
+  var reads = 0;
+  var swipes = 0;
+  var run = runIsolated({
+    detectPlatformVerification: function () {
+      return { success: false, reason: "VERIFICATION_CHECK_FAILED", message: "diagnostics failed" };
+    },
+    readComments: function () { reads += 1; return { text: "甲：不应读取" }; },
+    swipeComments: function () { swipes += 1; return true; }
+  });
+  assert.deepEqual([run.result.status, run.result.reasonCode, run.result.failedStage, run.result.commentCount],
+    ["LIVE_COMMENT_ENTRY_COMMENT_CAPTURE_FAILED", "VERIFICATION_CHECK_FAILED", "CAPTURING_COMMENTS", 0]);
+  assert.deepEqual([reads, swipes], [0, 0]);
+  assert.equal(run.events[run.events.length - 1].stage, "COMMENT_CAPTURE_FAILED");
+});
+
+test("verification check failure after OCR preserves partial and performs no later action", function () {
+  var checks = 0;
+  var reads = 0;
+  var swipes = 0;
+  var run = runIsolated({
+    detectPlatformVerification: function () {
+      checks += 1;
+      return checks === 1
+        ? { success: true, value: null }
+        : { success: false, reason: "VERIFICATION_CHECK_FAILED", message: "after OCR failed" };
+    },
+    readComments: function () { reads += 1; return { text: "甲：已读取" }; },
+    swipeComments: function () { swipes += 1; return true; }
+  });
+  assert.deepEqual([run.result.reasonCode, run.result.commentCount, run.result.comments[0].commentText],
+    ["VERIFICATION_CHECK_FAILED", 1, "已读取"]);
+  assert.deepEqual([reads, swipes], [1, 0]);
+  assert.equal(run.events[run.events.length - 1].stage, "COMMENT_CAPTURE_FAILED");
+});
+
+test("reportStage comments are deeply isolated from a successful result", function () {
+  var completedEvent = null;
+  var runner = runnerModule.createCommentCaptureRunner({
+    runtime: {
+      readComments: function () { return { text: "甲：原始评论" }; },
+      swipeComments: function () { return true; },
+      waitRandom: function () {}
+    },
+    reportStage: function (event) {
+      if (event.stage !== "COMMENTS_CAPTURED") return;
+      completedEvent = event;
+      event.comments[0].commentText = "事件修改";
+      event.comments[0].sources[0].commentText = "事件来源修改";
+    }
+  });
+  var result = runner.capture(SCOPE);
+  assert.deepEqual([result.comments[0].commentText, result.comments[0].sources[0].commentText],
+    ["原始评论", "原始评论"]);
+  result.comments[0].commentText = "结果修改";
+  result.comments[0].sources[0].commentText = "结果来源修改";
+  assert.deepEqual([completedEvent.comments[0].commentText, completedEvent.comments[0].sources[0].commentText],
+    ["事件修改", "事件来源修改"]);
+});
+
+test("stage alias comments are deeply isolated from a failure partial result", function () {
+  var reads = 0;
+  var failedEvent = null;
+  var runner = runnerModule.createCommentCaptureRunner({
+    runtime: {
+      readComments: function () {
+        reads += 1;
+        return reads === 1
+          ? { text: "甲：原始部分评论" }
+          : { success: false, reason: "OCR_FAILED", message: "OCR failed" };
+      },
+      swipeComments: function () { return true; },
+      waitRandom: function () {}
+    },
+    stage: function (name, event) {
+      if (name !== "COMMENT_CAPTURE_FAILED") return;
+      failedEvent = event;
+      event.comments[0].commentText = "失败事件修改";
+      event.comments[0].sources[0].commentText = "失败来源修改";
+    }
+  });
+  var result = runner.capture(SCOPE);
+  assert.deepEqual([result.comments[0].commentText, result.comments[0].sources[0].commentText],
+    ["原始部分评论", "原始部分评论"]);
+  result.comments[0].commentText = "失败结果修改";
+  result.comments[0].sources[0].commentText = "失败结果来源修改";
+  assert.deepEqual([failedEvent.comments[0].commentText, failedEvent.comments[0].sources[0].commentText],
+    ["失败事件修改", "失败来源修改"]);
 });
 
 test("stop checks preserve completed OCR or swipe work and bound later actions", function () {
