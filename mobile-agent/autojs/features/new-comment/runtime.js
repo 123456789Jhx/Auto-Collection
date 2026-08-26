@@ -131,6 +131,18 @@ function createIsolatedRuntime(context, options) {
     return extractor.call(owner);
   }
 
+  function riskMethod() {
+    return typeof riskDetector === "function" ? riskDetector : riskDetector.detectRisk;
+  }
+
+  function readVerificationSnapshot() {
+    var snapshot = extractFastText();
+    lastVerificationText = String(snapshot && (snapshot.combinedText || snapshot.text) || "");
+    lastVerificationStructure = snapshot &&
+      (snapshot.pageStructure || snapshot.visibleStructure || snapshot.structure) || null;
+    return snapshot;
+  }
+
   function recycleSnapshot(snapshot) {
     var image = snapshot && snapshot.image ? snapshot.image :
       (snapshot && typeof snapshot.recycle === "function" ? snapshot : null);
@@ -145,13 +157,10 @@ function createIsolatedRuntime(context, options) {
   }
 
   function detectRisk() {
-    var detector = typeof riskDetector === "function" ? riskDetector : riskDetector.detectRisk;
-    if (typeof detector !== "function") return { detected: false };
+    var detector = riskMethod();
     var snapshot = null;
     try {
-      snapshot = extractFastText();
-      lastVerificationText = String(snapshot && (snapshot.combinedText || snapshot.text) || "");
-      lastVerificationStructure = snapshot && (snapshot.pageStructure || snapshot.visibleStructure || snapshot.structure) || null;
+      snapshot = readVerificationSnapshot();
       var found = detector.call(riskDetector, context.config || {}, lastVerificationText) || { detected: false };
       if (typeof found !== "object" || !found) return found;
       var copied = {};
@@ -231,6 +240,9 @@ function createIsolatedRuntime(context, options) {
   function openFirstLive() {
     if (typeof douyin.openFirstLive === "function") {
       return invoke("openFirstLive", douyin, douyin.openFirstLive, [], "CLICK_FAILED");
+    }
+    if (typeof douyin.openLiveRoomFromCurrentScreen === "function") {
+      return invoke("openFirstLive", douyin, douyin.openLiveRoomFromCurrentScreen, [], "CLICK_FAILED");
     }
     trace("openFirstLive");
     if (stopped()) return contract.stopped();
@@ -319,17 +331,34 @@ function createIsolatedRuntime(context, options) {
 
   function detectPlatformVerification() {
     trace("detectPlatformVerification");
-    var result = screens.detectPlatformVerification();
-    if (result && result.details) {
-      result.details.textSample = String(lastVerificationText || "").slice(0, 260);
-      result.details.visibleStructure = lastVerificationStructure;
-      result.details.actionTrace = traceSnapshot();
-    } else if (result && result.success && result.value) {
-      result.value.textSample = String(lastVerificationText || "").slice(0, 260);
-      result.value.visibleStructure = lastVerificationStructure;
-      result.value.actionTrace = traceSnapshot();
+    if (stopped()) return contract.stopped();
+    if (typeof riskMethod() !== "function") {
+      var snapshot = null;
+      var missing = contract.failure(contract.REASON.DEPENDENCY_MISSING,
+        "platform verification detector missing");
+      try { snapshot = readVerificationSnapshot(); } catch (error) {
+        missing = contract.failure(contract.REASON.VERIFICATION_CHECK_FAILED,
+          "verification diagnostics failed");
+      }
+      var recycleFailure = recycleSnapshot(snapshot);
+      if (recycleFailure) missing = contract.failure(contract.REASON.VERIFICATION_CHECK_FAILED,
+        recycleFailure.message);
+      missing.details = verificationDetails();
+      return missing;
     }
+    var result = screens.detectPlatformVerification();
+    if (result && result.success && result.value) result.value = verificationDetails(result.value);
+    else if (result) result.details = verificationDetails(result.details);
     return result;
+  }
+
+  function verificationDetails(details) {
+    details = details || {};
+    details.textSample = String(lastVerificationText || "").slice(0, 260);
+    details.pageStructure = lastVerificationStructure;
+    details.visibleStructure = lastVerificationStructure;
+    details.actionTrace = traceSnapshot();
+    return details;
   }
 
   return { openDouyin: openDouyin, openSearch: openSearch, restartSearch: restartSearch,

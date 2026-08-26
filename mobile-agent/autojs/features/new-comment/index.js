@@ -20,7 +20,7 @@ function createIsolatedLiveCommentEntryTask(context, options) {
   function run(payload, control) {
     control = control || {};
     var runtimeOptions = assign(assign({}, options.runtimeOptions || options), { control: control });
-    var runtime = options.runtime || createRuntime(context, runtimeOptions);
+    var runtime = createRuntime(context, runtimeOptions);
     var workflowOptions = assign({}, options.workflowOptions || {});
     ["commentRunner", "commentRunnerModule", "commentCapture", "reportStage", "deviceId"].forEach(function (key) {
       if (Object.prototype.hasOwnProperty.call(options, key)) workflowOptions[key] = options[key];

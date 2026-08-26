@@ -250,7 +250,7 @@ test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnost
   var runtime = feature("runtime").createIsolatedRuntime({
     douyin: {
       openApp: function () { events.push("openApp"); return true; },
-      findFirstLive: function () { return { x: 20, y: 30 }; }
+      openLiveRoomFromCurrentScreen: function () { events.push("openLiveRoomFromCurrentScreen"); return true; }
     },
     screenRecognizer: recognizer,
     riskDetector: { detectRisk: function () { return { detected: true, reasonCode: "PLATFORM_VERIFICATION" }; } },
@@ -286,6 +286,7 @@ test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnost
   assert.deepEqual(requestedRegions[1].viewerBadge,
     { x: viewer.left, y: viewer.top, w: viewer.width, h: viewer.height });
   assert.equal(recycled, 3);
+  assert.equal(events.indexOf("openLiveRoomFromCurrentScreen") >= 0, true);
   assert.deepEqual(events.slice(-2), ["swipe", "swipe"]);
 
   var failureRecycles = 0;
@@ -361,6 +362,7 @@ test("entry task creates a runtime per run and exposes the same idempotent clean
   var cleanup = { run: function () { return { completed: true }; } };
   var task = feature("index").createIsolatedLiveCommentEntryTask({}, {
     finalCleanup: cleanup,
+    runtime: { control: { name: "shared" } },
     createRuntime: function (context, options) { controls.push(options.control); return { control: options.control }; },
     createWorkflow: function (options) {
       return { run: function () { return { status: options.runtime.control.name }; } };
