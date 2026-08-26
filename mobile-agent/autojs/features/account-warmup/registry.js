@@ -13,9 +13,19 @@ function createAccountWarmupRegistry(context) {
   var liveSessionRunnerModule = context.loadBizScript("features/account-warmup/live-session-runner.js");
   var liveTransientPopupModule = context.loadBizScript("features/account-warmup/live-transient-popup.js");
   var videoWarmupFoundationModule = context.loadBizScript("features/account-warmup/video-warmup-foundation.js");
-  var liveCommentEntryModule = context.loadBizScript("features/account-warmup/live-comment-entry.js");
+  var baselineLoader = context.loadBaselineScript || context.loadBizScript;
+  var liveCommentEntryModule = baselineLoader("features/account-warmup/live-comment-entry.js");
+  var liveCommentRuntimeModule = baselineLoader("features/account-warmup/live-comment-entry-runtime.js");
+  var liveCommentRunnerModule = baselineLoader("features/account-warmup/live-comment-entry-comment-runner.js");
+  var liveCommentCaptureModule = baselineLoader("domain/live-comment-capture.js");
   var postPublishCleanupModule = context.loadBizScript("features/publish-video/douyin-post-publish-cleanup.js");
   var fastSearch = fastSearchModule.createFastTargetSearch({ context: context, logger: context.logger });
+  var liveCommentContext = {};
+  Object.keys(context).forEach(function (key) { liveCommentContext[key] = context[key]; });
+  liveCommentContext.forceBaselineLiveCommentEntry = true;
+  var liveCommentRuntime = liveCommentRuntimeModule.createDefaultRuntime(liveCommentContext, null, {
+    gestureMode: "accessibility"
+  });
   var interactionRunner = null;
   var liveTransientPopup = null;
   var liveSessionRunner = null;
@@ -89,10 +99,15 @@ function createAccountWarmupRegistry(context) {
     },
     live_comment_entry: function (options) {
       return liveCommentEntryModule.createLiveCommentEntryTask({
-        context: context,
+        context: liveCommentContext,
         logger: options && options.logger || context.logger,
-        fastSearch: fastSearch,
-        reportStage: options && options.reportStage
+        gestureMode: "accessibility",
+        runtime: liveCommentRuntime,
+        runtimeAdapter: liveCommentRuntimeModule,
+        captureRunnerModule: liveCommentRunnerModule,
+        commentCapture: liveCommentCaptureModule,
+        reportStage: options && options.reportStage,
+        finalCleanup: getFinalCleanup(options && options.logger)
       });
     }
   };

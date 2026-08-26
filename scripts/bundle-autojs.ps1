@@ -1,7 +1,10 @@
 param(
   [string]$Version = "",
   [string]$PackageBaseUrl = "",
-  [string]$OutputDir = ""
+  [string]$OutputDir = "",
+  [string[]]$Files = $null,
+  [string]$BaseVersion = "",
+  [string]$BaseManifestPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,6 +45,28 @@ function Convert-ToEncodedPath([string]$Path) {
 
 function Write-Utf8WithoutBom([string]$Path, [string]$Content) {
   [System.IO.File]::WriteAllText($Path, $Content, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Get-Sha256Hex([string]$Path) {
+  $algorithm = [System.Security.Cryptography.SHA256]::Create()
+  $stream = [System.IO.File]::OpenRead($Path)
+  try {
+    return ([BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+  } finally {
+    $stream.Dispose()
+    $algorithm.Dispose()
+  }
+}
+
+function Assert-SafeBizScriptPath([string]$RelativePath) {
+  if ($RelativePath -notmatch '^[\x20-\x7E]+$') {
+    throw "Only printable ASCII file names are allowed in biz-scripts package entries: $RelativePath"
+  }
+  if ($RelativePath -notmatch '^(features|domain)/[A-Za-z0-9._/-]+\.js$' -or
+    $RelativePath.Contains("..") -or $RelativePath.EndsWith("/config.js") -or
+    $RelativePath.StartsWith("/")) {
+    throw "Unsafe selected business script path: $RelativePath"
+  }
 }
 
 function Add-DeterministicZipEntry(
@@ -133,35 +158,98 @@ $sourceFiles = @()
 foreach ($rootName in $roots) {
   $sourceFiles += Get-ChildItem -LiteralPath (Join-Path $sourceRoot $rootName) -Recurse -File
 }
+
+$selectionProvided = $PSBoundParameters.ContainsKey("Files")
+if ($selectionProvided -and ($null -eq $Files -or $Files.Count -eq 0)) {
+  throw "Partial business script selection cannot be empty."
+}
+$mode = if ($selectionProvided) { "partial" } else { "full" }
+$selectedPaths = @()
+if ($selectionProvided) {
+  if ([string]::IsNullOrWhiteSpace($BaseVersion) -or [string]$BaseVersion -notmatch '^\d+(?:\.\d+)+$') {
+    throw "Partial business scripts require a valid BaseVersion."
+  }
+  if ([string]::IsNullOrWhiteSpace($BaseManifestPath) -or -not (Test-Path -LiteralPath $BaseManifestPath)) {
+    throw "Base manifest not found: $BaseManifestPath"
+  }
+  $requestedFiles = @($Files | ForEach-Object { ([string]$_).Split(',') })
+  foreach ($file in $requestedFiles) {
+    $normalized = ([string]$file).Replace("\", "/")
+    Assert-SafeBizScriptPath $normalized
+    if ($selectedPaths -contains $normalized) { throw "Duplicate selected business script path: $normalized" }
+    $selectedPaths += $normalized
+  }
+}
 $sourceFiles = $sourceFiles | Sort-Object FullName
 if ($sourceFiles.Count -eq 0) {
   throw "No business scripts found."
 }
 
-$manifestFiles = @($sourceFiles | ForEach-Object {
-  $relativePath = $_.FullName.Substring($sourceRoot.Length).TrimStart("\", "/").Replace("\", "/")
-  if ($relativePath -eq "config.js" -or -not ($relativePath.StartsWith("features/") -or $relativePath.StartsWith("domain/"))) {
-    throw "Unsafe business script path: $relativePath"
-  }
+function New-ManifestFile([System.IO.FileInfo]$SourceFile) {
+  $relativePath = $SourceFile.FullName.Substring($sourceRoot.Length).TrimStart("\", "/").Replace("\", "/")
+  Assert-SafeBizScriptPath $relativePath
   if ($relativePath -notmatch '^[\x20-\x7E]+$') {
     throw "Only printable ASCII file names are allowed in biz-scripts package entries: $relativePath"
   }
   $manifestFile = [ordered]@{
     path = $relativePath
-    sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+    sha256 = Get-Sha256Hex $SourceFile.FullName
   }
-  $displayName = Get-BizScriptDisplayName $_.FullName
+  $displayName = Get-BizScriptDisplayName $SourceFile.FullName
   if (-not [string]::IsNullOrWhiteSpace($displayName)) {
     $manifestFile.displayName = $displayName
   }
-  $manifestFile
-})
+  return $manifestFile
+}
+
+if ($selectionProvided) {
+  $sourceFiles = @($sourceFiles | Where-Object {
+    $relativePath = $_.FullName.Substring($sourceRoot.Length).TrimStart("\", "/").Replace("\", "/")
+    $selectedPaths -contains $relativePath
+  })
+  if ($sourceFiles.Count -ne $selectedPaths.Count) {
+    throw "One or more selected business scripts were not found in the source tree."
+  }
+}
+
+$deltaFiles = @($sourceFiles | ForEach-Object { New-ManifestFile $_ })
+$manifestFiles = $deltaFiles
+if ($selectionProvided) {
+  $baseManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $BaseManifestPath | ConvertFrom-Json
+  if ($baseManifest.version -ne $BaseVersion -or $baseManifest.channel -ne "biz-scripts" -or
+    $baseManifest.mode -eq "partial" -or -not $baseManifest.files) {
+    throw "Base manifest must be a complete biz-scripts manifest for $BaseVersion."
+  }
+  $baseFiles = @($baseManifest.files | ForEach-Object {
+    $path = [string]$_.path
+    Assert-SafeBizScriptPath $path
+    if (-not [string]$_.sha256 -or [string]$_.sha256 -notmatch '^[0-9a-f]{64}$') {
+      throw "Base manifest contains an invalid SHA-256 for $path"
+    }
+    [ordered]@{ path = $path; sha256 = ([string]$_.sha256).ToLowerInvariant() }
+  })
+  $deltaMap = @{}
+  foreach ($delta in $deltaFiles) { $deltaMap[$delta.path] = $delta }
+  foreach ($path in $selectedPaths) {
+    if (-not ($baseFiles.path -contains $path)) {
+      throw "Selected business script is not present in base manifest: $path"
+    }
+  }
+  $manifestFiles = @($baseFiles | ForEach-Object {
+    if ($deltaMap.ContainsKey($_.path)) { $deltaMap[$_.path] } else { $_ }
+  })
+}
 
 $embeddedManifest = [ordered]@{
   version = $Version
   channel = "biz-scripts"
+  mode = $mode
   files = $manifestFiles
   entryFile = $entryFile
+}
+if ($selectionProvided) {
+  $embeddedManifest.baseVersion = $BaseVersion
+  $embeddedManifest.deltaFiles = $deltaFiles
 }
 Write-Utf8WithoutBom -Path $embeddedManifestPath -Content ($embeddedManifest | ConvertTo-Json -Depth 6)
 
@@ -186,18 +274,23 @@ try {
 Assert-ZipEntriesHaveNoUtf8Bom -ArchivePath $zipPath
 Assert-ZipEntryNamesAreAscii -ArchivePath $zipPath
 
-$zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
+$zipHash = Get-Sha256Hex $zipPath
 $zipFileName = Split-Path -Leaf $zipPath
 $encodedZipName = Convert-ToEncodedPath $zipFileName
 $externalManifest = [ordered]@{
   version = $Version
   channel = "biz-scripts"
+  mode = $mode
   files = $manifestFiles
   entryFile = $entryFile
   fileName = $zipFileName
   packageUrl = $PackageBaseUrl.TrimEnd("/") + "/" + $encodedZipName
   sha256 = $zipHash
   status = "PUBLISHED"
+}
+if ($selectionProvided) {
+  $externalManifest.baseVersion = $BaseVersion
+  $externalManifest.deltaFiles = $deltaFiles
 }
 Write-Utf8WithoutBom -Path $manifestPath -Content ($externalManifest | ConvertTo-Json -Depth 6)
 Set-Content -LiteralPath $shaPath -Encoding ASCII -Value "$zipHash  $zipFileName"

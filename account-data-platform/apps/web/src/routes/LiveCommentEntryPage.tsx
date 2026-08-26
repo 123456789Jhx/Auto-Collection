@@ -1,7 +1,6 @@
 import { PlayCircleOutlined, StopOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Alert,
   App as AntdApp,
   Button,
   Col,
@@ -10,14 +9,15 @@ import {
   Row,
   Select,
   Space,
-  Statistic,
-  Table,
-  Tag,
-  Tooltip,
-  Typography,
-  type TableColumnsType
+  Typography
 } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LiveCommentCandidates } from "../components/account-warmup/LiveCommentCandidates";
+import {
+  LiveCommentEntryProgress,
+  liveCommentEntryResultText,
+  type LiveCommentEntryRow
+} from "../components/account-warmup/LiveCommentEntryProgress";
 import { getDevices } from "../lib/api-client";
 import {
   getLiveCommentEntryCommands,
@@ -26,27 +26,32 @@ import {
   type LiveCommentEntryMobileCommand
 } from "../lib/api-client-live-comment-entry";
 import {
-  buildLiveCommentEntryCommands,
+  createLiveCommentEntryBatchPlan,
+  dispatchLiveCommentEntryDevices,
+  findUndispatchedLiveCommentEntryDevices,
+  readLiveCommentEntryBatchPlan,
+  withLiveCommentEntryDispatchErrors,
+  writeLiveCommentEntryBatchPlan,
+  type LiveCommentEntryBatchPlan
+} from "../lib/live-comment-entry-batch";
+import { collectLiveCommentCandidates } from "../lib/live-comment-entry-candidates";
+import {
   buildLiveCommentEntryStopCommands,
+  getRestoredLiveCommentEntryWarningIds,
+  isLiveCommentEntryCaptureCompleted,
   readActiveLiveCommentEntryBatchId,
   readLastLiveCommentEntryInput,
+  isLiveCommentEntryBatchFinished,
   resolveLiveCommentEntryState,
   resolveLiveCommentEntryStopState,
   summarizeLiveCommentEntryStates,
   writeActiveLiveCommentEntryBatchId,
-  writeLastLiveCommentEntryInput,
-  type LiveCommentEntryState
+  writeLastLiveCommentEntryInput
 } from "../lib/live-comment-entry-form";
-import { formatDateTime, type DeviceRow } from "./DeviceList";
-type EntryRow = LiveCommentEntryMobileCommand & {
-  deviceCode: string;
-  deviceName: string;
-  viewState: LiveCommentEntryState;
-};
+import type { DeviceRow } from "./DeviceList";
 function hasBusinessTask(device: DeviceRow) {
   return Boolean(device.currentTask && device.currentTask !== "none");
 }
-
 function commandBatchId(command: LiveCommentEntryMobileCommand) {
   return typeof command.payloadJson?.batchId === "string" ? command.payloadJson.batchId : "";
 }
@@ -54,21 +59,20 @@ function stopTargetId(command: LiveCommentEntryMobileCommand) {
   return typeof command.payloadJson?.targetCommandId === "string" ? command.payloadJson.targetCommandId : "";
 }
 
-function resultText(row: EntryRow) {
-  if (row.viewState.message) return row.viewState.message;
-  if (row.viewState.key === "entered") return "已进入第一个直播结果";
-  if (row.viewState.key === "stopped") return "任务已停止";
-  return "-";
-}
 export function LiveCommentEntryPage() {
-  const initialInput = useRef(readLastLiveCommentEntryInput());
+  const initialActiveBatchId = useRef(readActiveLiveCommentEntryBatchId());
+  const initialBatchPlan = useRef(readLiveCommentEntryBatchPlan(initialActiveBatchId.current));
+  const initialInput = useRef(initialBatchPlan.current ?? readLastLiveCommentEntryInput());
   const { message } = AntdApp.useApp();
   const queryClient = useQueryClient();
-  const [activeBatchId, setActiveBatchId] = useState(readActiveLiveCommentEntryBatchId);
+  const [activeBatchId, setActiveBatchId] = useState(initialActiveBatchId.current);
+  const [batchPlan, setBatchPlan] = useState<LiveCommentEntryBatchPlan | null>(initialBatchPlan.current);
   const [targetKeyword, setTargetKeyword] = useState(initialInput.current.targetKeyword);
   const [minViewerCount, setMinViewerCount] = useState(initialInput.current.minViewerCount);
   const [selectedDeviceCodes, setSelectedDeviceCodes] = useState<string[]>([]);
   const [stoppingCommandIds, setStoppingCommandIds] = useState<Set<string>>(() => new Set());
+  const [warningAlert, setWarningAlert] = useState<{ id: string; deviceName: string; message: string } | null>(null);
+  const acknowledgedWarningIds = useRef(new Set<string>());
   const restoredBatchId = useRef("");
 
   const devicesQuery = useQuery({
@@ -83,8 +87,11 @@ export function LiveCommentEntryPage() {
   });
   const devices = (devicesQuery.data ?? []) as DeviceRow[];
   const commands = commandsQuery.data ?? [];
+  // The base heartbeat is the device's reachable signal. An online base with
+  // an offline inner Agent must remain selectable so the command can wake it.
   const eligibleDevices = useMemo(() => devices.filter((device) =>
-    device.enabled !== false && device.effectiveStatus !== "offline"), [devices]);
+    device.enabled !== false &&
+    (device.effectiveStatus !== "offline" || device.baseReachable === true)), [devices]);
   const stopByTargetId = useMemo(() => {
     const map = new Map<string, LiveCommentEntryMobileCommand>();
     commands.filter((command) => command.commandType === "ACCOUNT_WARMUP_STOP" &&
@@ -94,38 +101,54 @@ export function LiveCommentEntryPage() {
     });
     return map;
   }, [activeBatchId, commands]);
-  const rows = useMemo<EntryRow[]>(() => {
+  const rows = useMemo<LiveCommentEntryRow[]>(() => {
     if (!activeBatchId) return [];
     const deviceById = new Map(devices.map((device) => [device.id, device]));
+    const plannedDeviceById = new Map((batchPlan?.devices ?? []).map((device) => [device.deviceId, device]));
     return commands
       .filter((command) => command.commandType === "ACCOUNT_WARMUP_RUN" &&
         command.payloadJson?.featureKey === "live_comment_entry" &&
         commandBatchId(command) === activeBatchId)
       .map((command) => {
         const device = deviceById.get(command.deviceId);
+        const plannedDevice = plannedDeviceById.get(command.deviceId);
         const localStopState = stoppingCommandIds.has(command.id) ? "pending" : "none";
         const persistedStopState = resolveLiveCommentEntryStopState(stopByTargetId.get(command.id));
         const effectiveStopState = persistedStopState === "none" ? localStopState : persistedStopState;
         return {
           ...command,
-          deviceCode: device?.deviceCode ?? "",
-          deviceName: device?.deviceName || device?.deviceCode || command.deviceId,
+          deviceCode: device?.deviceCode || plannedDevice?.deviceCode || "",
+          deviceName: device?.deviceName || plannedDevice?.deviceName || device?.deviceCode || command.deviceId,
           viewState: resolveLiveCommentEntryState(command, effectiveStopState)
         };
       });
-  }, [activeBatchId, commands, devices, stopByTargetId, stoppingCommandIds]);
+  }, [activeBatchId, batchPlan, commands, devices, stopByTargetId, stoppingCommandIds]);
   const activeRows = rows.filter((row) => row.viewState.active);
   const stoppableRows = activeRows.filter((row) => row.viewState.key !== "stopping" && row.deviceCode);
   const summary = summarizeLiveCommentEntryStates(rows.map((row) => row.viewState));
+  const candidates = useMemo(() => collectLiveCommentCandidates(rows), [rows]);
+  const warningRows = rows.filter((row) => [
+    "platform_verification",
+    "viewer_count_failed",
+    "viewer_threshold_exhausted",
+    "live_ended_exhausted",
+    "live_ended_skip_failed",
+    "cleanup_failed"
+  ].includes(row.viewState.key));
   const busyDeviceIds = new Set(devices.filter(hasBusinessTask).map((device) => device.id));
   const selectableDevices = eligibleDevices.filter((device) => !busyDeviceIds.has(device.id));
   const selectableCodes = useMemo(() => new Set(selectableDevices.map((device) => device.deviceCode)), [selectableDevices]);
   useEffect(() => {
-    if (!activeBatchId || !rows.length || restoredBatchId.current === activeBatchId || devicesQuery.isPending) return;
-    if (rows.some((row) => !row.deviceCode)) return;
-    setSelectedDeviceCodes(rows.map((row) => row.deviceCode).filter(Boolean));
+    if (!activeBatchId || restoredBatchId.current === activeBatchId || devicesQuery.isPending) return;
+    const plannedCodes = batchPlan?.batchId === activeBatchId
+      ? batchPlan.devices.map((device) => device.deviceCode)
+      : [];
+    if (!plannedCodes.length && (!rows.length || rows.some((row) => !row.deviceCode))) return;
+    setSelectedDeviceCodes(plannedCodes.length ? plannedCodes : rows.map((row) => row.deviceCode).filter(Boolean));
+    getRestoredLiveCommentEntryWarningIds(warningRows, initialActiveBatchId.current, activeBatchId)
+      .forEach((id) => acknowledgedWarningIds.current.add(id));
     restoredBatchId.current = activeBatchId;
-  }, [activeBatchId, devicesQuery.isPending, rows]);
+  }, [activeBatchId, batchPlan, devicesQuery.isPending, rows, warningRows]);
   useEffect(() => {
     if (!stopByTargetId.size) return;
     setStoppingCommandIds((current) => {
@@ -133,7 +156,16 @@ export function LiveCommentEntryPage() {
       return next.size === current.size ? current : next;
     });
   }, [stopByTargetId]);
-
+  useEffect(() => {
+    const row = warningRows.find((item) => !acknowledgedWarningIds.current.has(item.id));
+    if (!row) return;
+    acknowledgedWarningIds.current.add(row.id);
+    setWarningAlert({
+      id: row.id,
+      deviceName: row.deviceName || row.deviceCode || row.deviceId,
+      message: liveCommentEntryResultText(row)
+    });
+  }, [warningRows]);
   useEffect(() => {
     if (activeRows.length) return;
     setSelectedDeviceCodes((current) => {
@@ -143,32 +175,41 @@ export function LiveCommentEntryPage() {
   }, [activeRows.length, selectableCodes]);
 
   const startMutation = useMutation({
-    mutationFn: async (batchId: string) => {
-      const taskCommands = buildLiveCommentEntryCommands({
-        batchId,
-        targetKeyword,
-        minViewerCount,
-        deviceCodes: selectedDeviceCodes
-      });
-      if (!taskCommands.length) throw new Error("请至少选择一台可用设备");
-      const results = await Promise.allSettled(taskCommands.map((command) =>
-        startLiveCommentEntryDevice({ deviceId: command.deviceId, payload: command.payload })));
-      const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
-      const succeededCount = results.length - failures.length;
-      if (!succeededCount) {
-        throw failures[0]?.reason instanceof Error ? failures[0].reason : new Error("任务下发失败");
+    mutationFn: async (input: { batch: LiveCommentEntryBatchPlan; deviceCodes: string[]; retry: boolean }) => {
+      let deviceCodes = input.deviceCodes;
+      if (input.retry) {
+        const latest = await commandsQuery.refetch();
+        if (latest.isError) throw latest.error;
+        const runCommands = (latest.data ?? []).filter((command) => command.commandType === "ACCOUNT_WARMUP_RUN" &&
+          command.payloadJson?.featureKey === "live_comment_entry" && commandBatchId(command) === input.batch.batchId);
+        const missingCodes = new Set(findUndispatchedLiveCommentEntryDevices(input.batch, runCommands)
+          .map((device) => device.deviceCode));
+        deviceCodes = deviceCodes.filter((deviceCode) => missingCodes.has(deviceCode));
+        if (!deviceCodes.length) return { ...input, attemptedCount: 0, succeededCount: 0, failures: [] };
       }
-      return { batchId, succeededCount, failedCount: failures.length };
+      const result = await dispatchLiveCommentEntryDevices({
+        batch: input.batch,
+        deviceCodes,
+        send: (command) => startLiveCommentEntryDevice({ deviceId: command.deviceId, payload: command.payload })
+      });
+      return { ...input, ...result };
     },
-    onMutate: (batchId) => {
-      setActiveBatchId(batchId);
+    onMutate: (input) => {
+      if (input.retry) return;
+      setActiveBatchId(input.batch.batchId);
+      setBatchPlan(input.batch);
       setStoppingCommandIds(new Set<string>());
       restoredBatchId.current = "";
-      writeActiveLiveCommentEntryBatchId(batchId);
+      writeActiveLiveCommentEntryBatchId(input.batch.batchId);
+      writeLiveCommentEntryBatchPlan(input.batch);
     },
     onSuccess: async (result) => {
-      writeLastLiveCommentEntryInput({ targetKeyword, minViewerCount });
-      if (result.failedCount) message.warning(`${result.succeededCount} 台已下发，${result.failedCount} 台失败`);
+      const nextBatch = withLiveCommentEntryDispatchErrors(result.batch, result.failures);
+      setBatchPlan(nextBatch);
+      writeLiveCommentEntryBatchPlan(nextBatch);
+      writeLastLiveCommentEntryInput(result.batch);
+      if (!result.attemptedCount) message.info("设备任务已存在，无需重复下发");
+      else if (result.failures.length) message.warning(`${result.succeededCount} 台已下发，${result.failures.length} 台失败`);
       else message.success(`${result.succeededCount} 台进入直播间任务已下发`);
       await queryClient.invalidateQueries({ queryKey: ["liveCommentEntryCommands"] });
     },
@@ -176,7 +217,7 @@ export function LiveCommentEntryPage() {
   });
 
   const stopMutation = useMutation({
-    mutationFn: async (targetRows: EntryRow[]) => {
+    mutationFn: async (targetRows: LiveCommentEntryRow[]) => {
       const stopCommands = buildLiveCommentEntryStopCommands({ batchId: activeBatchId, rows: targetRows });
       const results = await Promise.allSettled(stopCommands.map((command) =>
         stopLiveCommentEntryDevice({ deviceId: command.deviceId, payload: command.payload })));
@@ -219,75 +260,37 @@ export function LiveCommentEntryPage() {
     }
   });
 
+  const dispatchFailures = useMemo(() => {
+    if (!batchPlan || batchPlan.batchId !== activeBatchId || !commandsQuery.isSuccess || startMutation.isPending) return [];
+    return findUndispatchedLiveCommentEntryDevices(batchPlan, rows);
+  }, [activeBatchId, batchPlan, commandsQuery.isSuccess, rows, startMutation.isPending]);
+  const deviceTotal = batchPlan?.batchId === activeBatchId ? batchPlan.devices.length : summary.total;
+  const batchFinished = batchPlan?.batchId === activeBatchId
+    ? !dispatchFailures.length && rows.length >= deviceTotal && isLiveCommentEntryBatchFinished(rows.map((row) => row.viewState))
+    : isLiveCommentEntryBatchFinished(rows.map((row) => row.viewState));
   const batchRestoring = Boolean(activeBatchId && (
     commandsQuery.isPending || commandsQuery.isError || (!rows.length && commandsQuery.isFetching) ||
     (devicesQuery.isFetching && rows.length > 0 && rows.some((row) => !row.deviceCode))
   ));
   const locked = startMutation.isPending || activeRows.length > 0 || batchRestoring;
-  const columns: TableColumnsType<EntryRow> = [
-    {
-      title: "设备",
-      key: "device",
-      render: (_, row) => (
-        <Space direction="vertical" size={0}>
-          <Typography.Text strong>{row.deviceName}</Typography.Text>
-          <Typography.Text type="secondary">{row.deviceCode || row.deviceId}</Typography.Text>
-        </Space>
-      )
-    },
-    {
-      title: "状态",
-      key: "status",
-      width: 110,
-      render: (_, row) => <Tag color={row.viewState.color}>{row.viewState.label}</Tag>
-    },
-    {
-      title: "当前阶段",
-      key: "stage",
-      width: 170,
-      render: (_, row) => row.viewState.stageLabel
-    },
-    {
-      title: "最后更新",
-      key: "updatedAt",
-      width: 180,
-      render: (_, row) => formatDateTime(row.updatedAt || row.acknowledgedAt || row.fetchedAt || row.issuedAt)
-    },
-    {
-      title: "阶段记录",
-      key: "stageHistory",
-      render: (_, row) => row.viewState.stageHistory.length ? (
-        <Space size={[4, 4]} wrap>
-          {row.viewState.stageHistory.map((stageHistory, index) => (
-            <Tag key={`${row.id}-${index}`}>{stageHistory}</Tag>
-          ))}
-        </Space>
-      ) : <Typography.Text type="secondary">等待阶段回执</Typography.Text>
-    },
-    {
-      title: "结果 / 错误",
-      key: "result",
-      render: (_, row) => resultText(row)
-    },
-    {
-      title: "操作",
-      key: "action",
-      width: 72,
-      render: (_, row) => row.viewState.active ? (
-        <Tooltip title="停止该设备任务">
-          <Button
-            danger
-            size="small"
-            icon={<StopOutlined />}
-            aria-label={`停止 ${row.deviceName}`}
-            disabled={row.viewState.key === "stopping" || !row.deviceCode}
-            loading={stoppingCommandIds.has(row.id)}
-            onClick={() => stopMutation.mutate([row])}
-          />
-        </Tooltip>
-      ) : null
-    }
-  ];
+
+  function startNewBatch() {
+    const deviceByCode = new Map(devices.map((device) => [device.deviceCode, device]));
+    const batch = createLiveCommentEntryBatchPlan({
+      batchId: crypto.randomUUID(),
+      targetKeyword,
+      minViewerCount,
+      devices: selectedDeviceCodes.map((deviceCode) => {
+        const device = deviceByCode.get(deviceCode);
+        return {
+          deviceCode,
+          deviceId: device?.id || deviceCode,
+          deviceName: device?.deviceName || deviceCode
+        };
+      })
+    });
+    startMutation.mutate({ batch, deviceCodes: batch.devices.map((device) => device.deviceCode), retry: false });
+  }
 
   return (
     <div className="ops-page live-comment-entry-page">
@@ -349,8 +352,8 @@ export function LiveCommentEntryPage() {
               icon={<PlayCircleOutlined />}
               disabled={locked || !targetKeyword.trim() || !selectedDeviceCodes.length}
               loading={startMutation.isPending}
-              onClick={() => startMutation.mutate(crypto.randomUUID())}
-            >开始进入直播间</Button>
+              onClick={startNewBatch}
+            >开始抓取评论</Button>
             <Button
               danger
               icon={<StopOutlined />}
@@ -362,31 +365,34 @@ export function LiveCommentEntryPage() {
         </div>
       </section>
 
-      <section className="ops-panel">
-        <div className="ops-panel-head">
-          <span>执行进度</span>
-          <span className="ops-small">{activeBatchId ? `批次 ${activeBatchId.slice(0, 8)}` : "尚未开始"}</span>
-        </div>
-        <div className="ops-panel-body">
-          <Row gutter={[24, 16]}>
-            <Col xs={12} sm={6}><Statistic title="设备总数" value={summary.total} /></Col>
-            <Col xs={12} sm={6}><Statistic title="执行中" value={summary.running} /></Col>
-            <Col xs={12} sm={6}><Statistic title="已进入" value={summary.entered} /></Col>
-            <Col xs={12} sm={6}><Statistic title="失败" value={summary.failed} /></Col>
-          </Row>
-        </div>
-        {commandsQuery.isError ? <Alert type="error" showIcon message="执行进度加载失败" /> : null}
-        <Table<EntryRow>
-          size="small"
-          rowKey="id"
-          loading={commandsQuery.isLoading}
-          columns={columns}
-          dataSource={rows}
-          pagination={false}
-          scroll={{ x: 1080 }}
-          locale={{ emptyText: activeBatchId ? "等待设备领取任务" : "尚未下发任务" }}
-        />
-      </section>
+      <LiveCommentEntryProgress
+        activeBatchId={activeBatchId}
+        rows={rows}
+        deviceTotal={deviceTotal}
+        dispatchFailures={dispatchFailures}
+        warningRows={warningRows}
+        warningAlert={warningAlert}
+        loading={commandsQuery.isLoading}
+        loadError={commandsQuery.isError}
+        stoppingCommandIds={stoppingCommandIds}
+        retryingDispatch={startMutation.isPending}
+        onRetryDispatch={() => batchPlan && startMutation.mutate({
+          batch: batchPlan,
+          deviceCodes: dispatchFailures.map((device) => device.deviceCode),
+          retry: true
+        })}
+        onStop={(row) => stopMutation.mutate([row])}
+        onCloseWarning={() => setWarningAlert(null)}
+      />
+      <LiveCommentCandidates
+        key={activeBatchId || "no-batch"}
+        batchId={activeBatchId}
+        candidates={candidates}
+        batchFinished={batchFinished}
+        deviceTotal={deviceTotal}
+        capturedCount={rows.filter(isLiveCommentEntryCaptureCompleted).length}
+        failedCount={summary.failed + dispatchFailures.length}
+      />
     </div>
   );
 }

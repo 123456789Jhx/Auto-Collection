@@ -2,7 +2,9 @@
 function createFastTargetSearch(options) {
   options = options || {};
   var logger = options.logger || { info: function () {}, warn: function () {} };
-  var deps = options.dependencies || createDefaultDependencies();
+  var gestureDriver = options.gestureDriver || null;
+  var deps = options.dependencies || createDefaultDependencies(gestureDriver);
+  if (gestureDriver && options.dependencies) deps = withGestureDependencies(deps, gestureDriver);
 
   function stopped(control) {
     return !!(control && control.shouldStop && control.shouldStop());
@@ -79,10 +81,40 @@ function createFastTargetSearch(options) {
     return { success: true, stage: "result_confirmed", elapsedMs: deps.now() - startedAt };
   }
 
-  return { openSearch: openSearch };
+  return { openSearch: openSearch, gestureAware: !!gestureDriver };
 }
 
-function createDefaultDependencies() {
+function nodeCenter(node) {
+  try {
+    var bounds = node && node.bounds;
+    bounds = typeof bounds === "function" ? bounds.call(node) : bounds;
+    if (!bounds) return null;
+    var centerX = typeof bounds.centerX === "function" ? bounds.centerX() : (Number(bounds.left) + Number(bounds.right)) / 2;
+    var centerY = typeof bounds.centerY === "function" ? bounds.centerY() : (Number(bounds.top) + Number(bounds.bottom)) / 2;
+    return isFinite(centerX) && isFinite(centerY) ? { x: centerX, y: centerY } : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function gestureTap(driver, x, y) {
+  if (!driver || typeof driver.tap !== "function") return false;
+  var result = driver.tap({ x: x, y: y, durationMs: 180 });
+  return result !== false && !(result && result.success === false);
+}
+
+function withGestureDependencies(base, driver) {
+  var wrapped = {};
+  Object.keys(base || {}).forEach(function (key) { wrapped[key] = base[key]; });
+  wrapped.clickNode = function (node) {
+    var point = nodeCenter(node);
+    return point ? gestureTap(driver, point.x, point.y) : false;
+  };
+  wrapped.clickPoint = function (x, y) { return gestureTap(driver, x, y); };
+  return wrapped;
+}
+
+function createDefaultDependencies(gestureDriver) {
   function now() { return Date.now(); }
   function sleepFor(ms) { if (typeof sleep === "function") sleep(ms); }
   function screenSize() {
@@ -109,6 +141,10 @@ function createDefaultDependencies() {
     return node;
   }
   function clickNode(node) {
+    if (gestureDriver) {
+      var point = nodeCenter(node);
+      return point ? gestureTap(gestureDriver, point.x, point.y) : false;
+    }
     var target = clickable(node);
     try { if (target && target.click && target.click()) return true; } catch (error) {}
     try {
@@ -151,6 +187,10 @@ function createDefaultDependencies() {
     return false;
   }
   function pressEnter() {
+    if (gestureDriver) {
+      var size = screenSize();
+      return gestureTap(gestureDriver, Math.floor(size.width * 0.90), Math.floor(size.height * 0.065));
+    }
     try { if (typeof shell === "function") { shell("input keyevent 66", false); return true; } } catch (error) {}
     return false;
   }
@@ -172,7 +212,9 @@ function createDefaultDependencies() {
     findInput: inputNode,
     findSubmit: submitNode,
     clickNode: clickNode,
-    clickPoint: function (x, y) { return typeof click === "function" && !!click(x, y); },
+    clickPoint: function (x, y) {
+      return gestureDriver ? gestureTap(gestureDriver, x, y) : typeof click === "function" && !!click(x, y);
+    },
     setInput: setInput,
     pressEnter: pressEnter,
     isResultFor: resultFor

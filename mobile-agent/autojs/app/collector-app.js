@@ -1191,8 +1191,7 @@ function createCollectorApp(context) {
         running: false,
         paused: true,
         stopRequested: false,
-        manualOverride: true,
-        lastManualAction: "backend_not_ready",
+        backendRecoveryPending: true,
         lastMessage: "后台未就绪，等待注册"
       });
       runBackground("后台未就绪日志上报", function () {

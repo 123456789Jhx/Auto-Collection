@@ -37,7 +37,7 @@ type BatchStorage = {
 };
 
 export type LiveCommentEntryState = {
-  key: "pending" | "running" | "stopping" | "entered" | "failed" | "stopped" | "ignored" | "unknown";
+  key: "pending" | "running" | "stopping" | "entered" | "captured" | "cleanup_failed" | "failed" | "platform_verification" | "viewer_count_failed" | "viewer_threshold_exhausted" | "live_ended_exhausted" | "live_ended_skip_failed" | "stopped" | "ignored" | "unknown";
   label: string;
   color: string;
   active: boolean;
@@ -60,6 +60,20 @@ const stageLabels: Record<string, string> = {
   INPUT_KEYWORD: "输入直播间关键词",
   OPENING_LIVE_TAB: "切换到直播结果",
   OPENING_FIRST_RESULT: "打开第一个直播间",
+  PLATFORM_VERIFICATION: "平台验证",
+  CHECKING_VIEWER_COUNT: "检测直播间人数",
+  VIEWER_COUNT_ACCEPTED: "人数达到下限",
+  SKIPPING_LOW_VIEWER_ROOM: "人数不足，切换直播间",
+  SKIPPING_ENDED_LIVE_ROOM: "直播已结束，切换直播间",
+  CAPTURING_COMMENTS: "识别评论",
+  RETRYING_COMMENT_OCR: "重试评论识别",
+  COMMENT_PAGE_CAPTURED: "本页评论识别完成",
+  SWIPING_COMMENTS: "上滑评论区",
+  COMMENTS_CAPTURED: "评论抓取完成",
+  COMMENT_CAPTURE_FAILED: "评论抓取失败",
+  CLEANING_UP: "退出抖音",
+  RETURNING_TO_AGENT: "返回燎原星火",
+  CLEANUP_COMPLETED: "任务收尾完成",
   RETRYING_SEARCH: "重新搜索直播间",
   ENTERED: "已进入直播间",
   STOPPED: "已停止",
@@ -140,23 +154,76 @@ export function resolveLiveCommentEntryState(
 ): LiveCommentEntryState {
   const result = command.resultJson ?? {};
   const resultStatus = stringValue(result.status);
+  const commandTerminal = isTerminalStatus(String(command.status || ""));
+  const cleanupFailed = resultStatus === "LIVE_COMMENT_ENTRY_CLEANUP_FAILED";
   const reportedStage = stringValue(result.stage);
   const failedStage = stringValue(result.failedStage);
-  const failed = resultStatus === "LIVE_COMMENT_ENTRY_FAILED" || command.status === "FAILED";
+  const platformVerification = result.platformVerification === true ||
+    result.reasonCode === "PLATFORM_VERIFICATION" ||
+    result.reasonCode === "CAPTURE_PLATFORM_VERIFICATION" ||
+    resultStatus === "LIVE_COMMENT_ENTRY_PLATFORM_VERIFICATION" ||
+    resultStatus === "LIVE_COMMENT_ENTRY_CAPTURE_PLATFORM_VERIFICATION";
+  const viewerCountFailed = resultStatus === "LIVE_COMMENT_ENTRY_VIEWER_COUNT_FAILED" ||
+    resultStatus === "LIVE_COMMENT_ENTRY_VIEWER_THRESHOLD_FAILED" ||
+    result.reasonCode === "VIEWER_COUNT_READ_FAILED" ||
+    result.reasonCode === "NEXT_LIVE_ROOM_FAILED";
+  const viewerThresholdExhausted = resultStatus === "LIVE_COMMENT_ENTRY_VIEWER_THRESHOLD_EXHAUSTED" ||
+    result.reasonCode === "VIEWER_THRESHOLD_NOT_MET";
+  const liveEndedExhausted = resultStatus === "LIVE_COMMENT_ENTRY_LIVE_ENDED_EXHAUSTED" ||
+    result.reasonCode === "LIVE_ROOM_ENDED";
+  const liveEndedSkipFailed = resultStatus === "LIVE_COMMENT_ENTRY_LIVE_ENDED_SKIP_FAILED" ||
+    (result.reasonCode === "NEXT_LIVE_ROOM_FAILED" && failedStage === "SKIPPING_ENDED_LIVE_ROOM");
+  const failed = resultStatus === "LIVE_COMMENT_ENTRY_FAILED" ||
+    resultStatus === "LIVE_COMMENT_ENTRY_COMMENT_CAPTURE_FAILED" || command.status === "FAILED";
   const stage = failed ? (failedStage || reportedStage) : (reportedStage || failedStage);
   const stageHistory = Array.isArray(result.stageHistory)
     ? result.stageHistory.filter((item): item is string => typeof item === "string").slice(-20).map(liveCommentEntryStageLabel)
     : [];
   const message = stringValue(result.message) || stringValue(result.reason);
 
-  if (resultStatus === "LIVE_COMMENT_ENTRY_ENTERED") {
+  if (platformVerification) {
+    return state("platform_verification", "平台验证", "error", false,
+      stage || "PLATFORM_VERIFICATION", stageHistory, message || "出现平台验证");
+  }
+
+  if (viewerThresholdExhausted) {
+    return state("viewer_threshold_exhausted", "人数未达标", "error", false,
+      stage || "CHECKING_VIEWER_COUNT", stageHistory, message || "连续直播间人数均未达到下限，脚本已停止");
+  }
+
+  if (liveEndedExhausted) {
+    return state("live_ended_exhausted", "直播已结束", "error", false,
+      stage || "SKIPPING_ENDED_LIVE_ROOM", stageHistory, message || "连续直播间均已结束，脚本已停止");
+  }
+
+  if (liveEndedSkipFailed) {
+    return state("live_ended_skip_failed", "切换直播间失败", "error", false,
+      stage || "SKIPPING_ENDED_LIVE_ROOM", stageHistory, message || "直播已结束后切换下一个直播间失败，脚本已停止");
+  }
+
+  if (viewerCountFailed) {
+    return state("viewer_count_failed", "人数检测失败", "error", false,
+      stage || "CHECKING_VIEWER_COUNT", stageHistory, message || "无法识别直播间人数，脚本已停止");
+  }
+
+  if (cleanupFailed) {
+    return state("cleanup_failed", "收尾失败", "error", false,
+      failedStage || reportedStage || "CLEANING_UP", stageHistory,
+      message || "评论已抓取，但退出抖音或返回燎原星火失败");
+  }
+
+  if (failed) {
+    return state("failed", "执行失败", "error", false, stage || "FAILED", stageHistory, message);
+  }
+  if (isLiveCommentEntryCaptureCompleted(command) && commandTerminal) {
+    return state("captured", "抓取完成", "success", false,
+      reportedStage || "COMMENTS_CAPTURED", stageHistory, message);
+  }
+  if (resultStatus === "LIVE_COMMENT_ENTRY_ENTERED" && commandTerminal) {
     return state("entered", "已进入", "success", false, stage || "ENTERED", stageHistory, message);
   }
   if (resultStatus === "LIVE_COMMENT_ENTRY_STOPPED" || stopState === "done") {
     return state("stopped", "已停止", "default", false, stage || "STOPPED", stageHistory, message);
-  }
-  if (failed) {
-    return state("failed", "执行失败", "error", false, stage || "FAILED", stageHistory, message);
   }
   if (command.status === "TIMED_OUT") {
     return state("failed", "执行超时", "error", false, stage || "FAILED", stageHistory, message || "设备未在有效期内完成任务");
@@ -215,9 +282,32 @@ export function summarizeLiveCommentEntryStates(states: LiveCommentEntryState[])
   return {
     total: states.length,
     running: states.filter((item) => item.active).length,
-    entered: states.filter((item) => item.key === "entered").length,
-    failed: states.filter((item) => item.key === "failed").length
+    captured: states.filter((item) => item.key === "captured").length,
+    failed: states.filter((item) => item.key === "failed" || item.key === "platform_verification" ||
+      item.key === "viewer_count_failed" || item.key === "viewer_threshold_exhausted" ||
+      item.key === "live_ended_exhausted" || item.key === "live_ended_skip_failed" ||
+      item.key === "cleanup_failed").length
   };
+}
+
+export function isLiveCommentEntryCaptureCompleted(command: LiveCommentEntryCommandView) {
+  const result = command.resultJson ?? {};
+  return result.captureCompleted === true ||
+    stringValue(result.captureStatus) === "LIVE_COMMENT_ENTRY_CAPTURED" ||
+    stringValue(result.status) === "LIVE_COMMENT_ENTRY_CAPTURED";
+}
+
+export function isLiveCommentEntryBatchFinished(states: LiveCommentEntryState[]) {
+  return states.length > 0 && states.every((item) => !item.active);
+}
+
+export function getRestoredLiveCommentEntryWarningIds(
+  rows: Array<{ id?: string }>,
+  initialBatchId: string,
+  activeBatchId: string
+) {
+  if (!initialBatchId || initialBatchId !== activeBatchId) return [];
+  return [...new Set(rows.map((row) => row.id?.trim()).filter((id): id is string => Boolean(id)))];
 }
 
 export function readActiveLiveCommentEntryBatchId(storage = browserStorage()) {

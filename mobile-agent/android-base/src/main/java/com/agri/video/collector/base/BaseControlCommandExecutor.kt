@@ -159,16 +159,20 @@ class BaseControlCommandExecutor(private val context: Context) {
         transportStatus: String,
         stages: List<Stage>,
         action: String = "EXIT_AGENT_APP",
-    ): Result = Result(
-        success = transportStatus == "DONE",
-        action = action,
-        reason = if (businessResult == "FAILED") action else "",
-        exitResult = ExitResult(
-            businessResult = businessResult,
-            transportStatus = transportStatus,
-            stages = canonicalStages(stages),
-        ),
-    )
+    ): Result {
+        // Exit must not leave the management UI waiting for the normal interval.
+        BaseConnectivityService.requestImmediateHeartbeat(context)
+        return Result(
+            success = transportStatus == "DONE",
+            action = action,
+            reason = if (businessResult == "FAILED") action else "",
+            exitResult = ExitResult(
+                businessResult = businessResult,
+                transportStatus = transportStatus,
+                stages = canonicalStages(stages),
+            ),
+        )
+    }
 
     private fun canonicalStages(stages: List<Stage>): List<Stage> {
         val byName = stages.associateBy { it.name }

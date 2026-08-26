@@ -155,6 +155,7 @@ var createCommentActionPlanner = localRequire("domain/comment-action-planner.js"
 var createP3ExtensionActions = localRequire("domain/p3-extension-actions.js").createP3ExtensionActions;
 var liveTargetMatcher = localRequire("domain/live-target-matcher.js");
 var riskDetector = localRequire("domain/risk-detector.js");
+var viewerCountParser = localRequire("domain/live-viewer-count.js");
 var createPhaseRunner = localRequire("app/phase-runner.js").createPhaseRunner;
 var createLiveCommentRunner = localRequire("features/live-comment/runner.js").createLiveCommentRunner;
 var createCommerceCardLiveRunner = localRequire("features/commerce-card-live/runner.js").createCommerceCardLiveRunner;
@@ -231,7 +232,8 @@ var context = {
   livePhaseState: {
     maxRoomsLogged: false
   },
-  riskDetector: riskDetector
+  riskDetector: riskDetector,
+  viewerCountParser: viewerCountParser
 };
 
 context.bizScriptUpdater = createBizScriptUpdater(config, logger, uploader);

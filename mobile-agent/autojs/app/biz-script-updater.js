@@ -8,11 +8,9 @@ function compareBizVersions(left, right) {
   }
   return 0;
 }
-
 function isValidBizVersion(value) {
   return /^[0-9]+(?:\.[0-9]+)*$/.test(String(value || ""));
 }
-
 function getBizScriptCheckIntervalMs(upload) {
   upload = upload || {};
   if (upload.bizScriptHotReloadEnabled === true) {
@@ -20,16 +18,13 @@ function getBizScriptCheckIntervalMs(upload) {
   }
   return Math.max(1, Number(upload.bizScriptVersionCheckIntervalMinutes || 30)) * 60 * 1000;
 }
-
 function getBizScriptRetryIntervalMs(upload, checkIntervalMs) {
   var configured = Math.max(1, Number(upload && upload.bizScriptUpdateRetrySeconds || 60)) * 1000;
   return Math.min(checkIntervalMs, configured);
 }
-
 function joinPath() {
   return Array.prototype.slice.call(arguments).filter(Boolean).join("/").replace(/\/+/g, "/");
 }
-
 function decodeManifestPath(value) {
   var decoded = decodeURIComponent(String(value || "")).replace(/\\/g, "/").replace(/^\/+/, "");
   if (!decoded || decoded.indexOf("..") >= 0) throw new Error("unsafe manifest path: " + decoded);
@@ -38,7 +33,6 @@ function decodeManifestPath(value) {
   }
   return decoded;
 }
-
 function validateManifest(manifest, expectedVersion) {
   if (!manifest || manifest.channel !== "biz-scripts") throw new Error("invalid biz-scripts manifest channel");
   if (String(manifest.version || "") !== String(expectedVersion || "")) throw new Error("manifest version mismatch");
@@ -54,7 +48,7 @@ function validateManifest(manifest, expectedVersion) {
     return { path: path, sha256: String(item.sha256).toLowerCase() };
   });
 }
-
+var partialHelpers = require("./biz-script-updater-partial.js");
 function restartCurrentEngine(engineManager, exitFallback) {
   try {
     var engine = engineManager && engineManager.myEngine ? engineManager.myEngine() : null;
@@ -70,7 +64,6 @@ function restartCurrentEngine(engineManager, exitFallback) {
   }
   return "unavailable";
 }
-
 function createDefaultDeps(config) {
   function ensureDir(path) {
     if (!files.exists(path)) {
@@ -148,6 +141,7 @@ function createDefaultDeps(config) {
       if (files.exists(target)) files.remove(target);
       if (!files.copy(source, target)) throw new Error("biz scripts file copy failed: " + source);
     },
+    copyDir: function (source, target) { ensureDir(target); (files.listDir(source) || []).forEach(function (name) { var from = joinPath(source, name), to = joinPath(target, name); if (files.isDir(from)) this.copyDir(from, to); else this.copyFile(from, to); }, this); },
     renameDir: function (source, target) {
       if (files.exists(target)) throw new Error("biz scripts rename target exists: " + target);
       var targetFile = new java.io.File(target);
@@ -177,7 +171,6 @@ function createDefaultDeps(config) {
     }
   };
 }
-
 function createBizScriptUpdater(config, logger, uploader, dependencies) {
   var deps = dependencies || createDefaultDeps(config);
   var root = config.runtime.bizScriptRoot || joinPath(config.runtime.scriptDir, "biz-scripts");
@@ -268,17 +261,51 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
       var manifestPath = joinPath(extractDir, manifestEntry);
       var manifest = JSON.parse(deps.readText(manifestPath));
       var manifestFiles = validateManifest(manifest, latest.version);
+      var partial = manifest.mode === "partial";
+      if (manifest.mode && manifest.mode !== "partial" && manifest.mode !== "full") {
+        throw new Error("invalid biz scripts manifest mode");
+      }
+      var deltaFiles = [];
+      if (partial) {
+        if (!manifest.baseVersion || Object.prototype.toString.call(manifest.deltaFiles) !== "[object Array]" || !manifest.deltaFiles.length) {
+          throw new Error("partial biz scripts manifest metadata is incomplete");
+        }
+        if (latest.baseVersion && String(latest.baseVersion) !== String(manifest.baseVersion)) {
+          throw new Error("biz scripts baseVersion metadata mismatch");
+        }
+        deltaFiles = validateManifest({ channel: "biz-scripts", version: latest.version, files: manifest.deltaFiles }, latest.version);
+        var deltaPaths = deltaFiles.map(function (file) { return file.path; }).sort();
+        var mergedPaths = manifestFiles.map(function (file) { return file.path; }).sort();
+        if (deltaPaths.some(function (path) { return mergedPaths.indexOf(path) < 0; })) {
+          throw new Error("partial biz scripts delta file is absent from merged manifest");
+        }
+        partialHelpers.assertPartialBase(partialHelpers.validateCurrentState(deps, currentDir, validateManifest), manifest, deltaFiles);
+      }
       for (var i = 0; i < manifestFiles.length; i++) {
         var file = manifestFiles[i];
+        if (partial && !deltaFiles.some(function (delta) { return delta.path === file.path; })) continue;
         var actual = deps.sha256File(joinPath(extractDir, file.path)).toLowerCase();
         if (actual !== file.sha256) throw new Error("biz scripts file sha256 mismatch: " + file.path);
       }
-      safeReport("VERIFIED", fromVersion, latest.version, "biz scripts verified", { fileCount: manifestFiles.length });
+      safeReport("VERIFIED", fromVersion, latest.version, "biz scripts verified", {
+        mode: partial ? "partial" : "full", fileCount: partial ? deltaFiles.length : manifestFiles.length,
+        files: (partial ? deltaFiles : manifestFiles).map(function (file) { return file.path; })
+      });
       deps.ensureDir(nextDir);
-      for (var j = 0; j < manifestFiles.length; j++) {
-        deps.copyFile(joinPath(extractDir, manifestFiles[j].path), joinPath(nextDir, manifestFiles[j].path));
+      if (partial) {
+        if (typeof deps.copyDir !== "function") throw new Error("biz scripts partial update requires directory copy support");
+        deps.copyDir(currentDir, nextDir);
       }
-      deps.writeText(joinPath(nextDir, "version.json"), JSON.stringify({ version: latest.version, channel: "biz-scripts" }));
+      var filesToApply = partial ? deltaFiles : manifestFiles;
+      for (var j = 0; j < filesToApply.length; j++) {
+        deps.copyFile(joinPath(extractDir, filesToApply[j].path), joinPath(nextDir, filesToApply[j].path));
+      }
+      deps.writeText(joinPath(nextDir, "version.json"), JSON.stringify({
+        version: latest.version,
+        channel: "biz-scripts",
+        mode: partial ? "partial" : "full",
+        files: manifestFiles
+      }));
       if (deps.exists(currentDir)) {
         deps.remove(backupDir);
         deps.renameDir(currentDir, backupDir);
@@ -306,8 +333,18 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
 
     deps.remove(workDir);
     config.runtime.bizScriptsVersion = latest.version;
-    safeReport("APPLIED", fromVersion, latest.version, "biz scripts applied", { fileCount: manifestFiles.length });
-    logger.info("业务脚本热更新完成", { fromVersion: fromVersion, toVersion: latest.version });
+    var appliedFiles = manifest.mode === "partial" ? manifest.deltaFiles : manifest.files;
+    safeReport("APPLIED", fromVersion, latest.version, "biz scripts applied", {
+      mode: manifest.mode === "partial" ? "partial" : "full",
+      fileCount: appliedFiles.length,
+      files: appliedFiles.map(function (file) { return file.path; })
+    });
+    logger.info("业务脚本热更新完成", {
+      fromVersion: fromVersion, toVersion: latest.version,
+      mode: manifest.mode === "partial" ? "partial" : "full",
+      fileCount: appliedFiles.length,
+      files: appliedFiles.map(function (file) { return file.path; })
+    });
     try { deps.restart(); } catch (restartError) {
       logger.warn("业务脚本已生效但自动重启失败", { message: String(restartError) });
       return { applied: true, rolledBack: false, version: latest.version, restartFailed: true };

@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BuildBizScriptReleasePayload, CreateAgentVersionPayload } from "@pkg/types";
+import { bizScriptPathSchema, type BuildBizScriptReleasePayload, type CreateAgentVersionPayload } from "@pkg/types";
 import { config } from "../config";
 import { findLatestPublishedAgentVersion } from "../repositories/agent-version.repository";
 import { publishAgentVersion } from "./agent-version.service";
@@ -19,6 +19,9 @@ export type BundleInput = {
   version: string;
   outputDir: string;
   packageBaseUrl: string;
+  files?: string[];
+  baseVersion?: string;
+  baseManifestPath?: string;
 };
 
 type BuildManifest = {
@@ -29,6 +32,10 @@ type BuildManifest = {
   sha256?: unknown;
   entryFile?: unknown;
   status?: unknown;
+  mode?: unknown;
+  baseVersion?: unknown;
+  deltaFiles?: unknown;
+  files?: unknown;
 };
 
 type ReleaseDeps = {
@@ -42,11 +49,11 @@ type ReleaseDeps = {
   cleanup: (files: string[]) => Promise<void>;
 };
 
-type BuildReleaseInput = Partial<Pick<BuildBizScriptReleasePayload, "releaseNote" | "forceUpdate">>;
+type BuildReleaseInput = Partial<Pick<BuildBizScriptReleasePayload, "releaseNote" | "forceUpdate" | "files" | "baseVersion">>;
 
 export class BizScriptBuildError extends Error {
   constructor(
-    code: "BUILD_IN_PROGRESS" | "BUILD_FAILED" | "MANIFEST_INVALID" | "PACKAGE_HASH_MISMATCH",
+    code: "BUILD_IN_PROGRESS" | "BUILD_FAILED" | "MANIFEST_INVALID" | "PACKAGE_HASH_MISMATCH" | "INVALID_FILE_SELECTION" | "BASE_VERSION_REQUIRED",
     readonly userMessage: string,
     readonly details: Record<string, unknown> = {}
   ) {
@@ -81,7 +88,37 @@ function outputFiles(paths: BuildPaths, version: string) {
   };
 }
 
-function assertManifest(manifest: BuildManifest, paths: BuildPaths, version: string, fileName: string) {
+export function validateBizScriptSelection(files: unknown) {
+  if (files === undefined) return undefined;
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new BizScriptBuildError("INVALID_FILE_SELECTION", "指定业务脚本文件列表不能为空");
+  }
+  const selected = files.map((file) => {
+    const parsed = bizScriptPathSchema.safeParse(file);
+    if (!parsed.success) {
+      throw new BizScriptBuildError("INVALID_FILE_SELECTION", "业务脚本路径不合法", { file });
+    }
+    return parsed.data;
+  });
+  if (new Set(selected).size !== selected.length) {
+    throw new BizScriptBuildError("INVALID_FILE_SELECTION", "业务脚本文件列表不能重复");
+  }
+  return selected;
+}
+
+function manifestPaths(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => item && typeof item === "object" && "path" in item ? String(item.path) : "");
+}
+
+function assertManifest(
+  manifest: BuildManifest,
+  paths: BuildPaths,
+  version: string,
+  fileName: string,
+  selectedFiles?: string[],
+  baseVersion?: string
+) {
   const expectedUrl = `${paths.packageBaseUrl.replace(/\/$/, "")}/${encodeURIComponent(fileName)}`;
   const invalid = manifest.version !== version
     || manifest.channel !== "biz-scripts"
@@ -91,7 +128,15 @@ function assertManifest(manifest: BuildManifest, paths: BuildPaths, version: str
     || manifest.status !== "PUBLISHED"
     || typeof manifest.sha256 !== "string"
     || !/^[0-9a-f]{64}$/i.test(manifest.sha256);
-  if (invalid) {
+  const partialInvalid = selectedFiles !== undefined && (
+    manifest.mode !== "partial"
+    || manifest.baseVersion !== baseVersion
+    || JSON.stringify(manifestPaths(manifest.deltaFiles)) !== JSON.stringify(selectedFiles)
+    || !Array.isArray(manifest.files)
+    || !selectedFiles.every((file) => manifestPaths(manifest.files).includes(file))
+  );
+  const fullInvalid = selectedFiles === undefined && manifest.mode === "partial";
+  if (invalid || partialInvalid || fullInvalid) {
     throw new BizScriptBuildError("MANIFEST_INVALID", "业务脚本 manifest 与本次构建不一致", {
       version,
       fileName
@@ -113,17 +158,28 @@ export function createBizScriptReleaseService(deps: ReleaseDeps) {
       try {
         const version = nextVersion(await deps.getLatestVersion(), (deps.now ?? (() => new Date()))());
         files = outputFiles(deps.paths, version);
+        const selectedFiles = validateBizScriptSelection(payload.files);
+        if (selectedFiles !== undefined && !payload.baseVersion) {
+          throw new BizScriptBuildError("BASE_VERSION_REQUIRED", "增量业务脚本更新必须指定 baseVersion");
+        }
         await deps.runBundle({
           scriptPath: deps.paths.bundleScriptPath,
           version,
           packageBaseUrl: deps.paths.packageBaseUrl,
-          outputDir: deps.paths.outputDir
+          outputDir: deps.paths.outputDir,
+          files: selectedFiles,
+          baseVersion: payload.baseVersion,
+          baseManifestPath: payload.baseVersion
+            ? join(deps.paths.outputDir, `AgriVideoCollector-biz-scripts-${payload.baseVersion}.json`)
+            : undefined
         });
         const manifest = assertManifest(
           await deps.readManifest(files.manifestPath),
           deps.paths,
           version,
-          files.fileName
+          files.fileName,
+          selectedFiles,
+          payload.baseVersion
         );
         const actualSha256 = (await deps.sha256File(files.zipPath)).toLowerCase();
         if (actualSha256 !== String(manifest.sha256).toLowerCase()) {
@@ -163,6 +219,22 @@ export function createBizScriptReleaseService(deps: ReleaseDeps) {
   };
 }
 
+export async function listBizScriptFiles() {
+  const root = resolve(fileURLToPath(new URL("../../../../..", import.meta.url)), "mobile-agent/autojs");
+  const result: string[] = [];
+  async function visit(relativeRoot: string) {
+    const absoluteRoot = join(root, relativeRoot);
+    for (const entry of await readdir(absoluteRoot, { withFileTypes: true })) {
+      const relative = `${relativeRoot}/${entry.name}`;
+      if (entry.isDirectory()) await visit(relative);
+      else if (entry.isFile() && relative.endsWith(".js")) result.push(relative);
+    }
+  }
+  await visit("features");
+  await visit("domain");
+  return result.sort();
+}
+
 type BundleChildProcess = {
   stderr: { on: (event: string, listener: (chunk: unknown) => void) => unknown };
   once: (event: string, listener: (value: unknown) => void) => unknown;
@@ -181,7 +253,7 @@ export function runPowerShellBundle(
 ) {
   return new Promise<void>((resolveRun, rejectRun) => {
     const spawnProcess = options.spawnProcess ?? (spawn as unknown as BundleSpawn);
-    const child = spawnProcess("powershell.exe", [
+    const args = [
       "-NoProfile",
       "-NonInteractive",
       "-ExecutionPolicy", "Bypass",
@@ -189,7 +261,11 @@ export function runPowerShellBundle(
       "-Version", input.version,
       "-PackageBaseUrl", input.packageBaseUrl,
       "-OutputDir", input.outputDir
-    ], { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
+    ];
+    if (input.files !== undefined) args.push("-Files", input.files.join(","));
+    if (input.baseVersion) args.push("-BaseVersion", input.baseVersion);
+    if (input.baseManifestPath) args.push("-BaseManifestPath", input.baseManifestPath);
+    const child = spawnProcess("powershell.exe", args, { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
     let settled = false;
     const timeout = setTimeout(() => {

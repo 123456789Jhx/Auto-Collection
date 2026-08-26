@@ -10,10 +10,12 @@ class AppUiStateDetector(private val context: Context) {
         val hasAppTask = activityManager.appTasks.any { appTask ->
             appTask.taskInfo.baseIntent?.component?.packageName == context.packageName
         }
-        val hasForegroundActivity = activityManager.runningAppProcesses.orEmpty().any { process ->
-            process.processName == context.packageName &&
-                process.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
-        }
+        // A foreground service also raises this process to foreground priority.
+        // Only the top activity can prove that the App UI itself is visible.
+        val hasForegroundActivity = activityManager.getRunningTasks(1)
+            .firstOrNull()
+            ?.topActivity
+            ?.packageName == context.packageName
         AppUiState.classify(
             inspectionSucceeded = true,
             hasAppTask = hasAppTask,

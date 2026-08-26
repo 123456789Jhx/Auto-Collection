@@ -109,7 +109,10 @@ function testPreloadsRegistryBeforeWorkerExecution() {
   var bridge = createBridge(harness.context);
   bridge.install();
 
-  assert.deepStrictEqual(harness.getModuleLoadCalls(), ["features/account-warmup/registry.js"]);
+  assert.deepStrictEqual(harness.getModuleLoadCalls(), [
+    "features/publish-video/douyin-post-publish-cleanup.js",
+    "features/account-warmup/registry.js"
+  ]);
   assert.deepStrictEqual(harness.getBaselineModuleLoadCalls(), ["features/publish-video/douyin-post-publish-cleanup.js"]);
   harness.context.loadBizScript = function () {
     throw new Error("worker execution must not load account warmup modules");

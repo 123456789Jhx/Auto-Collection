@@ -28,7 +28,11 @@ export type PublishBizScriptReleasePayload = {
 export type BuildBizScriptReleasePayload = {
   releaseNote?: string;
   forceUpdate?: boolean;
+  files?: string[];
+  baseVersion?: string;
 };
+
+export type BizScriptFileCatalog = { data: string[] };
 
 export type DeviceUpdateStatus = {
   deviceId: string;
@@ -80,6 +84,10 @@ export function getBizScriptReleases() {
     channel: "biz-scripts",
     limit: 100
   });
+}
+
+export function getBizScriptFiles() {
+  return request<BizScriptFileCatalog>("/admin/remote-scripts/files", { roots: "features,domain" });
 }
 
 export function getDeviceUpdateStatuses() {

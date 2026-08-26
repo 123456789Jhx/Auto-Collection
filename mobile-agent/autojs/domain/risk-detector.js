@@ -1,7 +1,26 @@
-function containsRisk(config, text) {
+var platformVerificationPatterns = [
+  /验证码|安全验证|完成验证|请完成验证/,
+  /请在下列图片|符合上述描述|请选择所有.*图片/,
+  /具有旋转特性的东西|拖拽到(这里|下方)|拖动滑块|滑块验证/,
+  /人机验证|图片验证|身份验证/
+];
+
+function detectRisk(config, text) {
+  config = config || {};
+  var runtime = config.runtime || {};
   var source = String(text || "");
   if (!source) {
-    return false;
+    return { detected: false };
+  }
+
+  for (var platformIndex = 0; platformIndex < platformVerificationPatterns.length; platformIndex++) {
+    if (platformVerificationPatterns[platformIndex].test(source)) {
+      return {
+        detected: true,
+        reasonCode: "PLATFORM_VERIFICATION",
+        message: "出现平台验证"
+      };
+    }
   }
 
   var strongPatterns = [
@@ -13,22 +32,34 @@ function containsRisk(config, text) {
   ];
   for (var i = 0; i < strongPatterns.length; i++) {
     if (strongPatterns[i].test(source)) {
-      return true;
+      return {
+        detected: true,
+        reasonCode: "RISK_CONTROL",
+        message: "检测到平台风控提示"
+      };
     }
   }
 
-  var riskWords = config.runtime.riskWords || [];
+  var riskWords = runtime.riskWords || [];
   for (var j = 0; j < riskWords.length; j++) {
     var word = riskWords[j];
     if (!word || word === "风险" || word === "验证") {
       continue;
     }
     if (source.indexOf(word) >= 0) {
-      return true;
+      return {
+        detected: true,
+        reasonCode: "RISK_CONTROL",
+        message: "检测到平台风控提示"
+      };
     }
   }
 
-  return false;
+  return { detected: false };
+}
+
+function containsRisk(config, text) {
+  return detectRisk(config, text).detected;
 }
 
 function isInvalidTaskContext(text) {
@@ -122,5 +153,6 @@ function hasStandaloneLine(text, word) {
 
 module.exports = {
   containsRisk: containsRisk,
+  detectRisk: detectRisk,
   isInvalidTaskContext: isInvalidTaskContext
 };

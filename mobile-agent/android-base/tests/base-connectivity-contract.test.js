@@ -84,6 +84,15 @@ test("coalesces an immediate heartbeat when a network becomes validated", () => 
   );
 });
 
+test("allows the exit flow to request an immediate outer heartbeat", () => {
+  const service = read("BaseConnectivityService.kt");
+
+  assert.match(service, /ACTION_REPORT_NOW/);
+  assert.match(service, /fun requestImmediateHeartbeat\(context: Context\)/);
+  assert.match(service, /intent\?\.action == ACTION_REPORT_NOW/);
+  assert.match(service, /queueImmediateHeartbeat\(\)/);
+});
+
 test("foreground base starts at boot and reports every two seconds", () => {
   const manifest = fs.readFileSync(path.join(root, "src", "main", "AndroidManifest.xml"), "utf8");
   const service = read("BaseConnectivityService.kt");

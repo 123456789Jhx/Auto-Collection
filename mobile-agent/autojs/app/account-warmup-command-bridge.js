@@ -13,36 +13,56 @@ function createAccountWarmupCommandBridge(context) {
 
   function preloadRegistry() {
     if (registry) return registry;
-    try {
-      var registryModule = context.loadBizScript("features/account-warmup/registry.js");
-      registry = registryModule.createAccountWarmupRegistry(context);
-      preloadError = null;
-      logger.info("养号模块预加载完成", { featureKey: "target_live_interaction" });
-      return registry;
-    } catch (error) {
-      preloadError = error;
-      logger.error("养号模块预加载失败", { message: String(error) });
-      return null;
+    var loaders = [
+      { name: "业务脚本热更新层", load: context.loadBizScript },
+      { name: "APK 基础层", load: context.loadBaselineScript }
+    ];
+    for (var index = 0; index < loaders.length; index += 1) {
+      var loader = loaders[index];
+      if (typeof loader.load !== "function") continue;
+      try {
+        var registryModule = loader.load("features/account-warmup/registry.js");
+        registry = registryModule.createAccountWarmupRegistry(context);
+        preloadError = null;
+        logger.info("养号模块预加载完成", { featureKey: "target_live_interaction", source: loader.name });
+        return registry;
+      } catch (error) {
+        preloadError = error;
+        logger.warn("养号模块预加载失败，尝试下一层", { source: loader.name, message: String(error) });
+      }
     }
+    logger.error("养号模块预加载失败", { message: String(preloadError || "") });
+    return null;
   }
 
   function preloadStopCleanup() {
     if (stopCleanup) return stopCleanup;
-    try {
-      var cleanupModule = context.loadBaselineScript("features/publish-video/douyin-post-publish-cleanup.js");
-      stopCleanup = cleanupModule.createDouyinPostPublishCleanup({
-        logger: logger,
-        cooldownMs: 0,
-        isPublishing: function () { return false; }
-      });
-      stopCleanupPreloadError = null;
-      logger.info("养号停止清理器已从 APK 基础层预加载", {});
-      return stopCleanup;
-    } catch (error) {
-      stopCleanupPreloadError = error;
-      logger.error("养号停止清理器预加载失败", { message: String(error) });
-      return null;
+    var cleanupPath = "features/publish-video/douyin-post-publish-cleanup.js";
+    var loaders = [
+      { name: "业务脚本热更新层", load: context.loadBizScript },
+      { name: "APK 基础层", load: context.loadBaselineScript }
+    ];
+    for (var index = 0; index < loaders.length; index += 1) {
+      var loader = loaders[index];
+      if (typeof loader.load !== "function") continue;
+      try {
+        var cleanupModule = loader.load(cleanupPath);
+        if (!cleanupModule || typeof cleanupModule.createDouyinPostPublishCleanup !== "function") continue;
+        stopCleanup = cleanupModule.createDouyinPostPublishCleanup({
+          logger: logger,
+          cooldownMs: 0,
+          isPublishing: function () { return false; }
+        });
+        stopCleanupPreloadError = null;
+        logger.info("养号停止清理器预加载完成", { source: loader.name });
+        return stopCleanup;
+      } catch (error) {
+        stopCleanupPreloadError = error;
+        logger.warn("养号停止清理器加载失败，尝试下一层", { source: loader.name, message: String(error) });
+      }
     }
+    logger.error("养号停止清理器预加载失败", { message: String(stopCleanupPreloadError || "") });
+    return null;
   }
 
   function startThread(runner) {
@@ -77,6 +97,21 @@ function createAccountWarmupCommandBridge(context) {
         progress[key] = event[key];
       }
     });
+    // Later stages such as SWIPING_COMMENTS do not repeat the candidate list.
+    // Keep the latest partial capture so a concurrent manual STOP cannot erase
+    // comments already acknowledged by the device.
+    if (runState.featureKey === "live_comment_entry" && runState.latestProgress) {
+      if (!Array.isArray(progress.comments) && Array.isArray(runState.latestProgress.comments)) {
+        progress.comments = runState.latestProgress.comments;
+      }
+      if (progress.commentCount === undefined && runState.latestProgress.commentCount !== undefined) {
+        progress.commentCount = runState.latestProgress.commentCount;
+      }
+      if (progress.commentSourceCount === undefined && runState.latestProgress.commentSourceCount !== undefined) {
+        progress.commentSourceCount = runState.latestProgress.commentSourceCount;
+      }
+    }
+    if (runState.featureKey === "live_comment_entry") runState.latestProgress = progress;
     try {
       ack(runState.command, "RUNNING", progress);
     } catch (error) {
@@ -101,6 +136,10 @@ function createAccountWarmupCommandBridge(context) {
   }
 
   function cleanupImmediatelyAfterStop(runState) {
+    if (runState.stopCleanupStarted) {
+      return runState.stopCleanupResult || { completed: false, reason: "STOP_CLEANUP_IN_PROGRESS" };
+    }
+    runState.stopCleanupStarted = true;
     var cleanupResult = null;
     try {
       cleanupResult = stopCleanup
@@ -113,12 +152,13 @@ function createAccountWarmupCommandBridge(context) {
     } catch (error) {
       cleanupResult = { completed: false, reason: "STOP_CLEANUP_FAILED", message: String(error) };
     }
+    runState.stopCleanupResult = cleanupResult || { completed: false, reason: "STOP_CLEANUP_EMPTY_RESULT" };
     logger.info("养号停止命令手机清理完成", {
       commandId: runState.commandId,
-      cleanupCompleted: !!(cleanupResult && cleanupResult.completed),
-      cleanupReason: String(cleanupResult && cleanupResult.reason || "")
+      cleanupCompleted: !!runState.stopCleanupResult.completed,
+      cleanupReason: String(runState.stopCleanupResult.reason || "")
     });
-    return cleanupResult || { completed: false, reason: "STOP_CLEANUP_EMPTY_RESULT" };
+    return runState.stopCleanupResult;
   }
 
   function preserveLiveEntryProgress(runState, result) {
@@ -154,6 +194,34 @@ function createAccountWarmupCommandBridge(context) {
     return true;
   }
 
+  function requiresImmediateCleanup(result) {
+    return !!(result && (
+      result.reasonCode === "PLATFORM_VERIFICATION" ||
+      result.status === "LIVE_COMMENT_ENTRY_PLATFORM_VERIFICATION" ||
+      result.cleanupRequired === true
+    ));
+  }
+
+  function liveEntryStopResult(runState, cleanupResult) {
+    var progress = runState && runState.latestProgress || {};
+    var result = {
+      status: "LIVE_COMMENT_ENTRY_STOPPED",
+      stage: "STOPPED",
+      targetCommandId: runState && runState.commandId,
+      cleanup: cleanupResult
+    };
+    if (Array.isArray(progress.comments)) {
+      result.comments = progress.comments;
+      result.commentCount = progress.comments.length;
+      result.captureStatus = "LIVE_COMMENT_ENTRY_PARTIAL";
+      result.captureCompleted = false;
+    } else if (progress.commentCount !== undefined) {
+      result.commentCount = progress.commentCount;
+    }
+    if (progress.commentSourceCount !== undefined) result.commentSourceCount = progress.commentSourceCount;
+    return result;
+  }
+
   function runCommand(command) {
     var payload = command.payload || command.payloadJson || {};
     if (active) {
@@ -171,6 +239,7 @@ function createAccountWarmupCommandBridge(context) {
       stopRequested: false,
       stopCleanupStarted: false,
       stageHistory: [],
+      latestProgress: null,
       command: command,
       thread: null
     };
@@ -196,6 +265,10 @@ function createAccountWarmupCommandBridge(context) {
         var result = task.run(runPayload, {
           shouldStop: function () { return !!runState.stopRequested; }
         });
+        if (requiresImmediateCleanup(result)) {
+          runState.stopRequested = true;
+          result.cleanup = cleanupImmediatelyAfterStop(runState);
+        }
         if (runState.featureKey === "live_comment_entry" && result && result.status === "STOPPED") {
           result.status = "LIVE_COMMENT_ENTRY_STOPPED";
         }
@@ -203,6 +276,7 @@ function createAccountWarmupCommandBridge(context) {
           result.status === "TARGET_LIVE_ENTERED" ||
           result.status === "VIDEO_WARMUP_DOUYIN_OPENED" ||
           result.status === "LIVE_COMMENT_ENTRY_ENTERED" ||
+          result.status === "LIVE_COMMENT_ENTRY_CAPTURED" ||
           result.status === "LIVE_COMMENT_ENTRY_STOPPED" ||
           result.status === "STOPPED"
         );
@@ -230,21 +304,18 @@ function createAccountWarmupCommandBridge(context) {
     }
     var runState = active;
     runState.stopRequested = true;
-    runState.stopCleanupStarted = true;
     interruptWorker(runState);
-    var cleanupResult = runState.featureKey === "live_comment_entry"
-      ? { completed: true, reason: "LIVE_COMMENT_ENTRY_CLEANUP_SKIPPED" }
-      : cleanupImmediatelyAfterStop(runState);
-    ack(command, "DONE", {
-      status: runState.featureKey === "live_comment_entry" ? "LIVE_COMMENT_ENTRY_STOPPED" : "STOPPED",
-      targetCommandId: String(payload.targetCommandId || ""),
-      cleanup: cleanupResult
-    });
-    var runStopResult = {
-      status: runState.featureKey === "live_comment_entry" ? "LIVE_COMMENT_ENTRY_STOPPED" : "STOPPED",
-      cleanup: cleanupResult
-    };
-    if (runState.featureKey === "live_comment_entry") runStopResult.stage = "STOPPED";
+    var cleanupResult = cleanupImmediatelyAfterStop(runState);
+    var runStopResult = runState.featureKey === "live_comment_entry"
+      ? liveEntryStopResult(runState, cleanupResult)
+      : { status: "STOPPED", cleanup: cleanupResult };
+    ack(command, "DONE", runState.featureKey === "live_comment_entry"
+      ? runStopResult
+      : {
+        status: "STOPPED",
+        targetCommandId: String(payload.targetCommandId || ""),
+        cleanup: cleanupResult
+      });
     finishCommand(runState.command, "DONE", runStopResult);
   }
 
@@ -274,7 +345,6 @@ function createAccountWarmupCommandBridge(context) {
     }
     var runState = active;
     runState.stopRequested = true;
-    runState.stopCleanupStarted = true;
     interruptWorker(runState);
     var cleanupResult = cleanupImmediatelyAfterStop(runState);
     lastVideoStop = { batchId: runState.batchId, commandId: runState.commandId };

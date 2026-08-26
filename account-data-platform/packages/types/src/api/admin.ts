@@ -375,9 +375,16 @@ export const agentUpdateEventListQuerySchema = z.object({
 
 export type AgentUpdateEventListQuery = z.infer<typeof agentUpdateEventListQuerySchema>;
 
+export const bizScriptPathSchema = z.string().trim().regex(
+  /^(features|domain)\/[A-Za-z0-9._/-]+\.js$/,
+  "business script path must be a JS file under features/ or domain/"
+);
+
 export const buildBizScriptReleaseSchema = z.object({
   releaseNote: z.string().trim().max(5000).optional(),
-  forceUpdate: z.boolean().default(false)
+  forceUpdate: z.boolean().default(false),
+  files: z.array(bizScriptPathSchema).optional(),
+  baseVersion: z.string().trim().regex(/^[0-9]+(?:\.[0-9]+)*$/).optional()
 }).strict();
 
 export type BuildBizScriptReleasePayload = z.infer<typeof buildBizScriptReleaseSchema>;

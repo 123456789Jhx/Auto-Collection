@@ -132,9 +132,93 @@ function isAccessibilityEnabled(extraPackages) {
   return !!detectAccessibility(extraPackages).enabled;
 }
 
+function resolveAutoService() {
+  try {
+    return typeof auto !== "undefined" && auto.service ? auto.service : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function resolveGestureClasses(options) {
+  var Path = options.Path || null;
+  var GestureDescription = options.GestureDescription || null;
+  if (Path && GestureDescription) return { Path: Path, GestureDescription: GestureDescription };
+  try {
+    Path = Path || android.graphics.Path;
+    GestureDescription = GestureDescription || android.accessibilityservice.GestureDescription;
+  } catch (error) {
+    return { Path: Path, GestureDescription: GestureDescription };
+  }
+  return { Path: Path, GestureDescription: GestureDescription };
+}
+
+function normalizePoint(value) {
+  if (Array.isArray(value)) {
+    return { x: Number(value[0]), y: Number(value[1]) };
+  }
+  value = value || {};
+  return { x: Number(value.x), y: Number(value.y) };
+}
+
+function validPoint(point) {
+  return isFinite(point.x) && isFinite(point.y);
+}
+
+function createGestureDriver(options) {
+  options = options || {};
+  var service = options.service || resolveAutoService();
+  var classes = resolveGestureClasses(options);
+
+  function unavailable(reason) {
+    return { success: false, reason: reason };
+  }
+
+  function dispatch(points, durationMs) {
+    if (!service || typeof service.dispatchGesture !== "function") {
+      return unavailable("ACCESSIBILITY_GESTURE_UNAVAILABLE");
+    }
+    if (!classes.Path || !classes.GestureDescription) {
+      return unavailable("ACCESSIBILITY_GESTURE_CLASSES_UNAVAILABLE");
+    }
+    var normalized = (points || []).map(normalizePoint);
+    if (!normalized.length || normalized.some(function (point) { return !validPoint(point); })) {
+      return unavailable("ACCESSIBILITY_GESTURE_POINTS_INVALID");
+    }
+    var path = new classes.Path();
+    path.moveTo(normalized[0].x, normalized[0].y);
+    for (var index = 1; index < normalized.length; index += 1) {
+      path.lineTo(normalized[index].x, normalized[index].y);
+    }
+    var GestureDescription = classes.GestureDescription;
+    var stroke = new GestureDescription.StrokeDescription(path, 0, Math.max(1, Number(durationMs) || 150));
+    var gesture = new GestureDescription.Builder().addStroke(stroke).build();
+    try {
+      var accepted = service.dispatchGesture(gesture, null, null);
+      return accepted === false
+        ? unavailable("ACCESSIBILITY_GESTURE_REJECTED")
+        : { success: true };
+    } catch (error) {
+      return { success: false, reason: "ACCESSIBILITY_GESTURE_FAILED", message: String(error) };
+    }
+  }
+
+  return {
+    tap: function (input) {
+      input = input || {};
+      return dispatch([{ x: input.x, y: input.y }], input.durationMs || 150);
+    },
+    swipe: function (input) {
+      input = input || {};
+      return dispatch(input.points, input.durationMs || 520);
+    }
+  };
+}
+
 module.exports = {
   setContext: setContext,
   detectAccessibility: detectAccessibility,
   isAccessibilityEnabled: isAccessibilityEnabled,
-  getEnabledAccessibilityServices: getEnabledAccessibilityServices
+  getEnabledAccessibilityServices: getEnabledAccessibilityServices,
+  createGestureDriver: createGestureDriver
 };

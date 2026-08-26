@@ -57,6 +57,7 @@ class BaseConnectivityService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (heartbeatExecutor?.isShutdown != false) startHeartbeatLoop()
         if (controlExecutor?.isShutdown != false) startControlLoop()
+        if (intent?.action == ACTION_REPORT_NOW) queueImmediateHeartbeat()
         return START_STICKY
     }
 
@@ -216,9 +217,21 @@ class BaseConnectivityService : Service() {
         private const val NOTIFICATION_ID = 0xBACE
         private const val HEARTBEAT_INTERVAL_MS = 2_000L
         private const val CONTROL_POLL_INTERVAL_MS = 2_000L
+        private const val ACTION_REPORT_NOW =
+            "com.agri.video.collector.base.action.REPORT_NOW"
 
         fun start(context: Context) {
-            val intent = Intent(context, BaseConnectivityService::class.java)
+            startService(context, null)
+        }
+
+        fun requestImmediateHeartbeat(context: Context) {
+            startService(context, ACTION_REPORT_NOW)
+        }
+
+        private fun startService(context: Context, action: String?) {
+            val intent = Intent(context, BaseConnectivityService::class.java).apply {
+                if (action != null) setAction(action)
+            }
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
                 else context.startService(intent)

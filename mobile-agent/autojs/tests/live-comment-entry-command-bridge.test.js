@@ -122,8 +122,12 @@ function testCapsStageHistoryAtTwentyEntries() {
   assert.strictEqual(history[19], "STAGE_21");
 }
 
-function testLiveEntryStopAcknowledgesBothCommandsWithoutLegacyCleanup() {
-  var harness = createHarness();
+function testLiveEntryStopInterruptsThenRunsCleanupExactlyOnce() {
+  var harness = createHarness({
+    status: "LIVE_COMMENT_ENTRY_VIEWER_COUNT_FAILED",
+    reasonCode: "VIEWER_COUNT_READ_FAILED",
+    cleanupRequired: true
+  });
   var bridge = createBridge(harness.context);
   bridge.install();
   var run = command("run-live-stop", "ACCOUNT_WARMUP_RUN", {
@@ -139,16 +143,66 @@ function testLiveEntryStopAcknowledgesBothCommandsWithoutLegacyCleanup() {
   bridge.intercept([run]);
   bridge.intercept([stop]);
 
-  assert.deepStrictEqual(harness.events, ["interrupt-worker"]);
+  assert.deepStrictEqual(harness.events, ["interrupt-worker", "legacy-cleanup"]);
   assert.strictEqual(harness.acknowledgements[0].id, "stop-live");
   assert.strictEqual(harness.acknowledgements[0].status, "DONE");
   assert.strictEqual(harness.acknowledgements[0].result.status, "LIVE_COMMENT_ENTRY_STOPPED");
   assert.strictEqual(harness.acknowledgements[0].result.targetCommandId, run.id);
+  assert.deepStrictEqual(harness.acknowledgements[0].result.cleanup, { completed: true });
   assert.strictEqual(harness.acknowledgements[1].id, run.id);
   assert.strictEqual(harness.acknowledgements[1].result.status, "LIVE_COMMENT_ENTRY_STOPPED");
   assert.strictEqual(harness.acknowledgements[1].result.stage, "STOPPED");
+  assert.deepStrictEqual(harness.acknowledgements[1].result.cleanup, { completed: true });
   assert.deepStrictEqual(harness.acknowledgements[1].result.stageHistory, []);
   assert.strictEqual(bridge.getActive(), null);
+
+  // The interrupted worker may still unwind and return a cleanup-required result.
+  harness.queuedThreads[0]();
+  assert.deepStrictEqual(harness.events, ["interrupt-worker", "legacy-cleanup"]);
+  assert.strictEqual(harness.acknowledgements.length, 2);
+}
+
+function testLiveEntryStopPreservesPartialCandidatesFromLatestProgress() {
+  var bridge = null;
+  var stop = null;
+  var harness = createHarness(null, function (reportStage) {
+    reportStage({
+      stage: "COMMENT_PAGE_CAPTURED",
+      pageIndex: 0,
+      commentCount: 1,
+      comments: [{ commentId: "lc_1", commentText: "已抓到的评论", userName: "甲" }]
+    });
+    // A later stage omits comments; the bridge must still retain the last list.
+    reportStage({ stage: "SWIPING_COMMENTS", swipeIndex: 1 });
+    bridge.intercept([stop]);
+  });
+  bridge = createBridge(harness.context);
+  bridge.install();
+  var run = command("run-live-partial-stop", "ACCOUNT_WARMUP_RUN", {
+    featureKey: "live_comment_entry",
+    batchId: "batch-live-partial-stop",
+    config: {}
+  });
+  stop = command("stop-live-partial", "ACCOUNT_WARMUP_STOP", {
+    targetCommandId: run.id,
+    batchId: "batch-live-partial-stop"
+  });
+
+  bridge.intercept([run]);
+  harness.queuedThreads[0]();
+
+  var stopAck = harness.acknowledgements.find(function (item) { return item.id === stop.id; });
+  var runAck = harness.acknowledgements.find(function (item) { return item.id === run.id && item.status === "DONE"; });
+  assert.deepStrictEqual(stopAck.result.comments, [
+    { commentId: "lc_1", commentText: "已抓到的评论", userName: "甲" }
+  ]);
+  assert.strictEqual(stopAck.result.commentCount, 1);
+  assert.strictEqual(stopAck.result.captureCompleted, false);
+  assert.deepStrictEqual(runAck.result.comments, [
+    { commentId: "lc_1", commentText: "已抓到的评论", userName: "甲" }
+  ]);
+  assert.strictEqual(runAck.result.captureStatus, "LIVE_COMMENT_ENTRY_PARTIAL");
+  assert.strictEqual(runAck.result.status, "LIVE_COMMENT_ENTRY_STOPPED");
 }
 
 function testNormalizesAWorkerStopResultForLiveEntry() {
@@ -165,8 +219,154 @@ function testNormalizesAWorkerStopResultForLiveEntry() {
   assert.strictEqual(harness.acknowledgements[0].result.status, "LIVE_COMMENT_ENTRY_STOPPED");
 }
 
+function testCompletesCapturedCommentsAsDoneAndPreservesCandidates() {
+  var harness = createHarness({
+    status: "LIVE_COMMENT_ENTRY_CAPTURED",
+    commentSwipeCount: 5,
+    commentCount: 1,
+    comments: [{ pageIndex: 0, userName: "甲", commentText: "你好" }]
+  });
+  var bridge = createBridge(harness.context);
+  bridge.install();
+  bridge.intercept([command("run-live-captured", "ACCOUNT_WARMUP_RUN", {
+    featureKey: "live_comment_entry",
+    batchId: "batch-live-captured",
+    config: {}
+  })]);
+  harness.queuedThreads[0]();
+
+  assert.strictEqual(harness.acknowledgements[0].status, "DONE");
+  assert.strictEqual(harness.acknowledgements[0].result.status, "LIVE_COMMENT_ENTRY_CAPTURED");
+  assert.deepStrictEqual(harness.acknowledgements[0].result.comments, [
+    { pageIndex: 0, userName: "甲", commentText: "你好" }
+  ]);
+}
+
+function testPlatformVerificationFailsAndRunsLegacyCleanup() {
+  var harness = createHarness({
+    status: "LIVE_COMMENT_ENTRY_PLATFORM_VERIFICATION",
+    reasonCode: "PLATFORM_VERIFICATION",
+    message: "出现平台验证",
+    failedStage: "OPENING_FIRST_RESULT",
+    cleanupRequired: true
+  });
+  var bridge = createBridge(harness.context);
+  bridge.install();
+  bridge.intercept([command("run-live-verification", "ACCOUNT_WARMUP_RUN", {
+    featureKey: "live_comment_entry",
+    batchId: "batch-live-verification",
+    config: {}
+  })]);
+  harness.queuedThreads[0]();
+
+  assert.deepStrictEqual(harness.events, ["legacy-cleanup"]);
+  assert.strictEqual(harness.acknowledgements[0].status, "FAILED");
+  assert.strictEqual(harness.acknowledgements[0].result.reasonCode, "PLATFORM_VERIFICATION");
+  assert.deepStrictEqual(harness.acknowledgements[0].result.cleanup, { completed: true });
+}
+
+function testViewerCountFailureFailsAndRunsLegacyCleanup() {
+  var harness = createHarness({
+    status: "LIVE_COMMENT_ENTRY_VIEWER_COUNT_FAILED",
+    reasonCode: "VIEWER_COUNT_READ_FAILED",
+    message: "无法识别直播间人数，脚本已停止",
+    cleanupRequired: true
+  });
+  var bridge = createBridge(harness.context);
+  bridge.install();
+  bridge.intercept([command("run-live-viewer-failure", "ACCOUNT_WARMUP_RUN", {
+    featureKey: "live_comment_entry",
+    batchId: "batch-live-viewer-failure",
+    config: {}
+  })]);
+  harness.queuedThreads[0]();
+
+  assert.deepStrictEqual(harness.events, ["legacy-cleanup"]);
+  assert.strictEqual(harness.acknowledgements[0].status, "FAILED");
+  assert.strictEqual(harness.acknowledgements[0].result.reasonCode, "VIEWER_COUNT_READ_FAILED");
+  assert.deepStrictEqual(harness.acknowledgements[0].result.cleanup, { completed: true });
+}
+
+function testStopCleanupPrefersHotUpdatedBusinessCleanup() {
+  var harness = createHarness({
+    status: "LIVE_COMMENT_ENTRY_VIEWER_COUNT_FAILED",
+    reasonCode: "VIEWER_COUNT_READ_FAILED",
+    message: "无法识别直播间人数，脚本已停止",
+    cleanupRequired: true
+  });
+  var baselineCalls = 0;
+  var bizCleanupCalls = 0;
+  var originalBizLoader = harness.context.loadBizScript;
+  harness.context.loadBizScript = function (path) {
+    if (path === "features/publish-video/douyin-post-publish-cleanup.js") {
+      bizCleanupCalls += 1;
+      return {
+        createDouyinPostPublishCleanup: function () {
+          return { run: function () { harness.events.push("biz-cleanup"); return { completed: true }; } };
+        }
+      };
+    }
+    return originalBizLoader(path);
+  };
+  var originalBaselineLoader = harness.context.loadBaselineScript;
+  harness.context.loadBaselineScript = function (path) {
+    baselineCalls += 1;
+    return originalBaselineLoader(path);
+  };
+  var bridge = createBridge(harness.context);
+  bridge.install();
+  bridge.intercept([command("run-live-hot-cleanup", "ACCOUNT_WARMUP_RUN", {
+    featureKey: "live_comment_entry",
+    batchId: "batch-live-hot-cleanup",
+    config: {}
+  })]);
+  harness.queuedThreads[0]();
+
+  assert.strictEqual(bizCleanupCalls, 1);
+  assert.strictEqual(baselineCalls, 0);
+  assert.deepStrictEqual(harness.events, ["biz-cleanup"]);
+}
+
 testReportsOrderedStagesAndCompletesLiveEntry();
 testCapsStageHistoryAtTwentyEntries();
-testLiveEntryStopAcknowledgesBothCommandsWithoutLegacyCleanup();
+testLiveEntryStopInterruptsThenRunsCleanupExactlyOnce();
+testLiveEntryStopPreservesPartialCandidatesFromLatestProgress();
 testNormalizesAWorkerStopResultForLiveEntry();
+testCompletesCapturedCommentsAsDoneAndPreservesCandidates();
+testPlatformVerificationFailsAndRunsLegacyCleanup();
+testViewerCountFailureFailsAndRunsLegacyCleanup();
+testStopCleanupPrefersHotUpdatedBusinessCleanup();
+
+function testFallsBackToBaselineRegistryWhenOverlayIsBroken() {
+  var harness = createHarness({ status: "LIVE_COMMENT_ENTRY_ENTERED" });
+  var baselineLoads = 0;
+  harness.context.loadBizScript = function () {
+    throw new Error("overlay registry has a broken relative dependency");
+  };
+  harness.context.loadBaselineScript = function (path) {
+    if (path === "features/account-warmup/registry.js") {
+      baselineLoads += 1;
+      return {
+        createAccountWarmupRegistry: function () {
+          return {
+            create: function () {
+              return { run: function () { return { status: "LIVE_COMMENT_ENTRY_ENTERED" }; } };
+            }
+          };
+        }
+      };
+    }
+    return { createDouyinPostPublishCleanup: function () { return { run: function () { return { completed: true }; } }; } };
+  };
+  var bridge = createBridge(harness.context);
+  bridge.install();
+  bridge.intercept([command("run-baseline-registry", "ACCOUNT_WARMUP_RUN", {
+    featureKey: "live_comment_entry", batchId: "batch-baseline-registry", config: {}
+  })]);
+  harness.queuedThreads[0]();
+  assert.strictEqual(baselineLoads, 1);
+  assert.strictEqual(harness.acknowledgements[harness.acknowledgements.length - 1].status, "DONE");
+}
+
+testFallsBackToBaselineRegistryWhenOverlayIsBroken();
 console.log("live comment entry command bridge tests passed");

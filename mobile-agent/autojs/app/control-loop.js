@@ -421,6 +421,34 @@ function createControlLoop(context) {
     return "idle";
   }
 
+  function hasManualLifecycleOverride() {
+    return !!(floatyControl.state.manualOverride || floatyControl.state.stopRequested || floatyControl.state.exitRequested);
+  }
+
+  function markBackendRecoveryPending(message) {
+    var patch = {
+      backendRecoveryPending: true,
+      lastMessage: message
+    };
+    if (!hasManualLifecycleOverride()) {
+      patch.running = false;
+      patch.paused = true;
+      patch.stopRequested = false;
+    }
+    floatyControl.update(patch);
+  }
+
+  function applyBackendRecoveryState() {
+    var patch = { backendRecoveryPending: false };
+    if (!hasManualLifecycleOverride()) {
+      patch.running = !!config.schedule.autoStart;
+      patch.paused = false;
+      patch.stopRequested = false;
+      patch.lastMessage = config.schedule.autoStart ? "后台连接恢复，自动执行任务" : "后台连接恢复，待命中";
+    }
+    floatyControl.update(patch);
+  }
+
   function syncTaskSchedulerState(taskType, commandType, meta) {
     var fallbackTaskType = (commandType === "START" || commandType === "RESUME") ? "video" : "";
     var normalizedTaskType = normalizeCommandTaskType(taskType, fallbackTaskType);
@@ -533,9 +561,7 @@ function createControlLoop(context) {
     if (!tokenResult || !tokenResult.success) {
       backendSync.failureCount += 1;
       backendSync.ready = false;
-      floatyControl.update({
-        lastMessage: "设备注册失败，等待重试"
-      });
+      markBackendRecoveryPending("设备注册失败，等待重试");
       var registerNow = Date.now();
       var registerLogIntervalMs = Number(config.upload.failureLogIntervalMs || 5 * 60 * 1000);
       if (backendSync.failureCount === 1 || backendSync.failureCount % 10 === 0 || registerNow - backendSync.lastFailureLogAt >= registerLogIntervalMs) {
@@ -569,6 +595,7 @@ function createControlLoop(context) {
       }
       backendSync.failureCount = 0;
       backendSync.ready = true;
+      applyBackendRecoveryState();
       logger.info("backend sync ready", {
         reason: reason,
         autoStart: !!config.schedule.autoStart,
@@ -577,21 +604,6 @@ function createControlLoop(context) {
         manualOverride: !!floatyControl.state.manualOverride,
         lastManualAction: floatyControl.state.lastManualAction || ""
       });
-      if (
-        config.schedule.autoStart &&
-        !floatyControl.state.manualOverride &&
-        !floatyControl.state.running &&
-        !floatyControl.state.paused &&
-        !floatyControl.state.stopRequested &&
-        !floatyControl.state.exitRequested
-      ) {
-        floatyControl.update({
-          running: true,
-          paused: false,
-          stopRequested: false,
-          lastMessage: "后台连接恢复，自动执行任务"
-        });
-      }
       uploader.retryCached();
       var status = currentAgentStatus();
       heartbeatService.reportAgentHeartbeat(
@@ -604,9 +616,7 @@ function createControlLoop(context) {
 
     backendSync.failureCount += 1;
     backendSync.ready = false;
-    floatyControl.update({
-      lastMessage: "后台未就绪，等待注册/配置同步"
-    });
+    markBackendRecoveryPending("后台未就绪，等待注册/配置同步");
     var now = Date.now();
     var logIntervalMs = Number(config.upload.failureLogIntervalMs || 5 * 60 * 1000);
     if (backendSync.failureCount === 1 || backendSync.failureCount % 10 === 0 || now - backendSync.lastFailureLogAt >= logIntervalMs) {

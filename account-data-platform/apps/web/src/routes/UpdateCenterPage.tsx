@@ -4,8 +4,10 @@ import {
   Alert,
   App as AntdApp,
   Button,
+  Checkbox,
   Form,
   Input,
+  Select,
   Space,
   Statistic,
   Table,
@@ -15,6 +17,7 @@ import {
 } from "antd";
 import {
   buildAndPublishBizScripts,
+  getBizScriptFiles,
   getBizScriptReleases,
   getDeviceUpdateStatuses,
   type BuildBizScriptReleasePayload,
@@ -66,10 +69,13 @@ export function UpdateCenterPage() {
     queryFn: getDeviceUpdateStatuses,
     refetchInterval: 15_000
   });
+  const filesQuery = useQuery({ queryKey: ["bizScriptFiles"], queryFn: getBizScriptFiles });
   const buildMutation = useMutation({
     mutationFn: (values: BuildBizScriptReleasePayload) => buildAndPublishBizScripts({
       releaseNote: values.releaseNote,
-      forceUpdate: false
+      forceUpdate: false,
+      files: values.files,
+      baseVersion: values.baseVersion
     }),
     onSuccess: (release) => {
       message.success(release.idempotent ? "该版本已发布，元数据一致" : "业务脚本版本已发布");
@@ -177,6 +183,34 @@ export function UpdateCenterPage() {
           >
             <Form.Item label="发布说明" name="releaseNote">
               <Input.TextArea rows={3} maxLength={5000} showCount placeholder="本次更新内容" />
+            </Form.Item>
+            <Form.Item label="发布模式" name="files">
+              <Select
+                placeholder="完整包（不选择文件）"
+                allowClear
+                options={[{ label: "完整业务脚本包", value: "__full__" }, { label: "指定文件增量包", value: "__partial__" }]}
+                onChange={(value) => {
+                  if (value === "__full__") form.setFieldValue("files", undefined);
+                  if (value === "__partial__") form.setFieldValue("files", []);
+                }}
+              />
+            </Form.Item>
+            <Form.Item noStyle shouldUpdate={(prev, next) => prev.files !== next.files}>
+              {({ getFieldValue }) => {
+                const mode = getFieldValue("files");
+                if (!Array.isArray(mode)) return null;
+                return (
+                  <>
+                    {mode.length === 0 ? <Alert type="info" message="请选择要发布的 JS 文件；空列表会被拒绝。" style={{ marginBottom: 16 }} /> : null}
+                    <Form.Item name="baseVersion" label="基线版本" rules={[{ required: true, message: "增量包必须指定基线版本" }]}>
+                      <Input placeholder="例如 1.0.0" />
+                    </Form.Item>
+                    <Form.Item name="files" label="业务脚本文件" rules={[{ required: true, type: "array", min: 1, message: "至少选择一个 JS 文件" }]}>
+                      <Checkbox.Group options={(filesQuery.data?.data ?? []).map((file) => ({ label: file, value: file }))} />
+                    </Form.Item>
+                  </>
+                );
+              }}
             </Form.Item>
             <Button
               type="primary"

@@ -28,6 +28,7 @@ test("EXIT_AGENT_APP is a staged base command and never stops the outer base", (
   assert.match(executor, /Stage\("REMOVE_APP_TASK"/);
   assert.match(executor, /Stage\("LOCK_SCREEN"/);
   assert.match(executor, /exitResult\("PARTIAL",\s*"DONE"/);
+  assert.match(executor, /BaseConnectivityService\.requestImmediateHeartbeat\(context\)/);
   assert.doesNotMatch(executor, /BaseConnectivityService.*stop|stopService|killProcess|am force-stop|force-stop package/i);
 });
 

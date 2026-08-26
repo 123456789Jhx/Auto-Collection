@@ -31,7 +31,7 @@ import {
   publishAgentVersion
 } from "../services/agent-version.service";
 import { z } from "zod";
-import { BizScriptBuildError, bizScriptReleaseService } from "../services/biz-script-release.service";
+import { BizScriptBuildError, bizScriptReleaseService, listBizScriptFiles } from "../services/biz-script-release.service";
 
 type AdminContext = Context<{ Variables: AdminVariables }>;
 
@@ -88,6 +88,15 @@ remoteScriptConfigRoutes.post("/releases/build", async (c) => {
       error: { code: error.message, message: error.userMessage, details: error.details }
     }, error.message === "BUILD_IN_PROGRESS" ? 409 : 500);
   }
+});
+
+remoteScriptConfigRoutes.get("/files", async (c) => {
+  const roots = String(c.req.query("roots") || "features,domain").split(",");
+  if (roots.some((root) => root !== "features" && root !== "domain")) {
+    return c.json({ error: { code: "INVALID_FILE_SELECTION", message: "仅支持 features/domain 目录" } }, 400);
+  }
+  const files = await listBizScriptFiles();
+  return c.json({ data: files.filter((file) => roots.includes(file.split("/")[0])) });
 });
 
 remoteScriptConfigRoutes.get("/update-events", async (c) => {

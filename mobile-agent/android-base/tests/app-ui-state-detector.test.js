@@ -25,13 +25,15 @@ test("classifies foreground, background, missing task, and inspection failure", 
   assert.match(model, /if \(hasForegroundActivity\) FOREGROUND else BACKGROUND/);
 });
 
-test("detector inspects only this application's task and activity process importance", () => {
+test("detector checks the top activity instead of foreground-service process importance", () => {
   const detector = read("AppUiStateDetector.kt");
 
   assert.match(detector, /activityManager\.appTasks/);
   assert.match(detector, /baseIntent\?\.component\?\.packageName/);
   assert.match(detector, /context\.packageName/);
-  assert.match(detector, /IMPORTANCE_FOREGROUND/);
+  assert.match(detector, /getRunningTasks\(1\)/);
+  assert.match(detector, /\?\.topActivity\s*\n\s*\?\.packageName/);
+  assert.doesNotMatch(detector, /runningAppProcesses|IMPORTANCE_FOREGROUND/);
   assert.match(detector, /AppUiState\.classify/);
   assert.doesNotMatch(detector, /UsageStats|PACKAGE_USAGE_STATS|QUERY_ALL_PACKAGES/);
 });
