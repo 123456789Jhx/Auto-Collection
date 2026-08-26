@@ -9,12 +9,10 @@ var legacyCapture = require("../domain/live-comment-capture.js");
 var legacyRunnerModule = require("../features/account-warmup/live-comment-entry-comment-runner.js");
 
 var SCOPE = { batchId: "batch-1", deviceId: "device-1", roomKey: "room-1" };
-
 function copy(target, source) {
   Object.keys(source || {}).forEach(function (key) { target[key] = source[key]; });
   return target;
 }
-
 function runIsolated(runtime, optionOverrides, control) {
   var events = [];
   var options = copy({
@@ -24,7 +22,6 @@ function runIsolated(runtime, optionOverrides, control) {
   var result = runnerModule.createCommentCaptureRunner(options).capture(SCOPE, control);
   return { result: result, events: events };
 }
-
 function legacyCall(runtime, control, name, failedStage, args) {
   if (control && control.shouldStop && control.shouldStop()) return { stopped: true };
   try {
@@ -37,7 +34,6 @@ function legacyCall(runtime, control, name, failedStage, args) {
     return { failed: true, message: String(error.message || error) };
   }
 }
-
 function runLegacy(runtime, control) {
   var events = [];
   var runner = legacyRunnerModule.createCommentCaptureRunner({
@@ -57,7 +53,6 @@ function runLegacy(runtime, control) {
 test("runner exports bounded loop constants", function () {
   assert.deepEqual([runnerModule.COMMENT_OCR_ATTEMPTS, runnerModule.MAX_CONSECUTIVE_NO_NEW_PAGES], [3, 2]);
 });
-
 test("six-page success result and stage payloads stay equivalent to the legacy runner", function () {
   function runtime() {
     var reads = 0;
@@ -73,7 +68,6 @@ test("six-page success result and stage payloads stay equivalent to the legacy r
   assert.deepEqual(isolatedRun.events, legacyRun.events);
   assert.deepEqual([isolatedRun.result.commentSwipeCount, isolatedRun.result.commentPageCount], [5, 6]);
 });
-
 test("empty OCR retries up to the third attempt before continuing through five swipes", function () {
   var reads = 0;
   var swipes = 0;
@@ -93,7 +87,6 @@ test("empty OCR retries up to the third attempt before continuing through five s
     return event.stage === "RETRYING_COMMENT_OCR";
   }).length, 2);
 });
-
 test("two already-swiped no-new pages stop early while duplicate sources remain", function () {
   var page = 0;
   var run = runIsolated({
@@ -110,7 +103,6 @@ test("two already-swiped no-new pages stop early while duplicate sources remain"
   assert.deepEqual([run.result.commentCount, run.result.commentSourceCount,
     run.result.comments[0].sources.length], [1, 3, 3]);
 });
-
 test("OCR exceptions exhaust three attempts and preserve prior-page candidates", function () {
   var reads = 0;
   var run = runIsolated({
@@ -127,7 +119,6 @@ test("OCR exceptions exhaust three attempts and preserve prior-page candidates",
     "CAPTURING_COMMENTS", "COMMENT_OCR_FAILED", 1]);
   assert.equal(run.result.comments[0].commentText, "已抓到的评论");
 });
-
 test("missing OCR and swipe capabilities return legacy failure payloads with partial data", function () {
   var noOcr = runIsolated({ swipeComments: function () { return true; } }).result;
   var noSwipe = runIsolated({ readComments: function () { return { text: "甲：首屏评论" }; } }).result;
@@ -144,7 +135,6 @@ test("missing OCR and swipe capabilities return legacy failure payloads with par
   });
   assert.equal(noSwipe.commentCount, 1);
 });
-
 test("plain false and Task2 swipe failures normalize to COMMENT_SWIPE_FAILED", function () {
   [false, { success: false, reason: "DRIVER_REJECTED", message: "gesture denied" }].forEach(function (failure) {
     var run = runIsolated({
@@ -157,7 +147,6 @@ test("plain false and Task2 swipe failures normalize to COMMENT_SWIPE_FAILED", f
     assert.equal(run.result.commentCount, 1);
   });
 });
-
 test("Task2 success envelopes and callAction are unwrapped synchronously", function () {
   var reads = 0;
   var calls = [];
@@ -175,7 +164,6 @@ test("Task2 success envelopes and callAction are unwrapped synchronously", funct
     ["LIVE_COMMENT_ENTRY_ENTERED", 2, 3, 3]);
   assert.ok(calls.indexOf("waitRandom") >= 0);
 });
-
 test("platform verification stops at all OCR and swipe boundaries with partial comments", function () {
   [
     { stage: "CAPTURING_COMMENTS", phase: "before", reads: 0, swipes: 0, comments: 0 },
@@ -202,7 +190,6 @@ test("platform verification stops at all OCR and swipe boundaries with partial c
       [boundary.comments, boundary.swipes, boundary.reads, boundary.swipes]);
   });
 });
-
 test("Task2 verification failure envelope is recognized as platform verification", function () {
   var diagnostics = {
     risk: { signal: "slider" },
@@ -226,7 +213,6 @@ test("Task2 verification failure envelope is recognized as platform verification
     ["PLATFORM_VERIFICATION", "滑块验证", 0]);
   assert.deepEqual(run.result.verificationDiagnostics, diagnostics);
 });
-
 test("custom platform verification failure receives the legacy partial-count details", function () {
   var received = null;
   var diagnostics = {
@@ -255,7 +241,6 @@ test("custom platform verification failure receives the legacy partial-count det
   assert.deepEqual([run.result.textSample, run.result.comments[0].commentText], ["请完成验证", "已抓取"]);
   assert.deepEqual(run.result.verificationDiagnostics, diagnostics);
 });
-
 test("verification check failure before OCR terminates without calling capture actions", function () {
   var reads = 0;
   var swipes = 0;
@@ -271,7 +256,6 @@ test("verification check failure before OCR terminates without calling capture a
   assert.deepEqual([reads, swipes], [0, 0]);
   assert.equal(run.events[run.events.length - 1].stage, "COMMENT_CAPTURE_FAILED");
 });
-
 test("verification check failure after OCR preserves partial and performs no later action", function () {
   var checks = 0;
   var reads = 0;
@@ -291,7 +275,30 @@ test("verification check failure after OCR preserves partial and performs no lat
   assert.deepEqual([reads, swipes], [1, 0]);
   assert.equal(run.events[run.events.length - 1].stage, "COMMENT_CAPTURE_FAILED");
 });
-
+test("thrown verification checks fail closed at before and after OCR boundaries", function () {
+  [
+    { phase: "before", reads: 0, comments: 0 },
+    { phase: "after", reads: 1, comments: 1 }
+  ].forEach(function (boundary) {
+    var checks = 0;
+    var reads = 0;
+    var swipes = 0;
+    var run = runIsolated({
+      detectPlatformVerification: function () {
+        checks += 1;
+        if (boundary.phase === "after" && checks === 1) return { success: true, value: null };
+        throw new Error("detector crashed");
+      },
+      readComments: function () { reads += 1; return { text: "甲：异常前已读取" }; },
+      swipeComments: function () { swipes += 1; return true; }
+    });
+    assert.deepEqual([run.result.status, run.result.reasonCode, run.result.commentCount],
+      ["LIVE_COMMENT_ENTRY_COMMENT_CAPTURE_FAILED", "VERIFICATION_CHECK_FAILED", boundary.comments]);
+    assert.match(run.result.message, /detector crashed/);
+    assert.deepEqual([reads, swipes], [boundary.reads, 0]);
+    assert.equal(run.events[run.events.length - 1].stage, "COMMENT_CAPTURE_FAILED");
+  });
+});
 test("reportStage comments are deeply isolated from a successful result", function () {
   var completedEvent = null;
   var runner = runnerModule.createCommentCaptureRunner({
@@ -315,7 +322,6 @@ test("reportStage comments are deeply isolated from a successful result", functi
   assert.deepEqual([completedEvent.comments[0].commentText, completedEvent.comments[0].sources[0].commentText],
     ["事件修改", "事件来源修改"]);
 });
-
 test("stage alias comments are deeply isolated from a failure partial result", function () {
   var reads = 0;
   var failedEvent = null;
@@ -345,7 +351,6 @@ test("stage alias comments are deeply isolated from a failure partial result", f
   assert.deepEqual([failedEvent.comments[0].commentText, failedEvent.comments[0].sources[0].commentText],
     ["失败事件修改", "失败来源修改"]);
 });
-
 test("stop checks preserve completed OCR or swipe work and bound later actions", function () {
   var stoppedAfterRead = false;
   var readStop = runIsolated({
@@ -353,14 +358,12 @@ test("stop checks preserve completed OCR or swipe work and bound later actions",
     swipeComments: function () { throw new Error("must not swipe"); }
   }, null, { shouldStop: function () { return stoppedAfterRead; } }).result;
   assert.deepEqual([readStop.status, readStop.commentPageCount, readStop.commentCount], ["STOPPED", 1, 1]);
-
   var stoppedAfterSwipe = false;
   var swipeStop = runIsolated({
     readComments: function () { return { text: "甲：停止前抓取" }; },
     swipeComments: function () { stoppedAfterSwipe = true; return true; }
   }, null, { shouldStop: function () { return stoppedAfterSwipe; } }).result;
   assert.deepEqual([swipeStop.status, swipeStop.commentSwipeCount, swipeStop.commentCount], ["STOPPED", 1, 1]);
-
   var retryReads = 0;
   var stoppedInRetryWait = false;
   var retryWaitStop = runIsolated({
@@ -370,7 +373,6 @@ test("stop checks preserve completed OCR or swipe work and bound later actions",
   }, null, { shouldStop: function () { return stoppedInRetryWait; } }).result;
   assert.equal(retryWaitStop.status, "STOPPED");
   assert.equal(retryReads, 1);
-
   var swipeWaitReads = 0;
   var stoppedInSwipeWait = false;
   var swipeWaitStop = runIsolated({
@@ -380,7 +382,6 @@ test("stop checks preserve completed OCR or swipe work and bound later actions",
   }, null, { shouldStop: function () { return stoppedInSwipeWait; } }).result;
   assert.deepEqual([swipeWaitStop.status, swipeWaitStop.commentSwipeCount, swipeWaitReads], ["STOPPED", 1, 1]);
 });
-
 test("shouldStop, stopped and control aliases stop before any runtime action", function () {
   var actions = 0;
   var runtime = { readComments: function () { actions += 1; } };
@@ -392,7 +393,6 @@ test("shouldStop, stopped and control aliases stop before any runtime action", f
   assert.deepEqual(results.map(function (result) { return result.status; }), ["STOPPED", "STOPPED", "STOPPED"]);
   assert.equal(actions, 0);
 });
-
 test("isolated runner source never requires legacy business modules", function () {
   var source = fs.readFileSync(path.join(__dirname, "../features/new-comment/comment-runner.js"), "utf8");
   assert.doesNotMatch(source, /account-warmup|domain[\\/]live-comment-capture/);

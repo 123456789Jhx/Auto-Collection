@@ -172,7 +172,9 @@ function createCommentCaptureRunner(options) {
         ? check(failedStage, activeControl(details.control), metadata)
         : check.call(runtime, failedStage, metadata);
     } catch (error) {
-      return stopped(details.control) ? { stopped: true } : null;
+      return stopped(details.control) ? { stopped: true } : failure(
+        failedStage, "VERIFICATION_CHECK_FAILED",
+        "平台验证检查失败: " + String(error && error.message || error), details);
     }
     if (stopped(details.control)) return { stopped: true };
     var detection = detectedValue(raw);
@@ -203,11 +205,8 @@ function createCommentCaptureRunner(options) {
     if (result.textSample === undefined) {
       result.textSample = String(detection.textSample || "").slice(0, 260);
     }
-    result.verificationDiagnostics = {
-      risk: detection.risk,
-      pageStructure: detection.pageStructure,
-      actionTrace: detection.actionTrace
-    };
+    result.verificationDiagnostics = { risk: detection.risk,
+      pageStructure: detection.pageStructure, actionTrace: detection.actionTrace };
     result.pageIndex = details.pageIndex === undefined ? null : details.pageIndex;
     result.swipeCount = details.swipeCount === undefined ? 0 : details.swipeCount;
     result.pageCount = (details.pages || []).length;
