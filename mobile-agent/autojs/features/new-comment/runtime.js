@@ -134,12 +134,37 @@ function createIsolatedRuntime(context, options) {
   function riskMethod() {
     return typeof riskDetector === "function" ? riskDetector : riskDetector.detectRisk;
   }
-
+  function stableDiagnosticValue(value, depth) {
+    var type = typeof value;
+    if (value === null || type === "boolean") return value;
+    if (type === "string") return value.slice(0, 1000);
+    if (type === "number") return isFinite(value) ? value : null;
+    if (type !== "object" || depth <= 0) return undefined;
+    if (Array.isArray(value)) {
+      var values = [];
+      value.slice(0, 20).forEach(function (item) {
+        var safeItem = stableDiagnosticValue(item, depth - 1);
+        if (safeItem !== undefined) values.push(safeItem);
+      });
+      return values;
+    }
+    var result = {};
+    Object.keys(value).sort().slice(0, 30).forEach(function (key) {
+      if (key === "image") return;
+      var safeValue = stableDiagnosticValue(value[key], depth - 1);
+      if (safeValue !== undefined) result[key] = safeValue;
+    });
+    return result;
+  }
   function readVerificationSnapshot() {
+    lastVerificationText = "";
+    lastVerificationStructure = null;
     var snapshot = extractFastText();
-    lastVerificationText = String(snapshot && (snapshot.combinedText || snapshot.text) || "");
-    lastVerificationStructure = snapshot &&
-      (snapshot.pageStructure || snapshot.visibleStructure || snapshot.structure) || null;
+    lastVerificationText = String(snapshot &&
+      (snapshot.combinedText || snapshot.text || snapshot.visibleText) || "");
+    var explicit = snapshot &&
+      (snapshot.pageStructure || snapshot.visibleStructure || snapshot.structure);
+    lastVerificationStructure = stableDiagnosticValue(explicit || snapshot, 4);
     return snapshot;
   }
 
@@ -341,6 +366,7 @@ function createIsolatedRuntime(context, options) {
           "verification diagnostics failed");
       }
       var recycleFailure = recycleSnapshot(snapshot);
+      if (stopped()) return contract.stopped();
       if (recycleFailure) missing = contract.failure(contract.REASON.VERIFICATION_CHECK_FAILED,
         recycleFailure.message);
       missing.details = verificationDetails();
