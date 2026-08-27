@@ -60,6 +60,11 @@ function createContext() {
         capturedCount: 0
       },
       heartbeat: {},
+      accountWarmupRunIdentity: {
+        runId: "run-heartbeat",
+        batchId: "batch-heartbeat",
+        featureKey: "video_warmup"
+      },
       taskScheduler: {
         getActiveTaskType: function () {
           return "live";
@@ -102,6 +107,34 @@ function testCommerceCardImmediateHeartbeatUsesLiveSceneType() {
   assert.strictEqual(fixture.uploadedHeartbeats[0].currentTaskType, "commerce_card_live_comment");
 }
 
+function testHeartbeatIncludesWarmupRunIdentityInRawPayload() {
+  var fixture = createContext();
+  var service = createHeartbeatService(fixture.context);
+
+  service.reportImmediateHeartbeat("video", "running", "刷视频中");
+
+  var payload = fixture.uploadedHeartbeats[0];
+  assert.strictEqual(payload.runId, "run-heartbeat");
+  assert.strictEqual(payload.batchId, "batch-heartbeat");
+  assert.strictEqual(payload.featureKey, "video_warmup");
+}
+
+function testHeartbeatReadsRunIdentityFromBridgeWhenContextMirrorMissing() {
+  var fixture = createContext();
+  fixture.context.accountWarmupRunIdentity = null;
+  fixture.context.accountWarmupCommandBridge = {
+    getActive: function () {
+      return { runIdentity: { runId: "run-bridge", batchId: "batch-bridge", featureKey: "video_warmup" } };
+    }
+  };
+  var service = createHeartbeatService(fixture.context);
+
+  service.reportImmediateHeartbeat("video", "running", "刷视频中");
+
+  assert.strictEqual(fixture.uploadedHeartbeats[0].runId, "run-bridge");
+  assert.strictEqual(fixture.uploadedHeartbeats[0].batchId, "batch-bridge");
+}
+
 function testBizScriptUpdatesOnlyWhileIdle() {
   var fixture = createContext();
   var service = createHeartbeatService(fixture.context);
@@ -119,6 +152,8 @@ function testBizScriptUpdatesOnlyWhileIdle() {
 
 testHeartbeatAutoUploadsCurrentLogWithThrottle();
 testCommerceCardImmediateHeartbeatUsesLiveSceneType();
+testHeartbeatIncludesWarmupRunIdentityInRawPayload();
+testHeartbeatReadsRunIdentityFromBridgeWhenContextMirrorMissing();
 testBizScriptUpdatesOnlyWhileIdle();
 
 console.log("heartbeat-log-sync tests passed");

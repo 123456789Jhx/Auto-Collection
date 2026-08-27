@@ -51,6 +51,20 @@ export async function findMobileCommandByIdempotencyKey(idempotencyKey: string) 
   return command ?? null;
 }
 
+export async function findActiveVideoWarmupRun(deviceId: string, batchId?: string) {
+  const conditions = [
+    eq(mobileCommands.tenantId, config.tenantId),
+    eq(mobileCommands.deviceId, deviceId),
+    eq(mobileCommands.commandType, "ACCOUNT_WARMUP_RUN"),
+    inArray(mobileCommands.status, ["PENDING", "FETCHED", "CLAIMED", "RUNNING"]),
+    sql`${mobileCommands.payloadJson} ->> 'featureKey' = 'video_warmup'`,
+    isNull(mobileCommands.deletedAt)
+  ];
+  if (batchId) conditions.push(sql`${mobileCommands.payloadJson} ->> 'batchId' = ${batchId}`);
+  const [command] = await db.select().from(mobileCommands).where(and(...conditions)).orderBy(desc(mobileCommands.createdAt)).limit(1);
+  return command ?? null;
+}
+
 export async function findBaseCommandForAck(commandId: string, deviceId: string, claimToken: string) {
   const [command] = await db
     .select()

@@ -12,6 +12,7 @@ import { config } from "../config";
 import {
   createMobileCommand,
   createExitAgentAppCommandAtomic,
+  findActiveVideoWarmupRun,
   findBaseCommandForAck,
   findMobileCommandByIdempotencyKey,
   claimPendingCommandByDeviceId,
@@ -20,6 +21,7 @@ import {
   listMobileCommands,
   updateClaimedBaseCommandStatus
 } from "../repositories/command.repository";
+import { findLatestHeartbeatByDeviceId } from "../repositories/heartbeat.repository";
 import { findDeviceByCode, markDeviceCommandIssued, resolveDeviceByToken, updateDesiredAgentState } from "../repositories/device.repository";
 import { findTaskByCode } from "../repositories/task.repository";
 import {
@@ -100,6 +102,15 @@ export async function createCommand(payload: CreateMobileCommandPayload) {
       : payload.commandType === "EXIT_AGENT_APP"
         ? exitAgentAppPayloadSchema.parse(payload.payload ?? {})
       : payload.payload ?? {};
+  if (payload.commandType === "ACCOUNT_WARMUP_RUN" && (commandPayload as Record<string, unknown>).featureKey === "video_warmup") {
+    const activeRun = await findActiveVideoWarmupRun(device.id);
+    if (activeRun) throw new Error("VIDEO_WARMUP_DEVICE_BUSY");
+    const heartbeat = await findLatestHeartbeatByDeviceId(device.id);
+    const reportedRunId = (heartbeat?.rawPayload as Record<string, unknown> | null)?.runId;
+    if (typeof reportedRunId === "string" && reportedRunId) {
+      throw new Error("VIDEO_WARMUP_DEVICE_REPORTS_ACTIVE_RUN");
+    }
+  }
   const videoBatchId = payload.commandType === "VIDEO_WARMUP_STOP"
     ? videoWarmupStopPayloadSchema.parse(payload.payload).batchId
     : undefined;

@@ -49,6 +49,20 @@ function createHeartbeatService(context) {
     return context.taskScheduler && context.taskScheduler.getActiveTaskType ? context.taskScheduler.getActiveTaskType() : "";
   }
 
+  function currentWarmupRunIdentity() {
+    var identity = context.accountWarmupRunIdentity;
+    if (!identity && context.accountWarmupCommandBridge && context.accountWarmupCommandBridge.getActive) {
+      var active = context.accountWarmupCommandBridge.getActive();
+      identity = active && active.runIdentity;
+    }
+    identity = identity || {};
+    return {
+      runId: String(identity.runId || ""),
+      batchId: String(identity.batchId || ""),
+      featureKey: String(identity.featureKey || "")
+    };
+  }
+
   function agentCapabilities() {
     return {
       workflowVersion: 2,
@@ -203,6 +217,7 @@ function createHeartbeatService(context) {
       counters.liveRemainingMinutes = remainingMinutes;
     }
     var assignment = assignmentPayload();
+    var runIdentity = currentWarmupRunIdentity();
     var payload = {
       sceneType: uploadSceneType,
       elapsedMinutes: elapsedMinutes,
@@ -223,6 +238,9 @@ function createHeartbeatService(context) {
       paused: floatyControl.state.paused,
       stopRequested: floatyControl.state.stopRequested,
       status: floatyControl.state.paused ? "paused" : "running",
+      runId: runIdentity.runId,
+      batchId: runIdentity.batchId,
+      featureKey: runIdentity.featureKey,
       currentTaskType: currentTaskType(),
       assignmentId: assignment.assignmentId,
       assignmentStateVersion: assignment.assignmentStateVersion,
@@ -250,6 +268,7 @@ function createHeartbeatService(context) {
     var startedAt = isActiveTask && counters.phaseStartedAt ? new Date(counters.phaseStartedAt).getTime() : 0;
     var activeSceneType = isActiveTask ? normalizeHeartbeatSceneType(sceneType || counters.currentPhase || "") : "";
     var assignment = assignmentPayload();
+    var runIdentity = currentWarmupRunIdentity();
     var payload = {
       sceneType: activeSceneType,
       elapsedMinutes: isActiveTask && startedAt && !isNaN(startedAt) ? Math.max(0, Math.round((Date.now() - startedAt) / 60000)) : 0,
@@ -270,6 +289,9 @@ function createHeartbeatService(context) {
       paused: floatyControl.state.paused,
       stopRequested: floatyControl.state.stopRequested,
       status: heartbeatStatus,
+      runId: runIdentity.runId,
+      batchId: runIdentity.batchId,
+      featureKey: runIdentity.featureKey,
       currentTaskType: currentTaskType(),
       assignmentId: assignment.assignmentId,
       assignmentStateVersion: assignment.assignmentStateVersion,

@@ -61,6 +61,16 @@ export async function listLatestHeartbeatsByDeviceIds(deviceIds: string[]) {
   return latest;
 }
 
+export async function findLatestHeartbeatByDeviceId(deviceId: string) {
+  const [heartbeat] = await db
+    .select()
+    .from(deviceHeartbeats)
+    .where(eq(deviceHeartbeats.deviceId, deviceId))
+    .orderBy(desc(deviceHeartbeats.reportedAt), desc(deviceHeartbeats.createdAt))
+    .limit(1);
+  return heartbeat ?? null;
+}
+
 export async function listDeviceHeartbeats(deviceCode: string, limit = 50) {
   return db
     .select({

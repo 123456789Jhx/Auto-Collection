@@ -127,6 +127,43 @@ function testPreloadsRegistryBeforeWorkerExecution() {
   });
 }
 
+function testMaintainsRunIdentityForActiveWarmupTask() {
+  var warmup = command("run-identity", "ACCOUNT_WARMUP_RUN", {
+    featureKey: "video_warmup",
+    batchId: "batch-identity",
+    runId: "run-identity-explicit",
+    config: {}
+  });
+  var harness = createHarness([[warmup]]);
+  var bridge = createBridge(harness.context);
+  bridge.install();
+
+  harness.context.uploader.pollCommands();
+
+  assert.deepStrictEqual(bridge.getActive().runIdentity, {
+    runId: "run-identity-explicit",
+    batchId: "batch-identity",
+    featureKey: "video_warmup"
+  });
+}
+
+function testClearsRunIdentityAfterTerminalAck() {
+  var warmup = command("run-identity-clear", "ACCOUNT_WARMUP_RUN", {
+    featureKey: "video_warmup",
+    batchId: "batch-identity-clear",
+    runId: "run-identity-clear",
+    config: {}
+  });
+  var harness = createHarness([[warmup]]);
+  var bridge = createBridge(harness.context);
+  bridge.install();
+
+  harness.context.uploader.pollCommands();
+  assert.strictEqual(harness.context.accountWarmupRunIdentity.runId, "run-identity-clear");
+  harness.queuedThreads[0]();
+  assert.strictEqual(harness.context.accountWarmupRunIdentity, null);
+}
+
 function testRetriesFailedTerminalAckWithoutRerunningFeature() {
   var warmup = command("run-ack", "ACCOUNT_WARMUP_RUN", {
     featureKey: "target_live_interaction",
@@ -187,5 +224,7 @@ testInterceptsWarmupAndPassesOtherCommandsThrough();
 testSuppressesDuplicateFetchedRunAndSignalsStop();
 testRetriesFailedTerminalAckWithoutRerunningFeature();
 testPreloadsRegistryBeforeWorkerExecution();
+testMaintainsRunIdentityForActiveWarmupTask();
+testClearsRunIdentityAfterTerminalAck();
 testStopImmediatelyInterruptsAndCleansUpBeforeWorkerReturns();
 console.log("account warmup command bridge tests passed");

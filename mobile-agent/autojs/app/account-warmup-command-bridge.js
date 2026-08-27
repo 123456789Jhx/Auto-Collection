@@ -11,6 +11,22 @@ function createAccountWarmupCommandBridge(context) {
   var installed = false;
   var originalPoll = null;
 
+  function setRunIdentity(runState) {
+    if (!runState) return;
+    var identity = {
+      runId: runState.runIdentity.runId,
+      batchId: runState.runIdentity.batchId,
+      featureKey: runState.runIdentity.featureKey
+    };
+    context.accountWarmupRunIdentity = identity;
+  }
+
+  function clearRunIdentity(runState) {
+    var current = context.accountWarmupRunIdentity;
+    if (!runState || !current || String(current.runId || "") !== runState.runIdentity.runId) return;
+    context.accountWarmupRunIdentity = null;
+  }
+
   function preloadRegistry() {
     if (registry) return registry;
     var loaders = [
@@ -190,6 +206,7 @@ function createAccountWarmupCommandBridge(context) {
       logger.warn("养号任务回执待重试", { commandId: command.id, message: String(response.message || "") });
       return false;
     }
+    clearRunIdentity(active);
     active = null;
     return true;
   }
@@ -236,6 +253,11 @@ function createAccountWarmupCommandBridge(context) {
       commandId: command.id,
       batchId: String(payload.batchId || ""),
       featureKey: String(payload.featureKey || ""),
+      runIdentity: {
+        runId: String(payload.runId || command.id || ""),
+        batchId: String(payload.batchId || ""),
+        featureKey: String(payload.featureKey || "")
+      },
       stopRequested: false,
       stopCleanupStarted: false,
       stageHistory: [],
@@ -244,6 +266,7 @@ function createAccountWarmupCommandBridge(context) {
       thread: null
     };
     active = runState;
+    setRunIdentity(runState);
     logger.info("养号任务启动", {
       commandId: command.id,
       batchId: runState.batchId,
