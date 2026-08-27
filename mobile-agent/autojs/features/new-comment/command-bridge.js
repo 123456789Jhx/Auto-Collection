@@ -253,12 +253,12 @@ function createNewCommentCommandBridge(context) {
     var runner = function () {
       try {
         var result = normalizeWorkerResult(runState.task.run(runPayload, runState.control));
-        if (runState.stopCompleted || runState.terminal) return;
+        if (runState.stopRequested || runState.stopCompleted || runState.terminal) return;
         var status = workerStatus(result);
         if (status === "FAILED" || needsCleanup(result)) result.cleanup = cleanup(runState);
         finish(runState, status, result);
       } catch (error) {
-        if (runState.stopCompleted || runState.terminal) return;
+        if (runState.stopRequested || runState.stopCompleted || runState.terminal) return;
         logger.error("隔离评论任务失败", {
           featureKey: FEATURE_KEY, batchId: runState.batchId,
           commandId: runState.commandId, message: String(error)

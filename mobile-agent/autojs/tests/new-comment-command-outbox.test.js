@@ -30,7 +30,11 @@ function harness(options) {
   var runCount = 0;
   var task = {
     cleanup: { run: function () { cleanupCount += 1; events.push("cleanup"); return { completed: true }; } },
-    run: function () { runCount += 1; return options.workerResult || { status: "LIVE_COMMENT_ENTRY_CAPTURED" }; }
+    run: function () {
+      runCount += 1;
+      if (options.workerError) throw options.workerError;
+      return options.workerResult || { status: "LIVE_COMMENT_ENTRY_CAPTURED" };
+    }
   };
   var context = {
     config: { device: { deviceId: "device-outbox" } },
@@ -56,7 +60,10 @@ function harness(options) {
     startThread: function (runner) {
       if (options.startError) throw options.startError;
       threads.push(runner);
-      return { interrupt: function () { events.push("interrupt"); } };
+      return { interrupt: function () {
+        events.push("interrupt");
+        if (options.runOnInterrupt) runner();
+      } };
     },
     accountWarmupCommandBridge: { getActive: function () { return options.oldActive ? {} : null; } }
   };
@@ -92,6 +99,27 @@ test("STOP 终态只下发一次，空轮询重试且不重复中断清理或终
   assert.equal(h.cleanupCount(), 1);
   assert.equal(h.acks.filter(function (item) { return item.id === stop.id; }).length, 2);
   assert.equal(h.acks.filter(function (item) { return item.id === run.id; }).length, 1);
+});
+
+test("STOP 同步中断唤醒失败 worker 时只允许 STOP 路径终结 RUN", function () {
+  var run = runCommand("run-reentrant-stop", "batch-reentrant-stop");
+  var stop = command("stop-reentrant", "ACCOUNT_WARMUP_STOP", {
+    targetCommandId: run.id, batchId: "batch-reentrant-stop"
+  });
+  var h = harness({ polls: [[run], [stop]], runOnInterrupt: true,
+    workerError: new Error("worker released by interrupt") });
+  h.context.uploader.pollCommands();
+  h.context.uploader.pollCommands();
+  assert.deepEqual(h.events, ["interrupt", "cleanup",
+    "ack:stop-reentrant:DONE", "ack:run-reentrant-stop:DONE"]);
+  assert.deepEqual(h.acks.map(function (item) {
+    return { id: item.id, status: item.status, resultStatus: item.result.status };
+  }), [
+    { id: stop.id, status: "DONE", resultStatus: "LIVE_COMMENT_ENTRY_STOPPED" },
+    { id: run.id, status: "DONE", resultStatus: "LIVE_COMMENT_ENTRY_STOPPED" }
+  ]);
+  assert.equal(h.cleanupCount(), 1);
+  assert.equal(h.bridge.getActive(), null);
 });
 
 test("错路由与忙碌拒绝只出现一次也会在空轮询重试", function () {
