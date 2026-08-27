@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const migrationPath = fileURLToPath(new URL("./migrations/0035_mobile_command_executor_claim.sql", import.meta.url));
 const exitBackfillMigrationPath = fileURLToPath(new URL("./migrations/0038_exit_agent_app_executor_backfill.sql", import.meta.url));
+const videoStopMigrationPath = fileURLToPath(new URL("./migrations/0040_video_warmup_stop_claim.sql", import.meta.url));
 
 test("mobile command claim migration separates executors and enforces one active channel", () => {
   expect(existsSync(migrationPath)).toBe(true);
@@ -22,4 +23,10 @@ test("backfills historical EXIT_AGENT_APP commands into the BASE executor", () =
   const sql = readFileSync(exitBackfillMigrationPath, "utf8");
   expect(sql).toContain('SET "executor_type" = \'BASE\'');
   expect(sql).toContain('WHERE "command_type" = \'EXIT_AGENT_APP\'');
+});
+
+test("allows VIDEO_WARMUP_STOP alongside an active Agent run", () => {
+  expect(existsSync(videoStopMigrationPath)).toBe(true);
+  const sql = readFileSync(videoStopMigrationPath, "utf8");
+  expect(sql).toContain('"command_type" NOT IN (\'ACCOUNT_WARMUP_STOP\', \'VIDEO_WARMUP_STOP\')');
 });
