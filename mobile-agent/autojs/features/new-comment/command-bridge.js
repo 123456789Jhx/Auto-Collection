@@ -20,7 +20,8 @@ function createNewCommentCommandBridge(context) {
     send: function (commandId, status, result) { return uploader.ackCommand(commandId, status, result); },
     onDrop: function (item, reason) {
       logger.error("隔离评论低优先回执已降级", {
-        commandId: item.commandId, commandType: item.commandType, reason: reason
+        commandId: item.commandId, commandType: item.commandType, taskId: item.taskId,
+        featureKey: item.result.featureKey, batchId: item.result.batchId, reason: reason
       });
     }
   });
@@ -84,7 +85,8 @@ function createNewCommentCommandBridge(context) {
     return ackOutbox.submit({
       key: key, commandId: command.id, status: status, result: contracted, onDelivered: onDelivered,
       critical: options && options.critical, degradable: options && options.degradable,
-      commandType: String(command.commandType || ""),
+      commandType: String(command.commandType || ""), taskId: String(command.taskId ||
+        payloadOf(command).taskId || command.id || ""),
       onFailure: function (error) {
         logger.warn(logMessage, { featureKey: contracted.featureKey, batchId: contracted.batchId,
           commandId: String(command.id || ""), message: String(error) });
@@ -215,7 +217,6 @@ function createNewCommentCommandBridge(context) {
       featureKey: terminal.result.featureKey, batchId: terminal.result.batchId
     }, "隔离评论缓存终态回执失败", null, { critical: true });
   }
-
   function runCommand(command) {
     if (active && active.commandId === command.id) {
       if (active.terminal) finish(active, active.terminal.status, active.terminal.result);
@@ -276,7 +277,6 @@ function createNewCommentCommandBridge(context) {
       finish(runState, "FAILED", startFailure);
     }
   }
-
   function stoppedKey(targetCommandId, batchId) {
     return String(targetCommandId || "") + "\n" + String(batchId || "");
   }

@@ -232,6 +232,10 @@ test("普通区饱和后连续异常非 STOP 被审计降级且精确 STOP 仍�
     assert.equal(item.detail.commandType, "ACCOUNT_WARMUP_RUN");
     assert.equal(item.detail.reason, "ACK_OUTBOX_LOW_PRIORITY_EVICTED");
     assert.match(item.detail.commandId, /^legacy-pressure-/);
+    assert.equal(item.detail.taskId, item.detail.commandId);
+    assert.equal(item.detail.featureKey, "video_warmup");
+    assert.equal(item.detail.batchId,
+      "batch-pressure-" + item.detail.commandId.replace("legacy-pressure-", ""));
   });
   var stopAttempt = h.acks.findIndex(function (item) { return item.id === stop.id; });
   var runTerminalAttempt = h.acks.findIndex(function (item, index) {

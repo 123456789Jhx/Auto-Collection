@@ -76,6 +76,7 @@ function createCommandAckOutbox(options) {
       onDropped: input.onDropped,
       degradable: input.degradable === true,
       commandType: String(input.commandType || ""),
+      taskId: String(input.taskId || input.commandId || ""),
       lane: lane
     };
     if (deliver(item)) return true;
