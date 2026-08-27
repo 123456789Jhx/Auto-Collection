@@ -24,6 +24,7 @@ function harness(options) {
   var ackPlan = (options.ackPlan || []).slice();
   var acks = [];
   var events = [];
+  var logs = [];
   var threads = [];
   var cleanupCount = 0;
   var runCount = 0;
@@ -44,7 +45,11 @@ function harness(options) {
         return response;
       }
     },
-    logger: { info: function () {}, warn: function () {}, error: function () {} },
+    logger: { info: function () {}, warn: function (message, detail) {
+      logs.push({ level: "warn", message: message, detail: detail });
+    }, error: function (message, detail) {
+      logs.push({ level: "error", message: message, detail: detail });
+    } },
     loadBizScript: function () {
       return { createIsolatedLiveCommentEntryTask: function () { return task; } };
     },
@@ -57,7 +62,7 @@ function harness(options) {
   };
   var bridge = createBridge(context);
   bridge.install();
-  return { bridge: bridge, context: context, acks: acks, events: events, threads: threads,
+  return { bridge: bridge, context: context, acks: acks, events: events, logs: logs, threads: threads,
     cleanupCount: function () { return cleanupCount; }, runCount: function () { return runCount; } };
 }
 
@@ -197,13 +202,13 @@ test("持续回执失败形成积压后仍领取精确 STOP 并可靠保留两�
   runTerminal.forEach(function (item) { assert.equal(item.result.status, "LIVE_COMMENT_ENTRY_STOPPED"); });
 });
 
-test("普通区饱和后异常非 STOP 进入单一应急槽且恢复后继续领取 STOP", function () {
+test("普通区饱和后连续异常非 STOP 被审计降级且精确 STOP 仍立即执行", function () {
   var run = runCommand("run-pressure", "batch-pressure");
   var stop = command("stop-after-pressure", "ACCOUNT_WARMUP_STOP", {
     targetCommandId: run.id, batchId: "batch-pressure"
   });
   var polls = [[run]];
-  for (var index = 0; index < 21; index += 1) {
+  for (var index = 0; index < 23; index += 1) {
     polls.push([command("legacy-pressure-" + index, "ACCOUNT_WARMUP_RUN", {
       featureKey: "video_warmup", batchId: "batch-pressure-" + index
     })]);
@@ -214,41 +219,72 @@ test("普通区饱和后异常非 STOP 进入单一应急槽且恢复后继续�
     return transportDown ? { success: false } : undefined;
   } });
   h.context.uploader.pollCommands();
-  for (var pressure = 0; pressure < 21; pressure += 1) h.context.uploader.pollCommands();
-  assert.equal(h.acks.filter(function (item) { return item.id === "legacy-pressure-20"; }).length, 1);
-  assert.equal(h.events.indexOf("interrupt"), -1);
-  transportDown = false;
-  for (var retry = 0; retry < 8; retry += 1) h.context.uploader.pollCommands();
-  assert(h.acks.filter(function (item) { return item.id === "legacy-pressure-20"; }).length >= 2);
+  for (var pressure = 0; pressure < 23; pressure += 1) h.context.uploader.pollCommands();
+  h.context.uploader.pollCommands();
   assert.equal(h.events.filter(function (item) { return item === "interrupt"; }).length, 1);
   assert.equal(h.cleanupCount(), 1);
+  assert.equal(h.bridge.getActive().stopRequested, true);
+  var degraded = h.logs.filter(function (item) {
+    return item.message === "隔离评论低优先回执已降级";
+  });
+  assert(degraded.length >= 3);
+  degraded.forEach(function (item) {
+    assert.equal(item.detail.commandType, "ACCOUNT_WARMUP_RUN");
+    assert.equal(item.detail.reason, "ACK_OUTBOX_LOW_PRIORITY_EVICTED");
+    assert.match(item.detail.commandId, /^legacy-pressure-/);
+  });
+  var stopAttempt = h.acks.findIndex(function (item) { return item.id === stop.id; });
+  var runTerminalAttempt = h.acks.findIndex(function (item, index) {
+    return index > 0 && item.id === run.id && item.result.status === "LIVE_COMMENT_ENTRY_STOPPED";
+  });
+  assert(stopAttempt >= 0);
+  assert(runTerminalAttempt > stopAttempt);
+  transportDown = false;
+  for (var retry = 0; retry < 8; retry += 1) h.context.uploader.pollCommands();
+  assert.equal(h.bridge.getActive(), null);
+  assert(h.acks.filter(function (item) { return item.id === stop.id; }).length >= 2);
+  assert(h.acks.filter(function (item) {
+    return item.id === run.id && item.result.status === "LIVE_COMMENT_ENTRY_STOPPED";
+  }).length >= 2);
 });
 
-test("outbox 普通与关键保留容量、单轮重试数和原始结果快照均固定", function () {
+test("outbox 只淘汰最旧低优先项且关键容量、重试数和快照均固定", function () {
   var sent = [];
+  var dropped = [];
   var transportDown = true;
   var outbox = createOutbox({ limit: 3, flushLimit: 2, send: function (id, status, result) {
     sent.push({ id: id, status: status, result: result });
     return transportDown ? { success: false } : undefined;
   } });
   var original = { status: "ORIGINAL", comments: [{ commentText: "原始" }] };
-  outbox.submit({ key: "a", commandId: "a", status: "FAILED", result: original });
-  outbox.submit({ key: "b", commandId: "b", status: "FAILED", result: { status: "B" } });
-  outbox.submit({ key: "c", commandId: "c", status: "FAILED", result: { status: "C" } });
-  outbox.submit({ key: "critical-d", commandId: "d", status: "DONE",
-    result: { status: "D" }, critical: true });
-  outbox.submit({ key: "critical-e", commandId: "e", status: "DONE",
-    result: { status: "E" }, critical: true });
-  outbox.submit({ key: "critical-f", commandId: "f", status: "DONE",
-    result: { status: "F" }, critical: true });
-  outbox.submit({ key: "emergency-g", commandId: "g", status: "FAILED",
-    result: { status: "G" }, emergency: true });
-  outbox.submit({ key: "emergency-h", commandId: "h", status: "FAILED",
-    result: { status: "H" }, emergency: true });
+  outbox.submit({ key: "a", commandId: "a", status: "FAILED", result: original,
+    degradable: true, onDropped: function (reason) { dropped.push({ id: "a", reason: reason }); } });
+  outbox.submit({ key: "b", commandId: "b", status: "FAILED", result: { status: "B" },
+    degradable: true, onDropped: function (reason) { dropped.push({ id: "b", reason: reason }); } });
+  outbox.submit({ key: "c", commandId: "c", status: "FAILED", result: { status: "C" },
+    degradable: true, onDropped: function (reason) { dropped.push({ id: "c", reason: reason }); } });
+  ["d", "e", "f"].forEach(function (id) {
+    outbox.submit({ key: id, commandId: id, status: "FAILED", result: { status: id },
+      degradable: true, onDropped: function (reason) { dropped.push({ id: id, reason: reason }); } });
+  });
+  outbox.submit({ key: "critical-g", commandId: "g", status: "DONE",
+    result: { status: "G" }, critical: true });
+  outbox.submit({ key: "critical-h", commandId: "h", status: "DONE",
+    result: { status: "H" }, critical: true });
+  outbox.submit({ key: "critical-i", commandId: "i", status: "DONE",
+    result: { status: "I" }, critical: true });
   original.status = "MUTATED";
   original.comments[0].commentText = "被修改";
-  assert.equal(outbox.size(), 6);
+  var originalAttempt = sent.find(function (item) { return item.id === "a"; });
+  assert.equal(originalAttempt.result.status, "ORIGINAL");
+  assert.equal(originalAttempt.result.comments[0].commentText, "原始");
+  assert.equal(outbox.size(), 5);
   assert.equal(outbox.isFull(), true);
+  assert.deepEqual(dropped, [
+    { id: "a", reason: "ACK_OUTBOX_LOW_PRIORITY_EVICTED" },
+    { id: "b", reason: "ACK_OUTBOX_LOW_PRIORITY_EVICTED" },
+    { id: "c", reason: "ACK_OUTBOX_LOW_PRIORITY_EVICTED" }
+  ]);
   sent.length = 0;
   outbox.flush();
   assert.equal(sent.length, 2);
@@ -257,7 +293,4 @@ test("outbox 普通与关键保留容量、单轮重试数和原始结果快照�
   outbox.flush();
   outbox.flush();
   assert.equal(outbox.size(), 0);
-  var originalRetry = sent.find(function (item) { return item.id === "a"; });
-  assert.equal(originalRetry.result.status, "ORIGINAL");
-  assert.equal(originalRetry.result.comments[0].commentText, "原始");
 });

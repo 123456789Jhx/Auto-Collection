@@ -13,13 +13,17 @@ function createNewCommentCommandBridge(context) {
   var stoppedRuns = {};
   var stoppedKeys = [];
   var installed = false, originalPoll = null, pollMetadata = null;
-  var metadataPreserverInstalled = false, pressurePoll = false;
+  var metadataPreserverInstalled = false;
   var ackOutbox = createCommandAckOutbox({
     limit: CACHE_LIMIT,
     flushLimit: 4,
-    send: function (commandId, status, result) { return uploader.ackCommand(commandId, status, result); }
+    send: function (commandId, status, result) { return uploader.ackCommand(commandId, status, result); },
+    onDrop: function (item, reason) {
+      logger.error("隔离评论低优先回执已降级", {
+        commandId: item.commandId, commandType: item.commandType, reason: reason
+      });
+    }
   });
-
   function featureValue(payload) {
     return typeof (payload && payload.featureKey) === "string" ? payload.featureKey.trim() : "";
   }
@@ -79,7 +83,8 @@ function createNewCommentCommandBridge(context) {
     }, result);
     return ackOutbox.submit({
       key: key, commandId: command.id, status: status, result: contracted, onDelivered: onDelivered,
-      critical: options && options.critical, emergency: options && options.emergency,
+      critical: options && options.critical, degradable: options && options.degradable,
+      commandType: String(command.commandType || ""),
       onFailure: function (error) {
         logger.warn(logMessage, { featureKey: contracted.featureKey, batchId: contracted.batchId,
           commandId: String(command.id || ""), message: String(error) });
@@ -107,7 +112,7 @@ function createNewCommentCommandBridge(context) {
     logger.error("隔离评论错路由已拒绝", detail);
     reliableAck("route:" + command.id, command, "FAILED", {
       status: "ROUTE_MISMATCH", reasonCode: "ROUTE_MISMATCH", message: "隔离评论任务路由不匹配"
-    }, null, "隔离评论错路由回执失败", null, { emergency: pressurePoll });
+    }, null, "隔离评论错路由回执失败", null, { degradable: true });
   }
   function validExactRun(payload) {
     return payload.featureKey === FEATURE_KEY && batchValue(payload) && payload.config &&
@@ -124,7 +129,7 @@ function createNewCommentCommandBridge(context) {
     });
     reliableAck("busy:" + command.id, command, "FAILED", {
       status: "ACCOUNT_WARMUP_BUSY", reasonCode: "ACCOUNT_WARMUP_BUSY", message: "当前设备已有任务执行中"
-    }, null, "隔离评论互斥回执失败", null, { emergency: pressurePoll });
+    }, null, "隔离评论互斥回执失败", null, { degradable: true });
   }
   function preserveProgress(runState, result) {
     var output = withContract(runState, result || {});
@@ -366,15 +371,10 @@ function createNewCommentCommandBridge(context) {
     uploader.pollCommands = function () {
       ackOutbox.flush();
       var regularCapacity = ackOutbox.canAcceptRegular();
-      if (!regularCapacity && (!active || !ackOutbox.canAcceptEmergency())) {
-        pollMetadata = {}; return [];
-      }
-      pressurePoll = !regularCapacity;
+      if (!regularCapacity && !active) { pollMetadata = {}; return []; }
       var commands = originalPoll.apply(uploader, arguments);
       pollMetadata = copyArrayProperties(commands, {});
-      var output = intercept(commands);
-      pressurePoll = false;
-      return output;
+      return intercept(commands);
     };
     installed = true;
     return true;

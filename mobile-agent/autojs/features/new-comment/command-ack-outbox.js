@@ -14,10 +14,9 @@ function createCommandAckOutbox(options) {
   var limit = Math.max(1, Number(options.limit) || 20);
   var flushLimit = Math.max(1, Number(options.flushLimit) || 4);
   var criticalReserve = Math.max(1, Number(options.criticalReserve) || 2);
-  var emergencyReserve = Math.max(1, Number(options.emergencyReserve) || 1);
   var entries = {};
   var order = [];
-  var laneCounts = { regular: 0, critical: 0, emergency: 0 };
+  var laneCounts = { regular: 0, critical: 0 };
 
   function remove(key) {
     var item = entries[key];
@@ -29,6 +28,19 @@ function createCommandAckOutbox(options) {
 
   function failure(item, error) {
     try { if (typeof item.onFailure === "function") item.onFailure(error); } catch (ignored) {}
+  }
+
+  function evictOldestRegular() {
+    for (var index = 0; index < order.length; index += 1) {
+      var item = entries[order[index]];
+      if (!item || item.lane !== "regular" || !item.degradable) continue;
+      remove(item.key);
+      var reason = "ACK_OUTBOX_LOW_PRIORITY_EVICTED";
+      try { if (typeof item.onDropped === "function") item.onDropped(reason); } catch (ignored) {}
+      try { if (typeof options.onDrop === "function") options.onDrop(item, reason); } catch (ignored) {}
+      return true;
+    }
+    return false;
   }
 
   function deliver(item) {
@@ -52,8 +64,8 @@ function createCommandAckOutbox(options) {
     var key = String(input && input.key || "");
     if (!key) throw new Error("ACK_OUTBOX_KEY_REQUIRED");
     if (entries[key]) return deliver(entries[key]);
-    var lane = input.critical ? "critical" : input.emergency ? "emergency" : "regular";
-    var laneLimit = lane === "critical" ? criticalReserve : lane === "emergency" ? emergencyReserve : limit;
+    var lane = input.critical ? "critical" : "regular";
+    var laneLimit = lane === "critical" ? criticalReserve : limit;
     var item = {
       key: key,
       commandId: String(input.commandId || ""),
@@ -61,12 +73,17 @@ function createCommandAckOutbox(options) {
       result: clone(input.result || {}),
       onDelivered: input.onDelivered,
       onFailure: input.onFailure,
+      onDropped: input.onDropped,
+      degradable: input.degradable === true,
+      commandType: String(input.commandType || ""),
       lane: lane
     };
     if (deliver(item)) return true;
     if (laneCounts[lane] >= laneLimit) {
-      failure(item, new Error("ACK_OUTBOX_FULL"));
-      return false;
+      if (lane !== "regular" || !item.degradable || !evictOldestRegular()) {
+        failure(item, new Error("ACK_OUTBOX_FULL"));
+        return false;
+      }
     }
     entries[key] = item;
     order.push(key);
@@ -90,7 +107,6 @@ function createCommandAckOutbox(options) {
     flush: flush,
     isFull: function () { return laneCounts.regular >= limit; },
     canAcceptRegular: function () { return laneCounts.regular < limit; },
-    canAcceptEmergency: function () { return laneCounts.emergency < emergencyReserve; },
     size: function () { return order.length; }
   };
 }
