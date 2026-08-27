@@ -56,3 +56,11 @@ test("matches video warmup stop to its active run by batch and feature key", () 
   expect(source).toContain("command.command_type = 'VIDEO_WARMUP_STOP'");
   expect(source).toContain("run.payload_json ->> 'featureKey' = command.payload_json ->> 'featureKey'");
 });
+
+test("reconciles expired video stop commands before listing admin progress", () => {
+  const source = readFileSync(repositoryPath, "utf8");
+
+  expect(source).toContain("command_type = 'VIDEO_WARMUP_STOP'");
+  expect(source).toContain("status = 'TIMED_OUT'");
+  expect(source).toContain("expires_at <= now()");
+});

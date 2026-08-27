@@ -207,6 +207,22 @@ export type MobileCommandListFilter = {
 };
 
 export async function listMobileCommands(limit = 50, filter: MobileCommandListFilter = {}) {
+  await db
+    .update(mobileCommands)
+    .set({
+      status: "TIMED_OUT",
+      acknowledgedAt: new Date(),
+      resultJson: { status: "TIMED_OUT", reason: "stop_command_expired" },
+      updatedAt: new Date(),
+      updatedBy: "command_reconciler"
+    })
+    .where(and(
+      eq(mobileCommands.tenantId, config.tenantId),
+      eq(mobileCommands.commandType, "VIDEO_WARMUP_STOP"),
+      inArray(mobileCommands.status, ["PENDING", "FETCHED", "CLAIMED", "RUNNING"]),
+      sql`${mobileCommands.expiresAt} <= now()`,
+      isNull(mobileCommands.deletedAt)
+    ));
   const conditions = [
     eq(mobileCommands.tenantId, config.tenantId),
     isNull(mobileCommands.deletedAt)

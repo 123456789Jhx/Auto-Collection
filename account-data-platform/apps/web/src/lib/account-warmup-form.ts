@@ -315,6 +315,9 @@ export function resolveVideoWarmupCommandState(
   if (stopCommand?.status === "FAILED") {
     return { key: "stop_failed", label: "停止失败", color: "error", active: true };
   }
+  if (stopCommand?.status === "TIMED_OUT") {
+    return { key: "stop_failed", label: "停止请求已过期", color: "error", active: false };
+  }
   if (stopCommand?.status === "PENDING" && runCommand.status === "PENDING") {
     return { key: "waiting_cancel", label: "等待取消", color: "warning", active: true };
   }

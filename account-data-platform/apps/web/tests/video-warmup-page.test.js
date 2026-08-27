@@ -229,6 +229,25 @@ test("does not keep a timed-out run active when its pending stop request is expi
   assert.notEqual(state.key, "stopping");
 });
 
+test("treats a timed-out video stop request as an inactive terminal state", () => {
+  const state = resolveVideoWarmupCommandState({
+    id: "run-running",
+    deviceId: "device-id-a",
+    status: "RUNNING",
+    resultJson: null
+  }, [{
+    id: "stop-timeout",
+    deviceId: "device-id-a",
+    commandType: "VIDEO_WARMUP_STOP",
+    status: "TIMED_OUT",
+    payloadJson: { featureKey: "video_warmup", batchId: "batch-1" },
+    resultJson: null
+  }], "batch-1");
+
+  assert.equal(state.key, "stop_failed");
+  assert.equal(state.active, false);
+});
+
 test("treats a RUNNING video warmup command as an active running state", () => {
   const state = resolveVideoWarmupCommandState({
     id: "run-running",
