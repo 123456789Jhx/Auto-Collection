@@ -134,7 +134,7 @@ export async function createCommand(payload: CreateMobileCommandPayload) {
 
   if (idempotencyKey) {
     const existing = await findMobileCommandByIdempotencyKey(idempotencyKey);
-    if (existing) return existing;
+    if (existing && (existing.expiresAt === null || existing.expiresAt > new Date())) return existing;
   }
 
   try {

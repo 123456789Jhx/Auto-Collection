@@ -42,3 +42,10 @@ test("allows a matching video warmup stop through while its run is active", () =
   expect(source).toContain("active.command_type NOT IN ('ACCOUNT_WARMUP_STOP', 'VIDEO_WARMUP_STOP')");
   expect(source).toContain("active_stop.command_type IN ('ACCOUNT_WARMUP_STOP', 'VIDEO_WARMUP_STOP')");
 });
+
+test("does not reuse an expired idempotent stop command", () => {
+  const source = readFileSync(fileURLToPath(new URL("../services/command.service.ts", import.meta.url)), "utf8");
+
+  expect(source).toContain("existing.expiresAt");
+  expect(source).toContain("existing.expiresAt > new Date()");
+});
