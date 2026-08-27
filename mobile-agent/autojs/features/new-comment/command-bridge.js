@@ -1,25 +1,19 @@
 "use strict";
-
 var createCommandAckOutbox = require("./command-ack-outbox.js").createCommandAckOutbox;
 var FEATURE_KEY = "isolated_live_comment_entry";
 var ENTRY_PATH = "features/new-comment/index.js";
 var CACHE_LIMIT = 20;
-
 function createNewCommentCommandBridge(context) {
   context = context || {};
   var uploader = context.uploader;
   var logger = context.logger || { info: function () {}, warn: function () {}, error: function () {} };
-  var entryModule = null;
-  var preloadError = null;
-  var active = null;
+  var entryModule = null, preloadError = null, active = null;
   var terminalCache = {};
   var terminalKeys = [];
   var stoppedRuns = {};
   var stoppedKeys = [];
-  var installed = false;
-  var originalPoll = null;
-  var pollMetadata = null;
-  var metadataPreserverInstalled = false;
+  var installed = false, originalPoll = null, pollMetadata = null;
+  var metadataPreserverInstalled = false, pressurePoll = false;
   var ackOutbox = createCommandAckOutbox({
     limit: CACHE_LIMIT,
     flushLimit: 4,
@@ -79,12 +73,13 @@ function createNewCommentCommandBridge(context) {
       featureKey: featureValue(payloadOf(command)), batchId: batchValue(payloadOf(command))
     }, result));
   }
-  function reliableAck(key, command, status, result, runState, logMessage, onDelivered) {
+  function reliableAck(key, command, status, result, runState, logMessage, onDelivered, options) {
     var contracted = withContract(runState || {
       featureKey: featureValue(payloadOf(command)), batchId: batchValue(payloadOf(command))
     }, result);
     return ackOutbox.submit({
       key: key, commandId: command.id, status: status, result: contracted, onDelivered: onDelivered,
+      critical: options && options.critical, emergency: options && options.emergency,
       onFailure: function (error) {
         logger.warn(logMessage, { featureKey: contracted.featureKey, batchId: contracted.batchId,
           commandId: String(command.id || ""), message: String(error) });
@@ -112,7 +107,7 @@ function createNewCommentCommandBridge(context) {
     logger.error("隔离评论错路由已拒绝", detail);
     reliableAck("route:" + command.id, command, "FAILED", {
       status: "ROUTE_MISMATCH", reasonCode: "ROUTE_MISMATCH", message: "隔离评论任务路由不匹配"
-    }, null, "隔离评论错路由回执失败");
+    }, null, "隔离评论错路由回执失败", null, { emergency: pressurePoll });
   }
   function validExactRun(payload) {
     return payload.featureKey === FEATURE_KEY && batchValue(payload) && payload.config &&
@@ -129,7 +124,7 @@ function createNewCommentCommandBridge(context) {
     });
     reliableAck("busy:" + command.id, command, "FAILED", {
       status: "ACCOUNT_WARMUP_BUSY", reasonCode: "ACCOUNT_WARMUP_BUSY", message: "当前设备已有任务执行中"
-    }, null, "隔离评论互斥回执失败");
+    }, null, "隔离评论互斥回执失败", null, { emergency: pressurePoll });
   }
   function preserveProgress(runState, result) {
     var output = withContract(runState, result || {});
@@ -171,7 +166,7 @@ function createNewCommentCommandBridge(context) {
       runState.terminal.result, runState, "隔离评论终态回执失败", function () {
         cacheTerminal(runState);
         if (active === runState) active = null;
-      });
+      }, { critical: true });
   }
   function interrupt(runState) {
     if (!runState.thread || typeof runState.thread.interrupt !== "function") return false;
@@ -213,7 +208,7 @@ function createNewCommentCommandBridge(context) {
   function retryCached(command, terminal) {
     reliableAck("run:" + command.id, command, terminal.status, terminal.result, {
       featureKey: terminal.result.featureKey, batchId: terminal.result.batchId
-    }, "隔离评论缓存终态回执失败");
+    }, "隔离评论缓存终态回执失败", null, { critical: true });
   }
 
   function runCommand(command) {
@@ -292,7 +287,8 @@ function createNewCommentCommandBridge(context) {
   }
 
   function ackStop(command, result, runState) {
-    reliableAck("stop:" + command.id, command, "DONE", result, runState, "隔离评论停止回执失败");
+    reliableAck("stop:" + command.id, command, "DONE", result, runState,
+      "隔离评论停止回执失败", null, { critical: true });
   }
 
   function alreadyCompletedResult(targetCommandId, terminal) {
@@ -369,10 +365,16 @@ function createNewCommentCommandBridge(context) {
     originalPoll = uploader.pollCommands;
     uploader.pollCommands = function () {
       ackOutbox.flush();
-      if (ackOutbox.size() >= CACHE_LIMIT - 1) { pollMetadata = {}; return []; }
+      var regularCapacity = ackOutbox.canAcceptRegular();
+      if (!regularCapacity && (!active || !ackOutbox.canAcceptEmergency())) {
+        pollMetadata = {}; return [];
+      }
+      pressurePoll = !regularCapacity;
       var commands = originalPoll.apply(uploader, arguments);
       pollMetadata = copyArrayProperties(commands, {});
-      return intercept(commands);
+      var output = intercept(commands);
+      pressurePoll = false;
+      return output;
     };
     installed = true;
     return true;

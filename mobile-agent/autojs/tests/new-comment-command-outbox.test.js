@@ -165,7 +165,66 @@ test("拒绝回执积压时为 STOP 与原 RUN 终态保留容量且恢复后不
   terminal.forEach(function (item) { assert.equal(item.result.status, "LIVE_COMMENT_ENTRY_CAPTURED"); });
 });
 
-test("outbox 内存上限、单轮重试数和原始结果快照均固定", function () {
+test("持续回执失败形成积压后仍领取精确 STOP 并可靠保留两个终态", function () {
+  var run = runCommand("run-stop-priority", "batch-stop-priority");
+  var stop = command("stop-priority", "ACCOUNT_WARMUP_STOP", {
+    targetCommandId: run.id, batchId: "batch-stop-priority"
+  });
+  var polls = [[run]];
+  for (var index = 0; index < 19; index += 1) {
+    polls.push([command("legacy-backlog-" + index, "ACCOUNT_WARMUP_RUN", {
+      featureKey: "video_warmup", batchId: "batch-backlog-" + index
+    })]);
+  }
+  polls.push([stop]);
+  for (var empty = 0; empty < 8; empty += 1) polls.push([]);
+  var transportDown = true;
+  var h = harness({ polls: polls, ackResponder: function () {
+    return transportDown ? { success: false } : undefined;
+  } });
+  h.context.uploader.pollCommands();
+  for (var backlog = 0; backlog < 19; backlog += 1) h.context.uploader.pollCommands();
+  h.context.uploader.pollCommands();
+  assert.equal(h.events.filter(function (item) { return item === "interrupt"; }).length, 1);
+  assert.equal(h.cleanupCount(), 1);
+  assert.equal(h.bridge.getActive().stopRequested, true);
+  transportDown = false;
+  for (var retry = 0; retry < 8; retry += 1) h.context.uploader.pollCommands();
+  assert.equal(h.bridge.getActive(), null);
+  assert(h.acks.filter(function (item) { return item.id === stop.id; }).length >= 2);
+  var runTerminal = h.acks.filter(function (item) { return item.id === run.id; });
+  assert(runTerminal.length >= 2);
+  runTerminal.forEach(function (item) { assert.equal(item.result.status, "LIVE_COMMENT_ENTRY_STOPPED"); });
+});
+
+test("普通区饱和后异常非 STOP 进入单一应急槽且恢复后继续领取 STOP", function () {
+  var run = runCommand("run-pressure", "batch-pressure");
+  var stop = command("stop-after-pressure", "ACCOUNT_WARMUP_STOP", {
+    targetCommandId: run.id, batchId: "batch-pressure"
+  });
+  var polls = [[run]];
+  for (var index = 0; index < 21; index += 1) {
+    polls.push([command("legacy-pressure-" + index, "ACCOUNT_WARMUP_RUN", {
+      featureKey: "video_warmup", batchId: "batch-pressure-" + index
+    })]);
+  }
+  polls.push([stop], [], [], [], [], [], [], []);
+  var transportDown = true;
+  var h = harness({ polls: polls, ackResponder: function () {
+    return transportDown ? { success: false } : undefined;
+  } });
+  h.context.uploader.pollCommands();
+  for (var pressure = 0; pressure < 21; pressure += 1) h.context.uploader.pollCommands();
+  assert.equal(h.acks.filter(function (item) { return item.id === "legacy-pressure-20"; }).length, 1);
+  assert.equal(h.events.indexOf("interrupt"), -1);
+  transportDown = false;
+  for (var retry = 0; retry < 8; retry += 1) h.context.uploader.pollCommands();
+  assert(h.acks.filter(function (item) { return item.id === "legacy-pressure-20"; }).length >= 2);
+  assert.equal(h.events.filter(function (item) { return item === "interrupt"; }).length, 1);
+  assert.equal(h.cleanupCount(), 1);
+});
+
+test("outbox 普通与关键保留容量、单轮重试数和原始结果快照均固定", function () {
   var sent = [];
   var transportDown = true;
   var outbox = createOutbox({ limit: 3, flushLimit: 2, send: function (id, status, result) {
@@ -176,13 +235,25 @@ test("outbox 内存上限、单轮重试数和原始结果快照均固定", func
   outbox.submit({ key: "a", commandId: "a", status: "FAILED", result: original });
   outbox.submit({ key: "b", commandId: "b", status: "FAILED", result: { status: "B" } });
   outbox.submit({ key: "c", commandId: "c", status: "FAILED", result: { status: "C" } });
+  outbox.submit({ key: "critical-d", commandId: "d", status: "DONE",
+    result: { status: "D" }, critical: true });
+  outbox.submit({ key: "critical-e", commandId: "e", status: "DONE",
+    result: { status: "E" }, critical: true });
+  outbox.submit({ key: "critical-f", commandId: "f", status: "DONE",
+    result: { status: "F" }, critical: true });
+  outbox.submit({ key: "emergency-g", commandId: "g", status: "FAILED",
+    result: { status: "G" }, emergency: true });
+  outbox.submit({ key: "emergency-h", commandId: "h", status: "FAILED",
+    result: { status: "H" }, emergency: true });
   original.status = "MUTATED";
   original.comments[0].commentText = "被修改";
-  assert.equal(outbox.size(), 3);
+  assert.equal(outbox.size(), 6);
+  assert.equal(outbox.isFull(), true);
   sent.length = 0;
   outbox.flush();
   assert.equal(sent.length, 2);
   transportDown = false;
+  outbox.flush();
   outbox.flush();
   outbox.flush();
   assert.equal(outbox.size(), 0);
