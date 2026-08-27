@@ -207,6 +207,17 @@ test("restores stopping, stopped and failed states from stop command records", (
   assert.equal(resolveVideoWarmupCommandState(run, [stop("DONE")], "another-batch").key, "running");
 });
 
+test("treats a RUNNING video warmup command as an active running state", () => {
+  const state = resolveVideoWarmupCommandState({
+    id: "run-running",
+    deviceId: "device-id-a",
+    status: "RUNNING",
+    resultJson: null
+  }, [], "batch-1");
+
+  assert.deepEqual(state, { key: "running", label: "刷视频中", color: "processing", active: true });
+});
+
 test("shows only enabled online devices and prefers the bound Douyin account name", () => {
   const devices = [
     {

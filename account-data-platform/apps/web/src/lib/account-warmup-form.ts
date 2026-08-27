@@ -312,7 +312,9 @@ export function resolveVideoWarmupCommandState(
   if (stopCommand) return { key: "stopping", label: "停止中", color: "warning", active: true };
 
   if (runCommand.status === "PENDING") return { key: "pending", label: "等待下发", color: "processing", active: true };
-  if (runCommand.status === "FETCHED") return { key: "running", label: "刷视频中", color: "processing", active: true };
+  if (runCommand.status === "FETCHED" || runCommand.status === "RUNNING") {
+    return { key: "running", label: "刷视频中", color: "processing", active: true };
+  }
   if (runCommand.status === "FAILED") return { key: "failed", label: "执行失败", color: "error", active: false };
   if (runCommand.status === "DONE" || runCommand.status === "IGNORED") {
     return { key: "completed", label: "已完成", color: "success", active: false };
