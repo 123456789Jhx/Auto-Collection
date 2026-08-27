@@ -107,7 +107,11 @@ export async function createCommand(payload: CreateMobileCommandPayload) {
     if (activeRun) throw new Error("VIDEO_WARMUP_DEVICE_BUSY");
     const heartbeat = await findLatestHeartbeatByDeviceId(device.id);
     const reportedRunId = (heartbeat?.rawPayload as Record<string, unknown> | null)?.runId;
-    if (typeof reportedRunId === "string" && reportedRunId) {
+    const heartbeatFresh = heartbeat?.reportedAt
+      ? Date.now() - heartbeat.reportedAt.getTime() <= 120_000
+      : false;
+    const heartbeatActive = heartbeat?.status === "running" || heartbeat?.status === "paused";
+    if (heartbeatActive && heartbeatFresh && typeof reportedRunId === "string" && reportedRunId) {
       throw new Error("VIDEO_WARMUP_DEVICE_REPORTS_ACTIVE_RUN");
     }
   }
