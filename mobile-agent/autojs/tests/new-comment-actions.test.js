@@ -288,10 +288,13 @@ test("captureRegions recycles clips and original on success, throw and stop", fu
       captureScreen: function () { return { image: {
         recycle: function () { counts.original += 1; }
       }, width: 100, height: 200 }; },
-      clipImage: function () { return { recycle: function () { counts.clips += 1; } }; },
+      clipImage: function () { return { recycle: function () {
+        counts.clips += 1;
+        if (mode.indexOf("recycle") >= 0) throw new Error("recycle failed");
+      } }; },
       recognize: function () {
-        if (mode === "throw") throw new Error("recognize failed");
-        if (mode === "stop") stopped = true;
+        if (mode.indexOf("throw") >= 0) throw new Error("recognize failed");
+        if (mode.indexOf("stop") >= 0) stopped = true;
         return "hello";
       }
     }), layout);
@@ -300,11 +303,17 @@ test("captureRegions recycles clips and original on success, throw and stop", fu
   var success = run("success");
   var failure = run("throw");
   var stopped = run("stop");
+  var recycleFailure = run("recycle");
+  var throwRecycle = run("throw-recycle");
+  var stopRecycle = run("stop-recycle");
   assert.equal(success.result.success, true);
   assert.equal(success.result.value[0].value, "hello");
   assert.equal(failure.result.reason, "OCR_FAILED");
   assert.deepEqual(stopped.result, STOP_RESULT);
-  [success, failure, stopped].forEach(function (entry) {
+  assert.equal(recycleFailure.result.reason, "IMAGE_RECYCLE_FAILED");
+  assert.equal(throwRecycle.result.reason, "OCR_FAILED");
+  assert.deepEqual(stopRecycle.result, STOP_RESULT);
+  [success, failure, stopped, recycleFailure, throwRecycle, stopRecycle].forEach(function (entry) {
     assert.deepEqual(entry.counts, { original: 1, clips: 1 });
   });
 });

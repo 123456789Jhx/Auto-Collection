@@ -206,6 +206,36 @@ function createScreenActions(deps, layout) {
     }
   }
 
+  function processRegion(image, region) {
+    var clip = null;
+    var result;
+    var recycleResult = contract.success();
+    try {
+      clip = deps.clipImage(image, region);
+      if (!clip) result = contract.failure(contract.REASON.OCR_FAILED, "image clip failed");
+      else {
+        var stopped = checkStop();
+        if (stopped) result = stopped;
+        else {
+          var raw = deps.recognize(clip, region);
+          stopped = checkStop();
+          if (stopped) result = stopped;
+          else {
+            var parsed = typeof deps.parseOcr === "function" ? deps.parseOcr(raw, region) : raw;
+            stopped = checkStop();
+            result = stopped || contract.success({ name: region.name, region: region, value: parsed });
+          }
+        }
+      }
+    } catch (error) {
+      result = contract.failure(contract.REASON.OCR_FAILED, "ocr processing failed");
+    } finally {
+      if (clip) recycleResult = recycleImage(clip);
+    }
+    if (result && !result.success) return result;
+    return recycleResult.success ? result : recycleResult;
+  }
+
   function processRegions(image, snapshot, regions) {
     var stopped = checkStop();
     if (stopped) {
@@ -226,27 +256,10 @@ function createScreenActions(deps, layout) {
     var index;
     for (index = 0; index < captureRegions.value.length; index += 1) {
       stopped = checkStop();
-      if (stopped) {
-        return stopped;
-      }
-      var clip = null;
-      try {
-        clip = deps.clipImage(image, captureRegions.value[index]);
-        if (!clip) return contract.failure(contract.REASON.OCR_FAILED, "image clip failed");
-        stopped = checkStop();
-        if (stopped) return stopped;
-        var raw = deps.recognize(clip, captureRegions.value[index]);
-        stopped = checkStop();
-        if (stopped) return stopped;
-        var parsed = typeof deps.parseOcr === "function" ?
-          deps.parseOcr(raw, captureRegions.value[index]) : raw;
-        stopped = checkStop();
-        if (stopped) return stopped;
-        values.push({ name: captureRegions.value[index].name,
-          region: captureRegions.value[index], value: parsed });
-      } finally {
-        if (clip) recycleImage(clip);
-      }
+      if (stopped) return stopped;
+      var processed = processRegion(image, captureRegions.value[index]);
+      if (!processed.success) return processed;
+      values.push(processed.value);
     }
     return contract.success(values);
   }

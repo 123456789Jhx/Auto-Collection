@@ -107,7 +107,7 @@ test("real runtime treats a missing first live result as retryable search state"
   assert.ok(stages.includes("RETRYING_SEARCH"));
 });
 
-test("cleanup idempotency is isolated by batchId then taskId", function () {
+test("cleanup idempotency is isolated by task identity and bounded", function () {
   var recentsCalls = 0;
   var lifecycleCalls = 0;
   var cleanup = cleanupModule.createIsolatedCleanup({}, {
@@ -130,6 +130,19 @@ test("cleanup idempotency is isolated by batchId then taskId", function () {
   assert.equal(cleanup.run({ taskId: "task-c" }, lifecycle()).cached, true);
   assert.equal(recentsCalls, 3);
   assert.equal(lifecycleCalls, 3);
+
+  var boundedCalls = 0;
+  var bounded = cleanupModule.createIsolatedCleanup({}, {
+    isDouyinForeground: function () { return false; }, isRecentsPackage: function () { return true; },
+    openRecents: function () { boundedCalls += 1; return true; }, findDouyinCard: function () { return {}; },
+    dismissCard: function () { return true; }, findAgentCard: function () { return {}; },
+    openAgentCard: function () { return true; }, wait: function () {}, recentsReadyWaitMs: 0
+  });
+  var index;
+  for (index = 0; index < 22; index += 1) bounded.run({ taskId: "bounded-" + index });
+  assert.equal(bounded.run({ taskId: "bounded-21" }).cached, true);
+  assert.equal(bounded.run({ taskId: "bounded-0" }).cached, undefined);
+  assert.equal(boundedCalls, 23);
 });
 
 test("workflow passes task identity and control into final cleanup", function () {

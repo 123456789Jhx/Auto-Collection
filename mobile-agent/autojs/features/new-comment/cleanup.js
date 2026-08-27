@@ -8,6 +8,8 @@ function createIsolatedCleanup(context, options) {
   context = context || {};
   options = options || {};
   var taskStates = {};
+  var taskStateKeys = [];
+  var taskStateLimit = 20;
   var gestureDriver = options.gestureDriver || context.gestureDriver || null;
 
   function screenSize() {
@@ -180,6 +182,8 @@ function createIsolatedCleanup(context, options) {
     var key = batchId ? "batch:" + batchId : (taskId ? "task:" + taskId : "anonymous");
     if (!Object.prototype.hasOwnProperty.call(taskStates, key)) {
       taskStates[key] = { cachedResult: null, lifecycleCalled: false };
+      taskStateKeys.push(key);
+      if (taskStateKeys.length > taskStateLimit) delete taskStates[taskStateKeys.shift()];
     }
     return taskStates[key];
   }
