@@ -359,9 +359,21 @@ function createAccountWarmupCommandBridge(context) {
   function intercept(commands) {
     var passthrough = [];
     commands = commands || [];
+    var videoStopBatches = {};
+    for (var s = 0; s < commands.length; s++) {
+      if (commands[s].commandType === "VIDEO_WARMUP_STOP") {
+        var stopPayload = commands[s].payload || commands[s].payloadJson || {};
+        if (String(stopPayload.featureKey || "") === "video_warmup") videoStopBatches[String(stopPayload.batchId || "")] = true;
+      }
+    }
     for (var i = 0; i < commands.length; i++) {
       var command = commands[i];
       if (command.commandType === "ACCOUNT_WARMUP_RUN") {
+        var runPayload = command.payload || command.payloadJson || {};
+        if (String(runPayload.featureKey || "") === "video_warmup" && videoStopBatches[String(runPayload.batchId || "")]) {
+          ack(command, "IGNORED", { status: "STOPPED", reason: "superseded_by_video_stop" });
+          continue;
+        }
         runCommand(command);
       } else if (command.commandType === "ACCOUNT_WARMUP_STOP") {
         stopCommand(command);

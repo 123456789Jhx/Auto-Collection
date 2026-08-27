@@ -236,7 +236,7 @@ test("shows only enabled online devices and prefers the bound Douyin account nam
   assert.equal(videoWarmupDeviceName(devices[0]), "Account A");
 });
 
-test("does not keep an expired video warmup run in stopping state", () => {
+test("shows pending run stop as waiting cancellation", () => {
   const run = {
     id: "run-expired",
     deviceId: "device-id-a",
@@ -254,6 +254,6 @@ test("does not keep an expired video warmup run in stopping state", () => {
   };
 
   const state = resolveVideoWarmupCommandState(run, [stop], "batch-1", Date.parse("2026-08-07T17:05:00.000Z"));
-  assert.equal(state.key, "expired");
-  assert.equal(state.active, false);
+  assert.equal(state.key, "waiting_cancel");
+  assert.equal(state.active, true);
 });

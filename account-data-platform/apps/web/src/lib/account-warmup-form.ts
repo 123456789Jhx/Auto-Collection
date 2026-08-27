@@ -293,9 +293,6 @@ export function resolveVideoWarmupCommandState(
 ) {
   const resultStatus = String(runCommand.resultJson?.status ?? "");
   const expiresAtMs = runCommand.expiresAt ? Date.parse(runCommand.expiresAt) : Number.NaN;
-  if (runCommand.status === "PENDING" && Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs) {
-    return { key: "expired", label: "Expired", color: "default", active: false };
-  }
   if (resultStatus === "STOPPED") return { key: "stopped", label: "已停止", color: "default", active: false };
 
   const stopCommand = commands.find((command) =>
@@ -306,10 +303,20 @@ export function resolveVideoWarmupCommandState(
   if (stopCommand?.status === "FAILED") {
     return { key: "stop_failed", label: "停止失败", color: "error", active: true };
   }
+  if (stopCommand?.status === "PENDING" && runCommand.status === "PENDING") {
+    return { key: "waiting_cancel", label: "等待取消", color: "warning", active: true };
+  }
+  if (stopCommand && Number.isFinite(Date.parse(stopCommand.expiresAt ?? "")) && Date.parse(stopCommand.expiresAt!) <= nowMs) {
+    return { key: "stop_failed", label: "停止请求已过期", color: "error", active: true };
+  }
   if (stopCommand?.status === "DONE" || stopCommand?.status === "IGNORED") {
     return { key: "stopped", label: "已停止", color: "default", active: false };
   }
   if (stopCommand) return { key: "stopping", label: "停止中", color: "warning", active: true };
+
+  if (runCommand.status === "PENDING" && Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs) {
+    return { key: "expired", label: "Expired", color: "default", active: false };
+  }
 
   if (runCommand.status === "PENDING") return { key: "pending", label: "等待下发", color: "processing", active: true };
   if (runCommand.status === "FETCHED" || runCommand.status === "RUNNING") {

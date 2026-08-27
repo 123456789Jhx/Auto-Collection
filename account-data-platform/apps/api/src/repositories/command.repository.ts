@@ -25,6 +25,19 @@ export async function createMobileCommand(values: typeof mobileCommands.$inferIn
   return command;
 }
 
+export async function finalizePendingVideoWarmupRun(deviceId: string, batchId: string) {
+  return db.transaction(async (transaction) => {
+    await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${config.tenantId}), hashtext(${`${deviceId}:BASE`}))`);
+    const now = new Date();
+    const rows = await transaction
+      .update(mobileCommands)
+      .set({ status: "IGNORED", resultJson: { status: "STOPPED", reason: "stop_requested_before_claim" }, acknowledgedAt: now, updatedAt: now, updatedBy: "admin" })
+      .where(and(eq(mobileCommands.tenantId, config.tenantId), eq(mobileCommands.deviceId, deviceId), eq(mobileCommands.commandType, "ACCOUNT_WARMUP_RUN"), eq(mobileCommands.status, "PENDING"), sql`${mobileCommands.payloadJson} ->> 'featureKey' = 'video_warmup'`, sql`${mobileCommands.payloadJson} ->> 'batchId' = ${batchId}`, isNull(mobileCommands.deletedAt)))
+      .returning();
+    return rows[0] ?? null;
+  });
+}
+
 export async function findMobileCommandByIdempotencyKey(idempotencyKey: string) {
   const [command] = await db
     .select()

@@ -15,6 +15,7 @@ import {
   findBaseCommandForAck,
   findMobileCommandByIdempotencyKey,
   claimPendingCommandByDeviceId,
+  finalizePendingVideoWarmupRun,
   ignorePendingCommandsByDeviceId,
   listMobileCommands,
   updateClaimedBaseCommandStatus
@@ -124,6 +125,11 @@ export async function createCommand(payload: CreateMobileCommandPayload) {
       await markDeviceCommandIssued(device.id);
     }
     return result.command;
+  }
+
+  if (payload.commandType === "VIDEO_WARMUP_STOP") {
+    const finalizedRun = await finalizePendingVideoWarmupRun(device.id, videoBatchId!);
+    if (finalizedRun) return finalizedRun;
   }
 
   if (idempotencyKey) {
