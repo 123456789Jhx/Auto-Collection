@@ -49,3 +49,10 @@ test("does not reuse an expired idempotent stop command", () => {
   expect(source).toContain("existing.expiresAt");
   expect(source).toContain("existing.expiresAt > new Date()");
 });
+
+test("matches video warmup stop to its active run by batch and feature key", () => {
+  const source = readFileSync(repositoryPath, "utf8");
+
+  expect(source).toContain("command.command_type = 'VIDEO_WARMUP_STOP'");
+  expect(source).toContain("run.payload_json ->> 'featureKey' = command.payload_json ->> 'featureKey'");
+});

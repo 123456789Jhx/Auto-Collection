@@ -350,8 +350,14 @@ export async function claimPendingCommandByDeviceId(deviceId: string, executorTy
                 AND run.command_type = 'ACCOUNT_WARMUP_RUN'
                 AND run.status IN ('CLAIMED', 'RUNNING')
                 AND run.deleted_at IS NULL
-                AND run.id::text = command.payload_json ->> 'targetCommandId'
-                AND run.payload_json ->> 'batchId' = command.payload_json ->> 'batchId'
+                AND (
+                  run.id::text = command.payload_json ->> 'targetCommandId'
+                  OR (
+                    command.command_type = 'VIDEO_WARMUP_STOP'
+                    AND run.payload_json ->> 'batchId' = command.payload_json ->> 'batchId'
+                    AND run.payload_json ->> 'featureKey' = command.payload_json ->> 'featureKey'
+                  )
+                )
             )
           )
         ORDER BY command.created_at, command.id
