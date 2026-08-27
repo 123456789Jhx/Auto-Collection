@@ -1,5 +1,6 @@
 "use strict";
 
+var createCommandAckOutbox = require("./command-ack-outbox.js").createCommandAckOutbox;
 var FEATURE_KEY = "isolated_live_comment_entry";
 var ENTRY_PATH = "features/new-comment/index.js";
 var CACHE_LIMIT = 20;
@@ -19,6 +20,11 @@ function createNewCommentCommandBridge(context) {
   var originalPoll = null;
   var pollMetadata = null;
   var metadataPreserverInstalled = false;
+  var ackOutbox = createCommandAckOutbox({
+    limit: CACHE_LIMIT,
+    flushLimit: 4,
+    send: function (commandId, status, result) { return uploader.ackCommand(commandId, status, result); }
+  });
 
   function featureValue(payload) {
     return typeof (payload && payload.featureKey) === "string" ? payload.featureKey.trim() : "";
@@ -29,7 +35,6 @@ function createNewCommentCommandBridge(context) {
   function payloadOf(command) {
     return command && (command.payload || command.payloadJson) || {};
   }
-
   function loadEntry() {
     if (entryModule) return entryModule;
     var loaders = [
@@ -62,7 +67,6 @@ function createNewCommentCommandBridge(context) {
     if (typeof threads !== "undefined" && threads.start) return threads.start(runner);
     return runner();
   }
-
   function withContract(runState, result) {
     var output = {};
     Object.keys(result || {}).forEach(function (key) { output[key] = result[key]; });
@@ -70,22 +74,31 @@ function createNewCommentCommandBridge(context) {
     output.batchId = runState ? runState.batchId : batchValue(result);
     return output;
   }
-
   function ack(command, status, result, runState) {
     return uploader.ackCommand(command.id, status, withContract(runState || {
       featureKey: featureValue(payloadOf(command)), batchId: batchValue(payloadOf(command))
     }, result));
   }
+  function reliableAck(key, command, status, result, runState, logMessage, onDelivered) {
+    var contracted = withContract(runState || {
+      featureKey: featureValue(payloadOf(command)), batchId: batchValue(payloadOf(command))
+    }, result);
+    return ackOutbox.submit({
+      key: key, commandId: command.id, status: status, result: contracted, onDelivered: onDelivered,
+      onFailure: function (error) {
+        logger.warn(logMessage, { featureKey: contracted.featureKey, batchId: contracted.batchId,
+          commandId: String(command.id || ""), message: String(error) });
+      }
+    });
+  }
   function ackSucceeded(response) {
     return !(response && response.success === false);
   }
-
   function remember(cache, keys, key, value) {
     if (!Object.prototype.hasOwnProperty.call(cache, key)) keys.push(key);
     cache[key] = value;
     while (keys.length > CACHE_LIMIT) delete cache[keys.shift()];
   }
-
   function routeMismatch(command) {
     var payload = payloadOf(command);
     var detail = {
@@ -97,9 +110,9 @@ function createNewCommentCommandBridge(context) {
       requestTime: String(command.requestTime || command.createdAt || new Date().toISOString())
     };
     logger.error("隔离评论错路由已拒绝", detail);
-    ack(command, "FAILED", {
+    reliableAck("route:" + command.id, command, "FAILED", {
       status: "ROUTE_MISMATCH", reasonCode: "ROUTE_MISMATCH", message: "隔离评论任务路由不匹配"
-    });
+    }, null, "隔离评论错路由回执失败");
   }
   function validExactRun(payload) {
     return payload.featureKey === FEATURE_KEY && batchValue(payload) && payload.config &&
@@ -109,17 +122,15 @@ function createNewCommentCommandBridge(context) {
   function isIsolatedIntent(payload) {
     return featureValue(payload).indexOf("isolated_") === 0;
   }
-
   function busy(command) {
     var payload = payloadOf(command);
     logger.warn("隔离评论任务互斥拦截", {
       featureKey: featureValue(payload), commandId: String(command.id || ""), batchId: batchValue(payload)
     });
-    ack(command, "FAILED", {
+    reliableAck("busy:" + command.id, command, "FAILED", {
       status: "ACCOUNT_WARMUP_BUSY", reasonCode: "ACCOUNT_WARMUP_BUSY", message: "当前设备已有任务执行中"
-    });
+    }, null, "隔离评论互斥回执失败");
   }
-
   function preserveProgress(runState, result) {
     var output = withContract(runState, result || {});
     var progress = runState.latestProgress || {};
@@ -130,9 +141,9 @@ function createNewCommentCommandBridge(context) {
     if (!output.stage && output.stageHistory.length) output.stage = output.stageHistory[output.stageHistory.length - 1];
     return output;
   }
-
   function reportStage(runState, event) {
     if (!runState || runState.terminal || runState.stopRequested || active !== runState) return;
+    ackOutbox.flush();
     event = event || {};
     var stage = String(event.stage || "").trim();
     if (!stage) return;
@@ -154,31 +165,14 @@ function createNewCommentCommandBridge(context) {
   function cacheTerminal(runState) {
     remember(terminalCache, terminalKeys, runState.commandId, runState.terminal);
   }
-
   function finish(runState, status, result) {
     if (!runState.terminal) runState.terminal = { status: status, result: preserveProgress(runState, result) };
-    var response;
-    try {
-      response = ack(runState.command, runState.terminal.status, runState.terminal.result, runState);
-    } catch (error) {
-      logger.warn("隔离评论终态回执失败", {
-        featureKey: FEATURE_KEY, batchId: runState.batchId,
-        commandId: runState.commandId, message: String(error)
+    return reliableAck("run:" + runState.commandId, runState.command, runState.terminal.status,
+      runState.terminal.result, runState, "隔离评论终态回执失败", function () {
+        cacheTerminal(runState);
+        if (active === runState) active = null;
       });
-      return false;
-    }
-    if (!ackSucceeded(response)) {
-      logger.warn("隔离评论终态回执待重试", {
-        featureKey: FEATURE_KEY, batchId: runState.batchId,
-        commandId: runState.commandId, message: String(response.message || "")
-      });
-      return false;
-    }
-    cacheTerminal(runState);
-    if (active === runState) active = null;
-    return true;
   }
-
   function interrupt(runState) {
     if (!runState.thread || typeof runState.thread.interrupt !== "function") return false;
     try { runState.thread.interrupt(); return true; }
@@ -190,7 +184,6 @@ function createNewCommentCommandBridge(context) {
       return false;
     }
   }
-
   function cleanup(runState) {
     if (runState.cleanupStarted) return runState.cleanupResult;
     runState.cleanupStarted = true;
@@ -204,35 +197,23 @@ function createNewCommentCommandBridge(context) {
     }
     return runState.cleanupResult;
   }
-
   function needsCleanup(result) {
     return !!(result && (result.cleanupRequired === true || result.reasonCode === "PLATFORM_VERIFICATION" ||
       result.status === "LIVE_COMMENT_ENTRY_PLATFORM_VERIFICATION"));
   }
-
   function normalizeWorkerResult(result) {
     result = result || { status: "FAILED" };
     if (result.status === "STOPPED") result.status = "LIVE_COMMENT_ENTRY_STOPPED";
     return result;
   }
-
   function workerStatus(result) {
     return result && (result.status === "LIVE_COMMENT_ENTRY_ENTERED" ||
       result.status === "LIVE_COMMENT_ENTRY_CAPTURED" || result.status === "LIVE_COMMENT_ENTRY_STOPPED") ? "DONE" : "FAILED";
   }
-
   function retryCached(command, terminal) {
-    try {
-      ack(command, terminal.status, terminal.result, {
-        featureKey: terminal.result.featureKey, batchId: terminal.result.batchId
-      });
-    }
-    catch (error) {
-      logger.warn("隔离评论缓存终态回执失败", {
-        featureKey: FEATURE_KEY, batchId: String(terminal.result.batchId || ""),
-        commandId: String(command.id || ""), message: String(error)
-      });
-    }
+    reliableAck("run:" + command.id, command, terminal.status, terminal.result, {
+      featureKey: terminal.result.featureKey, batchId: terminal.result.batchId
+    }, "隔离评论缓存终态回执失败");
   }
 
   function runCommand(command) {
@@ -268,7 +249,7 @@ function createNewCommentCommandBridge(context) {
     var runPayload = {};
     Object.keys(payload.config || {}).forEach(function (key) { runPayload[key] = payload.config[key]; });
     runPayload.batchId = runState.batchId;
-    runState.thread = startThread(function () {
+    var runner = function () {
       try {
         var result = normalizeWorkerResult(runState.task.run(runPayload, runState.control));
         if (runState.stopCompleted || runState.terminal) return;
@@ -285,7 +266,15 @@ function createNewCommentCommandBridge(context) {
           status: "FAILED", message: String(error), cleanup: cleanup(runState)
         });
       }
-    });
+    };
+    try { runState.thread = startThread(runner); }
+    catch (startError) {
+      var startFailure = { status: "FAILED", reasonCode: "THREAD_START_FAILED",
+        message: String(startError), cleanup: cleanup(runState) };
+      logger.error("隔离评论线程启动失败", { featureKey: FEATURE_KEY, batchId: runState.batchId,
+        commandId: runState.commandId, message: String(startError) });
+      finish(runState, "FAILED", startFailure);
+    }
   }
 
   function stoppedKey(targetCommandId, batchId) {
@@ -303,15 +292,12 @@ function createNewCommentCommandBridge(context) {
   }
 
   function ackStop(command, result, runState) {
-    try {
-      var response = ack(command, "DONE", result, runState);
-      if (!ackSucceeded(response)) throw new Error(String(response.message || "STOP_ACK_REJECTED"));
-    } catch (error) {
-      logger.warn("隔离评论停止回执失败", {
-        featureKey: FEATURE_KEY, batchId: runState.batchId,
-        commandId: String(command.id || ""), message: String(error)
-      });
-    }
+    reliableAck("stop:" + command.id, command, "DONE", result, runState, "隔离评论停止回执失败");
+  }
+
+  function alreadyCompletedResult(targetCommandId, terminal) {
+    return { status: "ALREADY_COMPLETED", targetCommandId: targetCommandId,
+      targetStatus: String(terminal && terminal.result && terminal.result.status || "") };
   }
 
   function stopCommand(command) {
@@ -319,6 +305,19 @@ function createNewCommentCommandBridge(context) {
     var key = stoppedKey(payload.targetCommandId, payload.batchId);
     if (stoppedRuns[key]) {
       ackStop(command, stoppedResult(stoppedRuns[key], "ALREADY_STOPPED"), stoppedRuns[key]);
+      return true;
+    }
+    var targetId = String(payload.targetCommandId || "");
+    var targetBatch = batchValue(payload);
+    if (active && active.commandId === targetId && active.batchId === targetBatch && active.terminal) {
+      ackStop(command, alreadyCompletedResult(targetId, active.terminal), active);
+      return true;
+    }
+    var cached = terminalCache[targetId];
+    if (cached && String(cached.result.batchId || "") === targetBatch) {
+      ackStop(command, alreadyCompletedResult(targetId, cached), {
+        featureKey: cached.result.featureKey, batchId: cached.result.batchId
+      });
       return true;
     }
     if (!active || active.commandId !== String(payload.targetCommandId || "") ||
@@ -345,6 +344,9 @@ function createNewCommentCommandBridge(context) {
   function intercept(commands) {
     commands = Array.isArray(commands) ? commands : [];
     var passthrough = [];
+    var isolatedReserved = commands.some(function (item) {
+      return item && item.commandType === "ACCOUNT_WARMUP_RUN" && validExactRun(payloadOf(item));
+    });
     for (var index = 0; index < commands.length; index += 1) {
       var command = commands[index] || {};
       var payload = payloadOf(command);
@@ -353,7 +355,7 @@ function createNewCommentCommandBridge(context) {
           if (!validExactRun(payload)) routeMismatch(command);
           else runCommand(command);
         } else if (isIsolatedIntent(payload)) routeMismatch(command);
-        else if (active) busy(command);
+        else if (active || isolatedReserved) busy(command);
         else passthrough.push(command);
       } else if (command.commandType === "ACCOUNT_WARMUP_STOP" && stopCommand(command)) {
       } else passthrough.push(command);
@@ -366,6 +368,8 @@ function createNewCommentCommandBridge(context) {
     loadEntry();
     originalPoll = uploader.pollCommands;
     uploader.pollCommands = function () {
+      ackOutbox.flush();
+      if (ackOutbox.size() >= CACHE_LIMIT - 1) { pollMetadata = {}; return []; }
       var commands = originalPoll.apply(uploader, arguments);
       pollMetadata = copyArrayProperties(commands, {});
       return intercept(commands);

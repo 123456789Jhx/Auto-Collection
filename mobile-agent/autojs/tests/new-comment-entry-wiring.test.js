@@ -32,7 +32,10 @@ test("主入口先安装隔离评论桥，再安装旧养号桥", function () {
 });
 
 test("真实新旧桥组合只恢复同一次底层轮询元数据且隔离命令仍先消费", function () {
-  var first = [{ id: "isolated-run", commandType: "ACCOUNT_WARMUP_RUN", payload: {
+  var legacyFirst = { id: "legacy-first", commandType: "ACCOUNT_WARMUP_RUN", payload: {
+    featureKey: "video_warmup", batchId: "batch-legacy-first", config: { targetKeyword: "药材种植" }
+  } };
+  var first = [legacyFirst, { id: "isolated-run", commandType: "ACCOUNT_WARMUP_RUN", payload: {
     featureKey: "isolated_live_comment_entry", batchId: "batch-combined",
     config: { targetKeyword: "药材种植", minViewerCount: 0 }
   } }, { id: "status-first", commandType: "STATUS", payload: {} }];
@@ -40,12 +43,13 @@ test("真实新旧桥组合只恢复同一次底层轮询元数据且隔离命�
   var polls = [first, [{ id: "status-second", commandType: "STATUS", payload: {} }]];
   var pollIndex = 0;
   var threads = [];
+  var acknowledgements = [];
   var newTaskCreates = 0;
   var context = {
     config: { device: { deviceId: "device-combined" } },
     uploader: {
       pollCommands: function () { return polls[pollIndex++]; },
-      ackCommand: function () {}
+      ackCommand: function (id, status, result) { acknowledgements.push({ id: id, status: status, result: result }); }
     },
     logger: { info: function () {}, warn: function () {}, error: function () {} },
     startThread: function (runner) { threads.push(runner); return { interrupt: function () {} }; },
@@ -73,10 +77,12 @@ test("真实新旧桥组合只恢复同一次底层轮询元数据且隔离命�
   assert.equal(newBridge.installPollMetadataPreserver(), false);
 
   var firstOutput = context.uploader.pollCommands();
-  assert.deepEqual(firstOutput.slice(), [first[1]]);
+  assert.deepEqual(firstOutput.slice(), [first[2]]);
   assert.equal(firstOutput.deviceRecoveryRequestSucceeded, true);
   assert.equal(newTaskCreates, 1);
   assert.equal(threads.length, 1);
+  assert.equal(acknowledgements[0].id, legacyFirst.id);
+  assert.equal(acknowledgements[0].result.status, "ACCOUNT_WARMUP_BUSY");
   var secondOutput = context.uploader.pollCommands();
   assert.equal(Object.prototype.hasOwnProperty.call(secondOutput, "deviceRecoveryRequestSucceeded"), false);
 });

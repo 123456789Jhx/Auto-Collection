@@ -256,7 +256,8 @@ test("匹配 STOP 先中断和清理，再回执 STOP 并终结 RUN，且保留�
   assert.equal(stopAck.result.commentSourceCount, 4);
   bridge.intercept([stop]);
   assert.equal(harness.cleanupCalls.length, 1);
-  assert.equal(harness.acknowledgements[harness.acknowledgements.length - 1].result.status, "ALREADY_STOPPED");
+  assert.equal(harness.acknowledgements[harness.acknowledgements.length - 1].result.status,
+    "ALREADY_STOPPED");
 });
 
 test("验证或 cleanupRequired 只调用新任务 cleanup 一次并按结果决定终态", function () {
@@ -298,7 +299,8 @@ test("STOP 回执抛错仍终结原 RUN，重复 STOP 可稳定重试", function
   assert.equal(stopLog.detail.batchId, "batch-stop-ack-error");
   bridge.intercept([stop]);
   assert.equal(harness.cleanupCalls.length, 1);
-  assert.equal(harness.acknowledgements[harness.acknowledgements.length - 1].result.status, "ALREADY_STOPPED");
+  assert.equal(harness.acknowledgements[harness.acknowledgements.length - 1].result.status,
+    "LIVE_COMMENT_ENTRY_STOPPED");
 });
 
 test("终态 ACK 失败只重试回执，成功终态缓存有界且任务不重跑", function () {
