@@ -37,7 +37,8 @@ function createScreenDeps(overrides) {
     now: function () { return clock; },
     sleep: function (ms) { clock += ms; },
     captureScreen: function () { return null; },
-    ocr: function () { return []; },
+    clipImage: function () { return null; },
+    recognize: function () { return ""; },
     screenSize: function () { return { width: 100, height: 200 }; },
     shouldStop: function () { return false; }
   };
@@ -278,45 +279,34 @@ test("gesture driver false and thrown errors become stable failures", function (
   assert.equal(failed.reason, "DRIVER_ERROR");
 });
 
-test("captureRegions recycles image after success and parser error", function () {
-  var recycled = 0;
-  function snapshot() {
-    return { image: { recycle: function () { recycled += 1; } }, width: 100, height: 200 };
+test("captureRegions recycles clips and original on success, throw and stop", function () {
+  function run(mode) {
+    var stopped = false;
+    var counts = { original: 0, clips: 0 };
+    var actions = createScreenActions(createScreenDeps({
+      shouldStop: function () { return stopped; },
+      captureScreen: function () { return { image: {
+        recycle: function () { counts.original += 1; }
+      }, width: 100, height: 200 }; },
+      clipImage: function () { return { recycle: function () { counts.clips += 1; } }; },
+      recognize: function () {
+        if (mode === "throw") throw new Error("recognize failed");
+        if (mode === "stop") stopped = true;
+        return "hello";
+      }
+    }), layout);
+    return { result: actions.captureRegions(["comment"]), counts: counts };
   }
-  var successActions = createScreenActions(createScreenDeps({
-    captureScreen: snapshot,
-    ocr: function () { return { text: "hello" }; },
-    parseOcr: function (ocrResult) { return ocrResult.text; }
-  }), layout);
-  var success = successActions.captureRegions(["comment"]);
-  var failureActions = createScreenActions(createScreenDeps({
-    captureScreen: snapshot,
-    ocr: function () { return { text: "bad" }; },
-    parseOcr: function () { throw new Error("parse failed"); }
-  }), layout);
-  var failure = failureActions.captureRegions(["comment"]);
-
-  assert.equal(success.success, true);
-  assert.equal(success.value[0].value, "hello");
-  assert.equal(failure.success, false);
-  assert.equal(failure.reason, "OCR_FAILED");
-  assert.equal(recycled, 2);
-});
-
-test("captureRegions stops after parsing and still recycles the image", function () {
-  var stopped = false;
-  var recycled = 0;
-  var actions = createScreenActions(createScreenDeps({
-    shouldStop: function () { return stopped; },
-    captureScreen: function () {
-      return { image: { recycle: function () { recycled += 1; } }, width: 100, height: 200 };
-    },
-    ocr: function () { return { text: "hello" }; },
-    parseOcr: function () { stopped = true; return "hello"; }
-  }), layout);
-
-  assert.deepEqual(actions.captureRegions(["comment"]), STOP_RESULT);
-  assert.equal(recycled, 1);
+  var success = run("success");
+  var failure = run("throw");
+  var stopped = run("stop");
+  assert.equal(success.result.success, true);
+  assert.equal(success.result.value[0].value, "hello");
+  assert.equal(failure.result.reason, "OCR_FAILED");
+  assert.deepEqual(stopped.result, STOP_RESULT);
+  [success, failure, stopped].forEach(function (entry) {
+    assert.deepEqual(entry.counts, { original: 1, clips: 1 });
+  });
 });
 
 test("captureRegions checks stop after an empty capture result", function () {

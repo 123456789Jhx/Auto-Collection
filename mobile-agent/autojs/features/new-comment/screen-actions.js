@@ -219,8 +219,8 @@ function createScreenActions(deps, layout) {
     if (!captureRegions.success) {
       return captureRegions;
     }
-    if (typeof deps.ocr !== "function") {
-      return contract.failure(contract.REASON.DEPENDENCY_MISSING, "ocr dependency missing");
+    if (typeof deps.clipImage !== "function" || typeof deps.recognize !== "function") {
+      return contract.failure(contract.REASON.DEPENDENCY_MISSING, "clip or recognize dependency missing");
     }
     var values = [];
     var index;
@@ -229,23 +229,24 @@ function createScreenActions(deps, layout) {
       if (stopped) {
         return stopped;
       }
-      var raw = deps.ocr(image, captureRegions.value[index]);
-      stopped = checkStop();
-      if (stopped) {
-        return stopped;
+      var clip = null;
+      try {
+        clip = deps.clipImage(image, captureRegions.value[index]);
+        if (!clip) return contract.failure(contract.REASON.OCR_FAILED, "image clip failed");
+        stopped = checkStop();
+        if (stopped) return stopped;
+        var raw = deps.recognize(clip, captureRegions.value[index]);
+        stopped = checkStop();
+        if (stopped) return stopped;
+        var parsed = typeof deps.parseOcr === "function" ?
+          deps.parseOcr(raw, captureRegions.value[index]) : raw;
+        stopped = checkStop();
+        if (stopped) return stopped;
+        values.push({ name: captureRegions.value[index].name,
+          region: captureRegions.value[index], value: parsed });
+      } finally {
+        if (clip) recycleImage(clip);
       }
-      var parsed = typeof deps.parseOcr === "function"
-        ? deps.parseOcr(raw, captureRegions.value[index])
-        : raw;
-      stopped = checkStop();
-      if (stopped) {
-        return stopped;
-      }
-      values.push({
-        name: captureRegions.value[index].name,
-        region: captureRegions.value[index],
-        value: parsed
-      });
     }
     return contract.success(values);
   }

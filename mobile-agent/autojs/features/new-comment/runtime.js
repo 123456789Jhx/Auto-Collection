@@ -15,6 +15,8 @@ function createIsolatedRuntime(context, options) {
   var recognizer = options.screenRecognizer || context.screenRecognizer || {};
   var riskDetector = options.riskDetector || context.riskDetector || {};
   var viewerParser = options.viewerCountParser || context.viewerCountParser || {};
+  var imageApi = options.images || context.images || (typeof images !== "undefined" ? images : null);
+  var ocrEngine = options.ocrEngine || context.ocrEngine || {};
   var accessibility = options.accessibility || context.accessibility || defaultAccessibility;
   var traceLimit = Math.max(1, Math.min(100, Math.floor(Number(options.actionTraceLimit) || 40)));
   var actionTrace = [];
@@ -204,6 +206,16 @@ function createIsolatedRuntime(context, options) {
     now: function () { return Date.now(); },
     sleep: sleepAdapter,
     screenSize: screenSize,
+    captureScreen: options.captureScreen || context.captureScreen ||
+      (typeof captureScreen === "function" ? captureScreen : null),
+    clipImage: function (image, region) {
+      return imageApi && typeof imageApi.clip === "function" ? imageApi.clip(image,
+        region.left, region.top, region.width, region.height) : null;
+    },
+    recognize: function (image) {
+      if (typeof ocrEngine.recognize !== "function") throw new Error("ocr recognize unavailable");
+      return ocrEngine.recognize(image);
+    },
     detectRisk: detectRisk,
     getPageStructure: function () { return lastVerificationStructure; },
     getActionTrace: traceSnapshot
@@ -267,7 +279,7 @@ function createIsolatedRuntime(context, options) {
       return invoke("openFirstLive", douyin, douyin.openFirstLive, [], "CLICK_FAILED");
     }
     if (typeof douyin.openLiveRoomFromCurrentScreen === "function") {
-      return invoke("openFirstLive", douyin, douyin.openLiveRoomFromCurrentScreen, [], "CLICK_FAILED");
+      return invoke("openFirstLive", douyin, douyin.openLiveRoomFromCurrentScreen, [], "NO_RESULT");
     }
     trace("openFirstLive");
     if (stopped()) return contract.stopped();
@@ -281,51 +293,38 @@ function createIsolatedRuntime(context, options) {
     return invoke("isLiveRoom", douyin, method, []);
   }
 
-  function extractScreen(regions) {
-    var extractor = options.extractScreen || recognizer.extractScreen;
-    if (typeof extractor !== "function") {
-      return contract.failure(contract.REASON.DEPENDENCY_MISSING, "screen recognizer missing");
-    }
-    var owner = options.extractScreen ? options : recognizer;
-    var snapshot;
-    try { snapshot = extractor.call(owner, regions); } catch (error) {
-      return contract.failure(contract.REASON.SCREEN_CAPTURE_FAILED, String(error && error.message || error));
-    }
-    return contract.success(snapshot);
-  }
-
   function readComments() {
     trace("readComments");
     if (stopped()) return contract.stopped();
-    var captured = extractScreen(commentCapture.commentOcrRegions(screenSize()));
+    var region = commentCapture.commentOcrRegion(screenSize());
+    var captured = screens.captureRegions([{ name: "commentArea", left: region.x, top: region.y,
+      width: region.w, height: region.h }]);
     if (!captured.success) return captured;
-    var snapshot = captured.value;
     var result = contract.success({
-      text: String(snapshot && snapshot.ocrRegions && snapshot.ocrRegions.commentArea || ""),
+      text: String(captured.value && captured.value[0] && captured.value[0].value || ""),
       source: "commentArea"
     });
-    var recycleFailure = recycleSnapshot(snapshot);
     if (stopped()) return contract.stopped();
-    return recycleFailure || result;
+    return result;
   }
 
-  function regionValue(name) {
+  function regionValue(name, outputName) {
     var region = layout.getRegion(name, screenSize());
-    return { x: region.left, y: region.top, w: region.width, h: region.height };
+    return { name: outputName, left: region.left, top: region.top,
+      width: region.width, height: region.height };
   }
 
   function readViewerCount() {
     trace("readViewerCount");
     if (stopped()) return contract.stopped();
-    var captured = extractScreen({ viewerBadge: regionValue("viewerCount"), liveEndedBanner: regionValue("liveEnded") });
+    var captured = screens.captureRegions([regionValue("viewerCount", "viewerBadge"),
+      regionValue("liveEnded", "liveEndedBanner")]);
     if (!captured.success) return captured;
-    var snapshot = captured.value;
     var result;
-    var recycleFailure;
     try {
-      var regions = snapshot && snapshot.ocrRegions || {};
-      var badge = String(regions.viewerBadge || "").trim();
-      var endedText = String(regions.liveEndedBanner || "").trim();
+      var values = captured.value || [];
+      var badge = String(values[0] && values[0].value || "").trim();
+      var endedText = String(values[1] && values[1].value || "").trim();
       var parser = typeof viewerParser === "function" ? viewerParser : viewerParser.parseViewerBadgeCount;
       var count = typeof parser === "function" ? parser.call(viewerParser, badge) : null;
       result = contract.success({
@@ -335,11 +334,9 @@ function createIsolatedRuntime(context, options) {
       });
     } catch (error) {
       result = contract.failure(contract.REASON.OCR_FAILED, String(error && error.message || error));
-    } finally {
-      recycleFailure = recycleSnapshot(snapshot);
     }
     if (stopped()) return contract.stopped();
-    return recycleFailure && result.success ? recycleFailure : result;
+    return result;
   }
 
   function swipeCoordinates(name, coordinates) {

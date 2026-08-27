@@ -63,8 +63,8 @@ var SWIPE_OPTIONS = {
 
 var REGION_RATIOS = {
   comment: { left: 0.055, top: 0.622, width: 0.855, height: 0.247 },
-  liveEnded: { left: 0.12, top: 0.3, width: 0.76, height: 0.3 },
-  viewerCount: { left: 0.02, top: 0.03, width: 0.56, height: 0.16 },
+  liveEnded: { left: 0.32, top: 0.06, width: 0.38, height: 0.055, independentSize: true },
+  viewerCount: { left: 0.595, top: 0.06, width: 0.32, height: 0.057, independentSize: true },
   platformVerification: { left: 0.08, top: 0.18, width: 0.84, height: 0.64 }
 };
 
@@ -111,6 +111,11 @@ function regionFromRatio(ratio, screenSize, name) {
   var size = normalizeScreenSize(screenSize);
   var leftRatio = clamp(isNumber(ratio.left) ? ratio.left : 0, 0, 1);
   var topRatio = clamp(isNumber(ratio.top) ? ratio.top : 0, 0, 1);
+  if (ratio.independentSize === true) {
+    return clampRegion({ name: name, left: Math.floor(size.width * leftRatio),
+      top: Math.floor(size.height * topRatio), width: Math.ceil(size.width * ratio.width),
+      height: Math.ceil(size.height * ratio.height) }, size);
+  }
   var rightRatio = clamp(leftRatio + (isNumber(ratio.width) ? ratio.width : 0), 0, 1);
   var bottomRatio = clamp(topRatio + (isNumber(ratio.height) ? ratio.height : 0), 0, 1);
   var left = clamp(Math.floor(size.width * leftRatio), 0, size.width - 1);

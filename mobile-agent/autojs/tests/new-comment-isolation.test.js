@@ -4,6 +4,8 @@ var assert = require("node:assert/strict");
 var fs = require("node:fs");
 var path = require("node:path");
 var test = require("node:test");
+var cleanupModule = require("../features/new-comment/cleanup.js");
+var layout = require("../features/new-comment/douyin-layout.js");
 var runtimeModule = require("../features/new-comment/runtime.js");
 var workflowModule = require("../features/new-comment/workflow.js");
 
@@ -39,10 +41,204 @@ function assertDiagnostics(result) {
   assert.ok(result.details.actionTrace.includes("detectPlatformVerification"));
 }
 
+function runViewerGate(detectPlatformVerification) {
+  var state = { read: false, nextCalls: 0 };
+  var pass = function () { return true; };
+  var runtime = {
+    openDouyin: pass, openSearch: pass, openLiveTab: pass, openFirstLive: pass,
+    waitRandom: pass, isLiveRoom: pass,
+    readViewerCount: function () { state.read = true; return { count: 1, source: "ocr" }; },
+    nextLive: function () { state.nextCalls += 1; return true; },
+    detectPlatformVerification: function () { return detectPlatformVerification(state); }
+  };
+  state.result = workflowModule.createIsolatedLiveCommentWorkflow({
+    runtime: runtime,
+    commentRunner: { capture: function () { return { status: "LIVE_COMMENT_ENTRY_ENTERED" }; } }
+  }).run({ targetKeyword: "药材种植", minViewerCount: 10, maxCandidateRooms: 2 }, control());
+  return state;
+}
+
 test("isolated workflow production modules exist", function () {
   requiredFiles.forEach(function (name) {
     assert.equal(fs.existsSync(path.join(featureRoot, name)), true, name + " must exist");
   });
+});
+
+test("viewer and ended OCR regions exactly match the legacy 1080x2400 geometry", function () {
+  var size = { width: 1080, height: 2400 };
+  assert.deepEqual(layout.getRegion("liveEnded", size),
+    { name: "liveEnded", left: 345, top: 144, width: 411, height: 132 });
+  assert.deepEqual(layout.getRegion("viewerCount", size),
+    { name: "viewerCount", left: 642, top: 144, width: 346, height: 137 });
+});
+
+test("verification appearing immediately after viewer OCR prevents next-live actions", function () {
+  var state = runViewerGate(function (current) {
+    return current.read ? { detected: true, reasonCode: "PLATFORM_VERIFICATION" } : { detected: false };
+  });
+  assert.equal(state.result.status, "LIVE_COMMENT_ENTRY_PLATFORM_VERIFICATION");
+  assert.equal(state.nextCalls, 0);
+});
+
+test("real runtime treats a missing first live result as retryable search state", function () {
+  var attempts = 0;
+  var searches = 0;
+  var stages = [];
+  var runtime = runtimeModule.createIsolatedRuntime({
+    douyin: {
+      openApp: function () { return true; },
+      openSearch: function () { searches += 1; return true; },
+      openLiveTab: function () { return true; },
+      openLiveRoomFromCurrentScreen: function () { attempts += 1; return attempts > 1; },
+      isLiveRoomVisible: function () { return true; }
+    },
+    riskDetector: { detectRisk: function () { return { detected: false }; } },
+    screenRecognizer: { extractFastText: function () { return null; } }
+  }, { control: control(), sleep: function () { return true; } });
+  var result = workflowModule.createIsolatedLiveCommentWorkflow({
+    runtime: runtime,
+    reportStage: function (event) { stages.push(event.stage); },
+    commentRunner: { capture: function () { return { status: "LIVE_COMMENT_ENTRY_ENTERED" }; } }
+  }).run({ targetKeyword: "药材种植" }, control());
+
+  assert.equal(result.status, "LIVE_COMMENT_ENTRY_ENTERED");
+  assert.equal(attempts, 2);
+  assert.equal(searches, 2);
+  assert.ok(stages.includes("RETRYING_SEARCH"));
+});
+
+test("cleanup idempotency is isolated by batchId then taskId", function () {
+  var recentsCalls = 0;
+  var lifecycleCalls = 0;
+  var cleanup = cleanupModule.createIsolatedCleanup({}, {
+    isDouyinForeground: function () { return true; },
+    openRecents: function () { recentsCalls += 1; return true; },
+    findDouyinCard: function () { return {}; },
+    dismissCard: function () { return true; },
+    findAgentCard: function () { return {}; },
+    openAgentCard: function () { return true; },
+    wait: function () {}, recentsReadyWaitMs: 0
+  });
+  function lifecycle() {
+    return { beforeReturnToAgent: function () { lifecycleCalls += 1; } };
+  }
+
+  assert.equal(cleanup.run({ batchId: "batch-a", taskId: "shared" }, lifecycle()).cached, undefined);
+  assert.equal(cleanup.run({ batchId: "batch-a", taskId: "other" }, lifecycle()).cached, true);
+  assert.equal(cleanup.run({ batchId: "batch-b", taskId: "shared" }, lifecycle()).cached, undefined);
+  assert.equal(cleanup.run({ taskId: "task-c" }, lifecycle()).cached, undefined);
+  assert.equal(cleanup.run({ taskId: "task-c" }, lifecycle()).cached, true);
+  assert.equal(recentsCalls, 3);
+  assert.equal(lifecycleCalls, 3);
+});
+
+test("workflow passes task identity and control into final cleanup", function () {
+  var capturedPayload;
+  var capturedLifecycle;
+  var activeControl = control();
+  var pass = function () { return true; };
+  var result = workflowModule.createIsolatedLiveCommentWorkflow({
+    runtime: { openDouyin: pass, openSearch: pass, openLiveTab: pass, openFirstLive: pass,
+      isLiveRoom: pass, waitRandom: pass,
+      detectPlatformVerification: function () { return { detected: false }; } },
+    commentRunner: { capture: function () { return { status: "LIVE_COMMENT_ENTRY_ENTERED" }; } },
+    finalCleanup: { run: function (payload, lifecycle) {
+      capturedPayload = payload;
+      capturedLifecycle = lifecycle;
+      return { completed: true };
+    } }
+  }).run({ batchId: "batch-9", taskId: "task-4", targetKeyword: "药材种植" }, activeControl);
+
+  assert.equal(result.status, "LIVE_COMMENT_ENTRY_ENTERED");
+  assert.equal(capturedPayload.batchId, "batch-9");
+  assert.equal(capturedPayload.taskId, "task-4");
+  assert.equal(capturedPayload.control, activeControl);
+  assert.equal(capturedLifecycle.control, activeControl);
+});
+
+test("capture verification keeps cleanup required when cleanup fails", function () {
+  var pass = function () { return true; };
+  var result = workflowModule.createIsolatedLiveCommentWorkflow({
+    runtime: { openDouyin: pass, openSearch: pass, openLiveTab: pass, openFirstLive: pass,
+      isLiveRoom: pass, waitRandom: pass,
+      detectPlatformVerification: function () { return { detected: false }; } },
+    commentRunner: { capture: function () { return {
+      status: "LIVE_COMMENT_ENTRY_PLATFORM_VERIFICATION",
+      capturePlatformVerification: true,
+      cleanupRequired: true
+    }; } },
+    finalCleanup: { run: function () { return {
+      completed: false, reason: "HOME_FALLBACK_FAILED"
+    }; } }
+  }).run({ batchId: "batch-verification", targetKeyword: "药材种植" }, control());
+
+  assert.equal(result.status, "LIVE_COMMENT_ENTRY_CAPTURE_PLATFORM_VERIFICATION");
+  assert.equal(result.cleanupAttempted, true);
+  assert.equal(result.cleanupFailed, true);
+  assert.equal(result.cleanupRequired, true);
+});
+
+test("cleanup only dismisses inside confirmed recents and supports UiCollection", function () {
+  var waits = [];
+  var dismisses = 0;
+  var foreground = [true, true];
+  var unsafe = cleanupModule.createIsolatedCleanup({}, {
+    isDouyinForeground: function () { return foreground.shift(); },
+    isRecentsPackage: function () { return true; },
+    openRecents: function () { return true; },
+    findCenteredTaskCard: function () { return {}; },
+    findDouyinCard: function () { return {}; },
+    dismissCard: function () { dismisses += 1; return true; },
+    goHome: function () { return true; }, findAgentHomeIcon: function () { return null; },
+    openAgentByPackage: function () { return true; },
+    wait: function (milliseconds) { waits.push(milliseconds); }
+  }).run({ taskId: "unsafe" });
+  assert.equal(dismisses, 0);
+  assert.equal(unsafe.reason, "RECENTS_NOT_READY");
+  assert.ok(waits.some(function (milliseconds) { return milliseconds > 0; }));
+
+  var previousId = global.id;
+  try {
+    var nodes = [{ bounds: function () { return { left: 20, right: 520, top: 400, bottom: 1800 }; } },
+      { bounds: function () { return { left: 290, right: 790, top: 400, bottom: 1800 }; } }];
+    global.id = function () { return { find: function () { return {
+      size: function () { return nodes.length; }, get: function (index) { return nodes[index]; }
+    }; } }; };
+    var activeForeground = [true, false];
+    var dismissed;
+    var zeroWaits = [];
+    var safe = cleanupModule.createIsolatedCleanup({}, {
+      screenSize: { width: 1080, height: 2400 },
+      isDouyinForeground: function () { return activeForeground.shift(); },
+      isRecentsPackage: function () { return false; }, openRecents: function () { return true; },
+      findDouyinCard: function () { return null; },
+      dismissCard: function (card) { dismissed = card; return true; },
+      findAgentCard: function () { return {}; }, openAgentCard: function () { return true; },
+      recentsReadyWaitMs: 0, wait: function (milliseconds) { zeroWaits.push(milliseconds); }
+    }).run({ taskId: "collection" });
+    assert.equal(safe.completed, true);
+    assert.equal(dismissed, nodes[1]);
+    assert.deepEqual(zeroWaits, []);
+  } finally { global.id = previousId; }
+});
+
+test("cleanup rechecks stop before every wait", function () {
+  var stopped = false;
+  var waits = [];
+  var foreground = [true, false];
+  var result = cleanupModule.createIsolatedCleanup({}, {
+    cooldownMs: 10, recentsReadyWaitMs: 20, agentCardReadyWaitMs: 30,
+    wait: function (milliseconds) { waits.push(milliseconds); stopped = true; },
+    isDouyinForeground: function () { return foreground.shift(); },
+    isRecentsPackage: function () { return true; }, openRecents: function () { return true; },
+    findCenteredTaskCard: function () { return {}; }, findDouyinCard: function () { return {}; },
+    dismissCard: function () { return true; }, findAgentCard: function () { return {}; },
+    openAgentCard: function () { return true; }
+  }).run({ taskId: "stop-waits", control: {
+    shouldStop: function () { return stopped; }
+  } });
+  assert.equal(result.completed, true);
+  assert.deepEqual(waits, [10]);
 });
 
 test("new-comment production requires only sibling modules or public core adapters", function () {

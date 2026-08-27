@@ -147,8 +147,12 @@ function createIsolatedLiveCommentWorkflow(options) {
       for (attempt = 1; attempt <= 3; attempt += 1) {
         if (stopped(control)) return { status: "STOPPED" };
         stage("CHECKING_VIEWER_COUNT", { candidateIndex: candidate, attempt: attempt, minViewerCount: minimum });
+        var beforeReadVerification = verification("CHECKING_VIEWER_COUNT", control);
+        if (beforeReadVerification) return beforeReadVerification;
         var read = call("readViewerCount", "CHECKING_VIEWER_COUNT", [], control);
         if (read.stopped) return { status: "STOPPED" };
+        var afterReadVerification = verification("CHECKING_VIEWER_COUNT", control);
+        if (afterReadVerification) return afterReadVerification;
         if (read.value) last = read.value;
         if (!read.failed && read.value && read.value.ended === true) { ended = read.value; break; }
         if (!read.failed && read.value && read.value.count !== null && read.value.count !== undefined &&
@@ -165,6 +169,8 @@ function createIsolatedLiveCommentWorkflow(options) {
           "LIVE_ROOM_ENDED", "连续直播间均已结束，脚本已停止", "SKIPPING_ENDED_LIVE_ROOM",
           { minViewerCount: minimum, viewerCountSource: ended.source,
             textSample: ended.endedTextSample || ended.textSample });
+        var beforeEndedNext = verification("SKIPPING_ENDED_LIVE_ROOM", control);
+        if (beforeEndedNext) return beforeEndedNext;
         var endedNext = call("nextLive", "SKIPPING_ENDED_LIVE_ROOM", [], control);
         if (endedNext.stopped) return { status: "STOPPED" };
         if (endedNext.failed) return viewerFailure("LIVE_COMMENT_ENTRY_LIVE_ENDED_SKIP_FAILED",
@@ -194,6 +200,8 @@ function createIsolatedLiveCommentWorkflow(options) {
           textSample: accepted.textSample });
       stage("SKIPPING_LOW_VIEWER_ROOM", { candidateIndex: candidate, viewerCount: viewerCount,
         minViewerCount: minimum });
+      var beforeNext = verification("SKIPPING_LOW_VIEWER_ROOM", control);
+      if (beforeNext) return beforeNext;
       var next = call("nextLive", "SKIPPING_LOW_VIEWER_ROOM", [], control);
       if (next.stopped) return { status: "STOPPED" };
       if (next.failed) return viewerFailure("LIVE_COMMENT_ENTRY_VIEWER_THRESHOLD_FAILED",
@@ -240,7 +248,8 @@ function createIsolatedLiveCommentWorkflow(options) {
     if (finalCleanup && typeof finalCleanup.run === "function") {
       stage("CLEANING_UP", { commentCount: Number(result.commentCount || 0) });
       var cleanup;
-      try { cleanup = finalCleanup.run({ taskId: String(payload.batchId || "") }, {
+      try { cleanup = finalCleanup.run({ batchId: String(payload.batchId || ""),
+        taskId: String(payload.taskId || ""), control: control }, { control: control,
         beforeReturnToAgent: function () { stage("RETURNING_TO_AGENT", { commentCount: Number(result.commentCount || 0) }); }
       }); } catch (error) {
         cleanup = { completed: false, reason: "LIVE_COMMENT_ENTRY_CLEANUP_FAILED", message: String(error) };
@@ -263,7 +272,7 @@ function createIsolatedLiveCommentWorkflow(options) {
       result.status = "LIVE_COMMENT_ENTRY_CAPTURE_PLATFORM_VERIFICATION";
       result.reasonCode = "CAPTURE_PLATFORM_VERIFICATION";
       result.platformVerification = true;
-      result.cleanupRequired = false;
+      result.cleanupRequired = !cleanupSucceeded(result.cleanup);
       delete result.capturePlatformVerification;
     }
     if (result.status !== "LIVE_COMMENT_ENTRY_ENTERED") stage("FAILED", { failedStage: result.failedStage || "CLEANING_UP",
