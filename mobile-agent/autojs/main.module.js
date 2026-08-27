@@ -244,6 +244,7 @@ context.accountWarmupCommandBridge = createAccountWarmupCommandBridge(context);
 context.accountWarmupCommandBridge.install();
 context.remoteWakeCommandBridge = createRemoteWakeCommandBridge(context);
 context.remoteWakeCommandBridge.install();
+context.newCommentCommandBridge.installPollMetadataPreserver();
 context.heartbeatService = createHeartbeatService(context);
 context.agentHeartbeatDaemon = createAgentHeartbeatDaemon(context);
 context.taskScheduler = createTaskScheduler(context);

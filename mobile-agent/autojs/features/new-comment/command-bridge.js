@@ -17,15 +17,15 @@ function createNewCommentCommandBridge(context) {
   var stoppedKeys = [];
   var installed = false;
   var originalPoll = null;
+  var pollMetadata = null;
+  var metadataPreserverInstalled = false;
 
   function featureValue(payload) {
     return typeof (payload && payload.featureKey) === "string" ? payload.featureKey.trim() : "";
   }
-
   function batchValue(payload) {
     return typeof (payload && payload.batchId) === "string" ? payload.batchId.trim() : "";
   }
-
   function payloadOf(command) {
     return command && (command.payload || command.payloadJson) || {};
   }
@@ -57,7 +57,6 @@ function createNewCommentCommandBridge(context) {
     logger.error("隔离评论入口预加载失败", { featureKey: FEATURE_KEY, message: String(preloadError || "") });
     return null;
   }
-
   function startThread(runner) {
     if (typeof context.startThread === "function") return context.startThread(runner);
     if (typeof threads !== "undefined" && threads.start) return threads.start(runner);
@@ -77,7 +76,6 @@ function createNewCommentCommandBridge(context) {
       featureKey: featureValue(payloadOf(command)), batchId: batchValue(payloadOf(command))
     }, result));
   }
-
   function ackSucceeded(response) {
     return !(response && response.success === false);
   }
@@ -103,20 +101,19 @@ function createNewCommentCommandBridge(context) {
       status: "ROUTE_MISMATCH", reasonCode: "ROUTE_MISMATCH", message: "隔离评论任务路由不匹配"
     });
   }
-
   function validExactRun(payload) {
     return payload.featureKey === FEATURE_KEY && batchValue(payload) && payload.config &&
       typeof payload.config === "object" && !Array.isArray(payload.config) &&
       typeof payload.config.targetKeyword === "string" && !!payload.config.targetKeyword.trim();
   }
-
   function isIsolatedIntent(payload) {
     return featureValue(payload).indexOf("isolated_") === 0;
   }
 
   function busy(command) {
+    var payload = payloadOf(command);
     logger.warn("隔离评论任务互斥拦截", {
-      featureKey: FEATURE_KEY, commandId: String(command.id || ""), batchId: batchValue(payloadOf(command))
+      featureKey: featureValue(payload), commandId: String(command.id || ""), batchId: batchValue(payload)
     });
     ack(command, "FAILED", {
       status: "ACCOUNT_WARMUP_BUSY", reasonCode: "ACCOUNT_WARMUP_BUSY", message: "当前设备已有任务执行中"
@@ -149,11 +146,11 @@ function createNewCommentCommandBridge(context) {
       if (!ackSucceeded(response)) throw new Error(String(response.message || "RUNNING_ACK_REJECTED"));
     } catch (error) {
       logger.warn("隔离评论阶段进度回执失败", {
-        featureKey: FEATURE_KEY, commandId: runState.commandId, stage: stage, message: String(error)
+        featureKey: FEATURE_KEY, batchId: runState.batchId, commandId: runState.commandId,
+        stage: stage, message: String(error)
       });
     }
   }
-
   function cacheTerminal(runState) {
     remember(terminalCache, terminalKeys, runState.commandId, runState.terminal);
   }
@@ -165,13 +162,15 @@ function createNewCommentCommandBridge(context) {
       response = ack(runState.command, runState.terminal.status, runState.terminal.result, runState);
     } catch (error) {
       logger.warn("隔离评论终态回执失败", {
-        featureKey: FEATURE_KEY, commandId: runState.commandId, message: String(error)
+        featureKey: FEATURE_KEY, batchId: runState.batchId,
+        commandId: runState.commandId, message: String(error)
       });
       return false;
     }
     if (!ackSucceeded(response)) {
       logger.warn("隔离评论终态回执待重试", {
-        featureKey: FEATURE_KEY, commandId: runState.commandId, message: String(response.message || "")
+        featureKey: FEATURE_KEY, batchId: runState.batchId,
+        commandId: runState.commandId, message: String(response.message || "")
       });
       return false;
     }
@@ -185,7 +184,8 @@ function createNewCommentCommandBridge(context) {
     try { runState.thread.interrupt(); return true; }
     catch (error) {
       logger.warn("隔离评论线程中断失败", {
-        featureKey: FEATURE_KEY, commandId: runState.commandId, message: String(error)
+        featureKey: FEATURE_KEY, batchId: runState.batchId,
+        commandId: runState.commandId, message: String(error)
       });
       return false;
     }
@@ -229,7 +229,8 @@ function createNewCommentCommandBridge(context) {
     }
     catch (error) {
       logger.warn("隔离评论缓存终态回执失败", {
-        featureKey: FEATURE_KEY, commandId: String(command.id || ""), message: String(error)
+        featureKey: FEATURE_KEY, batchId: String(terminal.result.batchId || ""),
+        commandId: String(command.id || ""), message: String(error)
       });
     }
   }
@@ -271,14 +272,18 @@ function createNewCommentCommandBridge(context) {
       try {
         var result = normalizeWorkerResult(runState.task.run(runPayload, runState.control));
         if (runState.stopCompleted || runState.terminal) return;
-        if (needsCleanup(result)) result.cleanup = cleanup(runState);
-        finish(runState, workerStatus(result), result);
+        var status = workerStatus(result);
+        if (status === "FAILED" || needsCleanup(result)) result.cleanup = cleanup(runState);
+        finish(runState, status, result);
       } catch (error) {
         if (runState.stopCompleted || runState.terminal) return;
         logger.error("隔离评论任务失败", {
-          featureKey: FEATURE_KEY, commandId: runState.commandId, message: String(error)
+          featureKey: FEATURE_KEY, batchId: runState.batchId,
+          commandId: runState.commandId, message: String(error)
         });
-        finish(runState, "FAILED", { status: "FAILED", message: String(error) });
+        finish(runState, "FAILED", {
+          status: "FAILED", message: String(error), cleanup: cleanup(runState)
+        });
       }
     });
   }
@@ -303,7 +308,8 @@ function createNewCommentCommandBridge(context) {
       if (!ackSucceeded(response)) throw new Error(String(response.message || "STOP_ACK_REJECTED"));
     } catch (error) {
       logger.warn("隔离评论停止回执失败", {
-        featureKey: FEATURE_KEY, commandId: String(command.id || ""), message: String(error)
+        featureKey: FEATURE_KEY, batchId: runState.batchId,
+        commandId: String(command.id || ""), message: String(error)
       });
     }
   }
@@ -359,12 +365,29 @@ function createNewCommentCommandBridge(context) {
     if (installed) return false;
     loadEntry();
     originalPoll = uploader.pollCommands;
-    uploader.pollCommands = function () { return intercept(originalPoll.apply(uploader, arguments)); };
+    uploader.pollCommands = function () {
+      var commands = originalPoll.apply(uploader, arguments);
+      pollMetadata = copyArrayProperties(commands, {});
+      return intercept(commands);
+    };
     installed = true;
     return true;
   }
 
-  return { install: install, intercept: intercept, getActive: function () { return active; } };
+  function installPollMetadataPreserver() {
+    if (!installed || metadataPreserverInstalled) return false;
+    var wrappedPoll = uploader.pollCommands;
+    uploader.pollCommands = function () {
+      pollMetadata = null;
+      var commands = wrappedPoll.apply(uploader, arguments);
+      return copyArrayProperties(pollMetadata, commands);
+    };
+    metadataPreserverInstalled = true;
+    return true;
+  }
+
+  return { install: install, installPollMetadataPreserver: installPollMetadataPreserver,
+    intercept: intercept, getActive: function () { return active; } };
 }
 
 module.exports = { createNewCommentCommandBridge: createNewCommentCommandBridge };

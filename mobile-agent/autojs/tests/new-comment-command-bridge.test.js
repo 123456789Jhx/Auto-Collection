@@ -133,7 +133,8 @@ test("精确隔离 RUN 预加载新入口并透传配置、批次和停止控制
   assert.equal(terminal.result.stageHistory[0], "STAGE_2");
   assert.deepEqual(terminal.result.comments, [{ commentId: "c1" }]);
   assert.equal(terminal.result.commentSourceCount, 3);
-  assert(harness.logs.some(function (item) { return item.message.indexOf("阶段进度回执失败") >= 0; }));
+  var stageLog = harness.logs.find(function (item) { return item.message.indexOf("阶段进度回执失败") >= 0; });
+  assert.equal(stageLog.detail.batchId, "batch-exact");
 });
 
 test("畸形隔离路由终态拒绝，legacy 命令及数组属性原样透传", function () {
@@ -181,11 +182,16 @@ test("新旧任务双向互斥且空闲时旧 RUN 继续透传", function () {
   var harness = createHarness();
   var bridge = createBridge(harness.context);
   bridge.intercept([isolatedRun("new-active", "batch-active")]);
-  var oldRun = command("old-while-new", "ACCOUNT_WARMUP_RUN", { featureKey: "video_warmup" });
+  var oldRun = command("old-while-new", "ACCOUNT_WARMUP_RUN", {
+    featureKey: "video_warmup", batchId: "batch-legacy"
+  });
   assert.deepEqual(bridge.intercept([oldRun]), []);
   assert.equal(harness.acknowledgements[0].result.status, "ACCOUNT_WARMUP_BUSY");
   assert.equal(harness.acknowledgements[0].result.featureKey, "video_warmup");
-  assert.equal(harness.acknowledgements[0].result.batchId, "");
+  assert.equal(harness.acknowledgements[0].result.batchId, "batch-legacy");
+  var busyLog = harness.logs.find(function (item) { return item.message.indexOf("互斥拦截") >= 0; });
+  assert.equal(busyLog.detail.featureKey, "video_warmup");
+  assert.equal(busyLog.detail.batchId, "batch-legacy");
   var duplicate = isolatedRun("new-active", "batch-active");
   bridge.intercept([duplicate]);
   assert.equal(harness.threads.length, 1);
@@ -288,6 +294,8 @@ test("STOP 回执抛错仍终结原 RUN，重复 STOP 可稳定重试", function
   assert.equal(harness.cleanupCalls.length, 1);
   assert.equal(harness.acknowledgements[0].result.captureStatus, "LIVE_COMMENT_ENTRY_PARTIAL");
   assert.equal(harness.acknowledgements[0].result.captureCompleted, false);
+  var stopLog = harness.logs.find(function (item) { return item.message.indexOf("停止回执失败") >= 0; });
+  assert.equal(stopLog.detail.batchId, "batch-stop-ack-error");
   bridge.intercept([stop]);
   assert.equal(harness.cleanupCalls.length, 1);
   assert.equal(harness.acknowledgements[harness.acknowledgements.length - 1].result.status, "ALREADY_STOPPED");
@@ -334,6 +342,27 @@ test("终态 ACK 抛错保留终态，重复 RUN 只重试回执", function () {
   assert.equal(bridge.getActive(), null);
   assert.equal(harness.taskRuns.length, 1);
   assert.equal(harness.acknowledgements.length, 2);
+  var terminalLog = harness.logs.find(function (item) { return item.message.indexOf("终态回执失败") >= 0; });
+  assert.equal(terminalLog.detail.batchId, "batch-terminal-throw");
+});
+
+test("普通 FAILED 与 worker 异常都先执行新任务 cleanup 再回执失败", function () {
+  var failed = createHarness({ workerResult: { status: "LIVE_COMMENT_ENTRY_FAILED", reasonCode: "NO_RESULT" } });
+  var failedBridge = createBridge(failed.context);
+  failedBridge.intercept([isolatedRun("run-failed", "batch-failed")]);
+  failed.threads[0]();
+  assert.deepEqual(failed.events.slice(-2), ["cleanup", "ack:run-failed:FAILED"]);
+  assert.equal(failed.cleanupCalls.length, 1);
+
+  var thrown = createHarness({ onRun: function () { throw new Error("worker exploded"); } });
+  var thrownBridge = createBridge(thrown.context);
+  thrownBridge.intercept([isolatedRun("run-thrown", "batch-thrown")]);
+  thrown.threads[0]();
+  assert.deepEqual(thrown.events.slice(-2), ["cleanup", "ack:run-thrown:FAILED"]);
+  assert.equal(thrown.cleanupCalls.length, 1);
+  assert.equal(thrown.acknowledgements[0].result.cleanup.completed, true);
+  var workerLog = thrown.logs.find(function (item) { return item.message.indexOf("任务失败") >= 0; });
+  assert.equal(workerLog.detail.batchId, "batch-thrown");
 });
 
 test("入口热更新层失败时回落 APK 基础层", function () {
