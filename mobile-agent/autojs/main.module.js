@@ -136,6 +136,7 @@ var createHeartbeatService = localRequire("app/heartbeat.js").createHeartbeatSer
 var createBizScriptUpdater = localRequire("app/biz-script-updater.js").createBizScriptUpdater;
 var createAgentHeartbeatDaemon = localRequire("app/agent-heartbeat-daemon.js").createAgentHeartbeatDaemon;
 var createControlLoop = localRequire("app/control-loop.js").createControlLoop;
+var createNewCommentCommandBridge = localRequire("features/new-comment/command-bridge.js").createNewCommentCommandBridge;
 var createAccountWarmupCommandBridge = localRequire("app/account-warmup-command-bridge.js").createAccountWarmupCommandBridge;
 var createRemoteWakeCommandBridge = localRequire("app/remote-wake-command-bridge.js").createRemoteWakeCommandBridge;
 var createTaskScheduler = localRequire("app/task-scheduler.js").createTaskScheduler;
@@ -237,6 +238,8 @@ var context = {
 };
 
 context.bizScriptUpdater = createBizScriptUpdater(config, logger, uploader);
+context.newCommentCommandBridge = createNewCommentCommandBridge(context);
+context.newCommentCommandBridge.install();
 context.accountWarmupCommandBridge = createAccountWarmupCommandBridge(context);
 context.accountWarmupCommandBridge.install();
 context.remoteWakeCommandBridge = createRemoteWakeCommandBridge(context);
