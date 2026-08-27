@@ -207,6 +207,28 @@ test("restores stopping, stopped and failed states from stop command records", (
   assert.equal(resolveVideoWarmupCommandState(run, [stop("DONE")], "another-batch").key, "running");
 });
 
+test("does not keep a timed-out run active when its pending stop request is expired", () => {
+  const run = {
+    id: "run-timeout",
+    deviceId: "device-id-a",
+    status: "TIMED_OUT",
+    resultJson: null
+  };
+  const stop = {
+    id: "stop-expired",
+    deviceId: "device-id-a",
+    commandType: "VIDEO_WARMUP_STOP",
+    status: "PENDING",
+    expiresAt: "2026-08-07T08:58:48.141Z",
+    payloadJson: { featureKey: "video_warmup", batchId: "batch-1" },
+    resultJson: null
+  };
+
+  const state = resolveVideoWarmupCommandState(run, [stop], "batch-1", Date.parse("2026-08-07T17:05:00.000Z"));
+  assert.equal(state.active, false);
+  assert.notEqual(state.key, "stopping");
+});
+
 test("treats a RUNNING video warmup command as an active running state", () => {
   const state = resolveVideoWarmupCommandState({
     id: "run-running",

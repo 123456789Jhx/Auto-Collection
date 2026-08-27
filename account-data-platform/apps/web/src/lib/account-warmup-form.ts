@@ -295,6 +295,18 @@ export function resolveVideoWarmupCommandState(
   const expiresAtMs = runCommand.expiresAt ? Date.parse(runCommand.expiresAt) : Number.NaN;
   if (resultStatus === "STOPPED") return { key: "stopped", label: "已停止", color: "default", active: false };
 
+  // A terminal RUN record is authoritative; stale STOP records must not revive it.
+  const terminalStatus = ["FAILED", "DONE", "IGNORED", "TIMED_OUT"].includes(resultStatus)
+    ? resultStatus
+    : runCommand.status;
+  if (terminalStatus === "FAILED") return { key: "failed", label: "执行失败", color: "error", active: false };
+  if (terminalStatus === "DONE" || terminalStatus === "IGNORED") {
+    return { key: "completed", label: "已完成", color: "success", active: false };
+  }
+  if (terminalStatus === "TIMED_OUT") {
+    return { key: "expired", label: "Expired", color: "default", active: false };
+  }
+
   const stopCommand = commands.find((command) =>
     command.commandType === "VIDEO_WARMUP_STOP" &&
     command.deviceId === runCommand.deviceId &&
