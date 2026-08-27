@@ -29,8 +29,16 @@ test("stale native-base claims time out quickly without shortening business Agen
 test("allows a matching warmup stop through while its run is active", () => {
   const source = readFileSync(repositoryPath, "utf8");
 
-  expect(source).toContain("command.command_type = 'ACCOUNT_WARMUP_STOP'");
+  expect(source).toContain("command.command_type IN ('ACCOUNT_WARMUP_STOP', 'VIDEO_WARMUP_STOP')");
   expect(source).toContain("run.command_type = 'ACCOUNT_WARMUP_RUN'");
   expect(source).toContain("run.status IN ('CLAIMED', 'RUNNING')");
-  expect(source).toContain("OR command.command_type = 'ACCOUNT_WARMUP_STOP'");
+  expect(source).toContain("OR command.command_type IN ('ACCOUNT_WARMUP_STOP', 'VIDEO_WARMUP_STOP')");
+});
+
+test("allows a matching video warmup stop through while its run is active", () => {
+  const source = readFileSync(repositoryPath, "utf8");
+
+  expect(source).toContain("command.command_type IN ('ACCOUNT_WARMUP_STOP', 'VIDEO_WARMUP_STOP')");
+  expect(source).toContain("active.command_type NOT IN ('ACCOUNT_WARMUP_STOP', 'VIDEO_WARMUP_STOP')");
+  expect(source).toContain("active_stop.command_type IN ('ACCOUNT_WARMUP_STOP', 'VIDEO_WARMUP_STOP')");
 });

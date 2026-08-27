@@ -311,26 +311,26 @@ export async function claimPendingCommandByDeviceId(deviceId: string, executorTy
                 AND active.device_id = command.device_id
                 AND active.executor_type = command.executor_type
                 AND active.status IN ('CLAIMED', 'RUNNING')
-                AND active.command_type <> 'ACCOUNT_WARMUP_STOP'
+                AND active.command_type NOT IN ('ACCOUNT_WARMUP_STOP', 'VIDEO_WARMUP_STOP')
                 AND active.deleted_at IS NULL
             )
-            OR command.command_type = 'ACCOUNT_WARMUP_STOP'
+            OR command.command_type IN ('ACCOUNT_WARMUP_STOP', 'VIDEO_WARMUP_STOP')
           )
           AND (
-            command.command_type = 'ACCOUNT_WARMUP_STOP'
+            command.command_type IN ('ACCOUNT_WARMUP_STOP', 'VIDEO_WARMUP_STOP')
             OR NOT EXISTS (
               SELECT 1
               FROM mobile_commands AS active_stop
               WHERE active_stop.tenant_id = command.tenant_id
                 AND active_stop.device_id = command.device_id
                 AND active_stop.executor_type = command.executor_type
-                AND active_stop.command_type = 'ACCOUNT_WARMUP_STOP'
+                AND active_stop.command_type IN ('ACCOUNT_WARMUP_STOP', 'VIDEO_WARMUP_STOP')
                 AND active_stop.status IN ('CLAIMED', 'RUNNING')
                 AND active_stop.deleted_at IS NULL
             )
           )
           AND (
-            command.command_type <> 'ACCOUNT_WARMUP_STOP'
+            command.command_type NOT IN ('ACCOUNT_WARMUP_STOP', 'VIDEO_WARMUP_STOP')
             OR NOT EXISTS (
               SELECT 1
               FROM mobile_commands AS run
