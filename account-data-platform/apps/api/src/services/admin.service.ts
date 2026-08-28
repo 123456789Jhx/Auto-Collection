@@ -49,10 +49,17 @@ export function mapDeviceStatus<T extends {
   screenState?: string | null;
   appUiState?: string | null;
   desiredAgentState?: string | null;
+  agentLifecycleState?: string | null;
+  pollingEnabled?: boolean | null;
+  agentStateReason?: string | null;
+  agentStateChangedAt?: Date | string | null;
+  agentSessionId?: string | null;
 }>(device: T) {
   const heartbeatAgeMs = millisecondsSince(device.lastHeartbeatAt);
   const heartbeatAgeMinutes = minutesSince(device.lastHeartbeatAt);
-  const online = device.status !== "stopped" && heartbeatAgeMs !== null && heartbeatAgeMs <= AGENT_OFFLINE_AFTER_MS;
+  const lifecycleStopped = device.agentLifecycleState === "STOPPED" || device.pollingEnabled === false;
+  const lifecycleRunning = !device.agentLifecycleState || device.agentLifecycleState === "RUNNING";
+  const online = !lifecycleStopped && lifecycleRunning && device.status !== "stopped" && heartbeatAgeMs !== null && heartbeatAgeMs <= AGENT_OFFLINE_AFTER_MS;
   const effectiveStatus = online ? device.status : "offline";
   const baseConnectivity = deriveBaseConnectivity({
     lastReceivedAt: device.baseLastHeartbeatAt ?? null,
@@ -71,7 +78,7 @@ export function mapDeviceStatus<T extends {
     reportedStatus: device.status,
     heartbeatAgeMinutes,
     effectiveStatus,
-    agentStatus: device.status === "stopped" ? "stopped" : online ? device.status : "agent_unreachable",
+    agentStatus: lifecycleStopped || device.status === "stopped" ? "stopped" : online ? device.status : "agent_unreachable",
     agentLastHeartbeatAt: device.lastHeartbeatAt,
     agentHeartbeatAge: heartbeatAgeMs,
     agentReachable: online,

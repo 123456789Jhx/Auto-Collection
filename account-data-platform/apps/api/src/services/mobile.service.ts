@@ -1,7 +1,7 @@
 import { config } from "../config";
 import { parseOptionalDate } from "../lib/date";
 import { createHeartbeat } from "../repositories/heartbeat.repository";
-import { reconcileVideoWarmupRunFromHeartbeat } from "../repositories/command.repository";
+import { reconcileAgentDisconnect, reconcileVideoWarmupRunFromHeartbeat } from "../repositories/command.repository";
 import { createRuntimeLog } from "../repositories/log.repository";
 import { upsertDeviceLogFile } from "../repositories/log-file.repository";
 import { createLiveCommentAction } from "../repositories/live-comment.repository";
@@ -10,6 +10,7 @@ import { createCollectionRecord } from "../repositories/record.repository";
 import { findCurrentTask, findDeviceTaskConfig, findTaskByCode, resolveTaskConfig } from "../repositories/task.repository";
 import { findDeviceByCode, findDeviceByToken, registerDeviceByToken, resolveDeviceByToken, saveBaseConnectivityHeartbeat as saveDeviceBaseConnectivityHeartbeat, saveBaseHeartbeat as saveDeviceBaseHeartbeat, updateDeviceCapabilities } from "../repositories/device.repository";
 import { findActiveTaskAssignmentForDeviceAny } from "../repositories/task-assignment.repository";
+import { createCommand } from "./command.service";
 import { buildDeviceLiveTargetsFromTaskConfig, mergeMobileLiveTargetConfigs } from "./live-target-config.service";
 import {
   commerceCardEffectiveWorkflowSchema,
@@ -232,6 +233,11 @@ export async function saveCollectionRecord(payload: MobileCollectionRecordPayloa
 export async function saveHeartbeat(payload: MobileHeartbeatPayload, clientIp?: string, deviceToken?: string) {
   const douyinAccountName = resolveDouyinAccountName(payload);
   const rawPayload: Record<string, unknown> = { ...(payload.rawPayload ?? {}), appVersion: payload.appVersion };
+  if (payload.agentLifecycleState !== undefined) rawPayload.agentLifecycleState = payload.agentLifecycleState;
+  if (payload.pollingEnabled !== undefined) rawPayload.pollingEnabled = payload.pollingEnabled;
+  if (payload.agentStateReason !== undefined) rawPayload.agentStateReason = payload.agentStateReason;
+  if (payload.agentStateChangedAt !== undefined) rawPayload.agentStateChangedAt = payload.agentStateChangedAt;
+  if (payload.agentSessionId !== undefined) rawPayload.agentSessionId = payload.agentSessionId;
   delete rawPayload.douyinAccountName;
   if (douyinAccountName) {
     rawPayload.douyinAccountName = douyinAccountName;
@@ -266,6 +272,22 @@ export async function saveHeartbeat(payload: MobileHeartbeatPayload, clientIp?: 
     updatedBy: "mobile_agent"
   });
   const raw = rawPayload as Record<string, unknown>;
+  if (payload.agentLifecycleState === "STOPPED" || payload.pollingEnabled === false || payload.status === "stopped") {
+    const reconciled = await reconcileAgentDisconnect(
+      device.id,
+      payload.agentStateReason || "LOCAL_STOP_BUTTON",
+      payload.agentSessionId
+    );
+    if (reconciled.length > 0) {
+      await createCommand({
+        deviceId: device.deviceCode,
+        commandType: "EXIT_AGENT_APP",
+        payload: { lockScreen: false },
+        idempotencyKey: `agent-disconnect-cleanup:${device.id}:${payload.agentSessionId || "unknown"}`,
+        expiresInSeconds: 300
+      });
+    }
+  }
   if (payload.status === "idle" && typeof raw.runId === "string") {
     await reconcileVideoWarmupRunFromHeartbeat(device.id, payload.status, raw.runId);
   }

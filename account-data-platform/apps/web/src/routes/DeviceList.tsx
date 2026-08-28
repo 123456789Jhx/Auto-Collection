@@ -29,6 +29,11 @@ export type DeviceRow = {
   screenState?: "locked" | "unlocked" | "unknown" | string;
   appUiState?: "foreground" | "background" | "not_running" | "unknown" | string;
   desiredAgentState?: "running" | "stopped" | string;
+  agentLifecycleState?: "RUNNING" | "STOPPING" | "STOPPED" | "UNREACHABLE" | string;
+  pollingEnabled?: boolean;
+  agentStateReason?: string | null;
+  agentStateChangedAt?: string | null;
+  agentSessionId?: string | null;
   appVersion?: string | null;
   targetVersion?: string | null;
   enabled?: boolean;

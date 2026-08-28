@@ -1,9 +1,10 @@
 import { PlayCircleOutlined, StopOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App as AntdApp, Button, Form, Input, InputNumber, Select, Space, Table, Tag, Typography, type TableColumnsType } from "antd";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SharedVocabularySelect } from "../components/account-warmup/SharedVocabularySelect";
 import { getDevices } from "../lib/api-client";
+import { agentDisconnectMessage, isAgentCommandChannelOpen } from "../lib/agent-command-channel";
 import {
   getAccountWarmupCommands,
   saveAccountWarmupVocabulary,
@@ -36,6 +37,7 @@ type WarmupFormValues = {
 type WarmupRow = AccountWarmupMobileCommand & {
   deviceCode: string;
   deviceName: string;
+  agentReachable?: boolean;
 };
 
 function isTerminal(command: AccountWarmupMobileCommand) {
@@ -51,7 +53,7 @@ export function AccountWarmupPage() {
   const devicesQuery = useQuery({
     queryKey: ["devices"],
     queryFn: getDevices,
-    refetchInterval: 15_000
+    refetchInterval: 3_000
   });
   const commandsQuery = useQuery({
     queryKey: ["accountWarmupCommands", activeBatchId],
@@ -60,7 +62,19 @@ export function AccountWarmupPage() {
     refetchInterval: 3_000
   });
   const devices = (devicesQuery.data ?? []) as DeviceRow[];
-  const eligibleDevices = devices.filter((device) => device.enabled !== false && device.effectiveStatus !== "offline");
+  const eligibleDevices = devices.filter((device) => device.enabled !== false && device.effectiveStatus !== "offline" && isAgentCommandChannelOpen(device));
+  const agentNoticeKeys = useRef(new Set<string>());
+
+  useEffect(() => {
+    devices.forEach((device) => {
+      if (isAgentCommandChannelOpen(device)) return;
+      const key = `${device.id}:${device.agentLifecycleState || device.agentStatus || "unknown"}:${device.agentSessionId || ""}`;
+      if (agentNoticeKeys.current.has(key)) return;
+      agentNoticeKeys.current.add(key);
+      const notice = agentDisconnectMessage(device);
+      message.info(`${notice.title}：${notice.description}${notice.recovery}`);
+    });
+  }, [devices, message]);
 
   const startMutation = useMutation({
     mutationFn: async (values: WarmupFormValues) => {
@@ -147,12 +161,13 @@ export function AccountWarmupPage() {
         return {
           ...command,
           deviceCode: device?.deviceCode ?? "",
-          deviceName: device?.deviceName || device?.deviceCode || command.deviceId
+          deviceName: device?.deviceName || device?.deviceCode || command.deviceId,
+          agentReachable: device?.agentReachable
         };
       });
   }, [activeBatchId, commandsQuery.data, devices]);
-  const activeRows = rows.filter((command) => !isTerminal(command));
-  const stoppableRows = activeRows.filter((command) => !stoppingCommandIds.has(command.id));
+  const activeRows = rows.filter((command) => !isTerminal(command) && command.agentReachable !== false);
+  const stoppableRows = activeRows.filter((command) => !stoppingCommandIds.has(command.id) && command.agentReachable !== false);
   const batchStopping = activeRows.some((command) => stoppingCommandIds.has(command.id));
 
   function requestStop(commands: WarmupRow[]) {

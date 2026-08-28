@@ -51,6 +51,11 @@ export const collectorDevices = pgTable(
     screenState: varchar("screen_state", { length: 32 }).notNull().default("unknown"),
     appUiState: varchar("app_ui_state", { length: 32 }).notNull().default("unknown"),
     desiredAgentState: varchar("desired_agent_state", { length: 32 }).notNull().default("running"),
+    agentLifecycleState: varchar("agent_lifecycle_state", { length: 24 }).notNull().default("RUNNING"),
+    pollingEnabled: boolean("polling_enabled").notNull().default(true),
+    agentStateReason: varchar("agent_state_reason", { length: 64 }),
+    agentStateChangedAt: timestamp("agent_state_changed_at", { withTimezone: true }),
+    agentSessionId: varchar("agent_session_id", { length: 128 }),
     ...auditColumns
   },
   (table) => [

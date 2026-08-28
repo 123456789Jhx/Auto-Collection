@@ -12,6 +12,7 @@ import { formatDateTime } from "../../routes/DeviceList";
 export type LiveCommentEntryRow = LiveCommentEntryMobileCommand & {
   deviceCode: string;
   deviceName: string;
+  agentReachable?: boolean;
   viewState: LiveCommentEntryState;
 };
 

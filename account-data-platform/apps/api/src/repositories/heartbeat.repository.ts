@@ -13,9 +13,30 @@ export async function createHeartbeat(values: typeof deviceHeartbeats.$inferInse
     };
     const rawPayload = values.rawPayload as Record<string, unknown> | null | undefined;
     const appVersion = rawPayload && typeof rawPayload.appVersion === "string" ? rawPayload.appVersion : undefined;
+    const lifecycleState = rawPayload && typeof rawPayload.agentLifecycleState === "string"
+      ? rawPayload.agentLifecycleState
+      : values.status === "stopped" ? "STOPPED" : undefined;
+    const pollingEnabled = rawPayload && typeof rawPayload.pollingEnabled === "boolean"
+      ? rawPayload.pollingEnabled
+      : lifecycleState === "STOPPED" ? false : undefined;
+    const stateChangedAt = rawPayload && typeof rawPayload.agentStateChangedAt === "string"
+      ? new Date(rawPayload.agentStateChangedAt)
+      : undefined;
+    const sessionId = rawPayload && typeof rawPayload.agentSessionId === "string"
+      ? rawPayload.agentSessionId
+      : undefined;
     if (appVersion) {
       patch.appVersion = appVersion;
     }
+    if (lifecycleState) patch.agentLifecycleState = lifecycleState;
+    if (pollingEnabled !== undefined) patch.pollingEnabled = pollingEnabled;
+    if (rawPayload && typeof rawPayload.agentStateReason === "string") {
+      patch.agentStateReason = rawPayload.agentStateReason;
+    }
+    if (stateChangedAt && !Number.isNaN(stateChangedAt.getTime())) {
+      patch.agentStateChangedAt = stateChangedAt;
+    }
+    if (sessionId) patch.agentSessionId = sessionId;
     await db.update(collectorDevices).set(patch).where(eq(collectorDevices.id, values.deviceId));
   }
   return heartbeat;

@@ -19,6 +19,7 @@ import {
   type LiveCommentEntryRow
 } from "../components/account-warmup/LiveCommentEntryProgress";
 import { getDevices } from "../lib/api-client";
+import { agentDisconnectMessage, isAgentCommandChannelOpen } from "../lib/agent-command-channel";
 import {
   getLiveCommentEntryCommands,
   startLiveCommentEntryDevice,
@@ -74,11 +75,12 @@ export function LiveCommentEntryPage() {
   const [warningAlert, setWarningAlert] = useState<{ id: string; deviceName: string; message: string } | null>(null);
   const acknowledgedWarningIds = useRef(new Set<string>());
   const restoredBatchId = useRef("");
+  const agentNoticeKeys = useRef(new Set<string>());
 
   const devicesQuery = useQuery({
     queryKey: ["devices"],
     queryFn: getDevices,
-    refetchInterval: 15_000
+    refetchInterval: 3_000
   });
   const commandsQuery = useQuery({
     queryKey: ["liveCommentEntryCommands", activeBatchId],
@@ -115,16 +117,21 @@ export function LiveCommentEntryPage() {
         const localStopState = stoppingCommandIds.has(command.id) ? "pending" : "none";
         const persistedStopState = resolveLiveCommentEntryStopState(stopByTargetId.get(command.id));
         const effectiveStopState = persistedStopState === "none" ? localStopState : persistedStopState;
+        const viewState = resolveLiveCommentEntryState(command, effectiveStopState);
+        const agentStopped = Boolean(device && !isAgentCommandChannelOpen(device));
         return {
           ...command,
           deviceCode: device?.deviceCode || plannedDevice?.deviceCode || "",
           deviceName: device?.deviceName || plannedDevice?.deviceName || device?.deviceCode || command.deviceId,
-          viewState: resolveLiveCommentEntryState(command, effectiveStopState)
+          agentReachable: device?.agentReachable,
+          viewState: agentStopped
+            ? { ...viewState, key: "unknown", label: "Agent 已停止", color: "default", active: false, message: "手机 Agent 已停止，当前业务不再等待命令回执" }
+            : viewState
         };
       });
   }, [activeBatchId, batchPlan, commands, devices, stopByTargetId, stoppingCommandIds]);
   const activeRows = rows.filter((row) => row.viewState.active);
-  const stoppableRows = activeRows.filter((row) => row.viewState.key !== "stopping" && row.deviceCode);
+  const stoppableRows = activeRows.filter((row) => row.viewState.key !== "stopping" && row.deviceCode && row.agentReachable !== false);
   const summary = summarizeLiveCommentEntryStates(rows.map((row) => row.viewState));
   const candidates = useMemo(() => collectLiveCommentCandidates(rows), [rows]);
   const warningRows = rows.filter((row) => [
@@ -136,8 +143,18 @@ export function LiveCommentEntryPage() {
     "cleanup_failed"
   ].includes(row.viewState.key));
   const busyDeviceIds = new Set(devices.filter(hasBusinessTask).map((device) => device.id));
-  const selectableDevices = eligibleDevices.filter((device) => !busyDeviceIds.has(device.id));
+  const selectableDevices = eligibleDevices.filter((device) => !busyDeviceIds.has(device.id) && isAgentCommandChannelOpen(device));
   const selectableCodes = useMemo(() => new Set(selectableDevices.map((device) => device.deviceCode)), [selectableDevices]);
+  useEffect(() => {
+    devices.forEach((device) => {
+      if (isAgentCommandChannelOpen(device)) return;
+      const key = `${device.id}:${device.agentLifecycleState || device.agentStatus || "unknown"}:${device.agentSessionId || ""}`;
+      if (agentNoticeKeys.current.has(key)) return;
+      agentNoticeKeys.current.add(key);
+      const notice = agentDisconnectMessage(device);
+      message.info(`${notice.title}：${notice.description}${notice.recovery}`);
+    });
+  }, [devices, message]);
   useEffect(() => {
     if (!activeBatchId || restoredBatchId.current === activeBatchId || devicesQuery.isPending) return;
     const plannedCodes = batchPlan?.batchId === activeBatchId
@@ -269,10 +286,11 @@ export function LiveCommentEntryPage() {
     ? !dispatchFailures.length && rows.length >= deviceTotal && isLiveCommentEntryBatchFinished(rows.map((row) => row.viewState))
     : isLiveCommentEntryBatchFinished(rows.map((row) => row.viewState));
   const batchRestoring = Boolean(activeBatchId && (
-    commandsQuery.isPending || commandsQuery.isError || (!rows.length && commandsQuery.isFetching) ||
+    commandsQuery.isPending || (!rows.length && commandsQuery.isFetching) ||
     (devicesQuery.isFetching && rows.length > 0 && rows.some((row) => !row.deviceCode))
   ));
-  const locked = startMutation.isPending || activeRows.length > 0 || batchRestoring;
+  // A finished batch remains visible for review, but must no longer lock a new run.
+  const locked = startMutation.isPending || (!batchFinished && (activeRows.length > 0 || batchRestoring));
 
   function startNewBatch() {
     const deviceByCode = new Map(devices.map((device) => [device.deviceCode, device]));

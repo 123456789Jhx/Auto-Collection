@@ -24,6 +24,9 @@ type VideoWarmupDeviceView = {
   douyinAccountName?: string | null;
   enabled?: boolean;
   effectiveStatus: string;
+  agentLifecycleState?: string | null;
+  pollingEnabled?: boolean | null;
+  baseReachable?: boolean;
   accountProfile?: Record<string, unknown> | null;
 };
 
@@ -62,7 +65,8 @@ export const VIDEO_WARMUP_DEFAULT_KEYWORD = "药材种植";
 export const VIDEO_WARMUP_SECONDS_PER_VIDEO = 10;
 
 export function selectOnlineVideoWarmupDevices<T extends VideoWarmupDeviceView>(devices: T[]) {
-  return devices.filter((device) => device.enabled !== false && device.effectiveStatus !== "offline");
+  return devices.filter((device) => device.enabled !== false &&
+    (device.effectiveStatus !== "offline" || device.baseReachable === true || device.agentLifecycleState === "STOPPED"));
 }
 
 export function videoWarmupDeviceName(device: VideoWarmupDeviceView) {

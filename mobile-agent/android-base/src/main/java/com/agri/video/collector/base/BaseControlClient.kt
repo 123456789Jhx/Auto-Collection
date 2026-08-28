@@ -80,6 +80,18 @@ class BaseControlClient(
                     )
                 }
             })
+            .put("cleanupStages", JSONArray().also { stages ->
+                result.cleanupStages.forEach { stage ->
+                    stages.put(
+                        JSONObject()
+                            .put("name", stage.name)
+                            .put("status", stage.status)
+                            .apply {
+                                if (stage.reason.isNotBlank()) put("reason", stage.reason)
+                            },
+                    )
+                }
+            })
     }
 
     private fun normalizeExitStages(

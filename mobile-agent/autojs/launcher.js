@@ -131,6 +131,41 @@ function loadConfig() {
   }
 }
 
+var lifecycleReporter = null;
+function getLifecycleReporter() {
+  if (lifecycleReporter) return lifecycleReporter;
+  try {
+    var config = loadConfig();
+    var uploaderFactory = require(files.join(SCRIPT_DIR, "core/uploader.js"));
+    var uploader = uploaderFactory && uploaderFactory.createUploader
+      ? uploaderFactory.createUploader(config, {
+        info: function () {},
+        warn: function (message) { try { console.warn(String(message)); } catch (error) {} }
+      }, storages.create("AgriVideoCollectorLauncher"))
+      : null;
+    var reporterFactory = require(files.join(SCRIPT_DIR, "app/agent-lifecycle-reporter.js"));
+    lifecycleReporter = reporterFactory.createAgentLifecycleReporter({
+      config: config,
+      uploader: uploader,
+      storage: storages.create("AgriVideoCollectorAgentLifecycle")
+    });
+  } catch (error) {
+    lifecycleReporter = {
+      reportStopped: function () { return { success: false, message: String(error) }; },
+      reportRunning: function () { return { success: false, message: String(error) }; }
+    };
+  }
+  return lifecycleReporter;
+}
+
+function reportRunningLifecycle() {
+  try { return getLifecycleReporter().reportRunning(); } catch (error) { return { success: false, message: String(error) }; }
+}
+
+function reportStoppedLifecycle() {
+  try { return getLifecycleReporter().reportStopped("LOCAL_STOP_BUTTON"); } catch (error) { return { success: false, message: String(error) }; }
+}
+
 function findEngines(fileName) {
   var result = [];
   try {
@@ -396,6 +431,10 @@ function ensureManagedRuntime() {
   if (!accessibilityEnabled || !overlayEnabled) {
     return;
   }
+  var mainAlreadyRunning = isRunning("main.js");
+  if (!mainAlreadyRunning) {
+    reportRunningLifecycle();
+  }
   if (!isRunning("watchdog.js")) {
     startScript(WATCHDOG_PATH, TEXT.watchdog);
   }
@@ -411,6 +450,7 @@ function ensureManagedRuntime() {
 }
 
 function stopAllScripts() {
+  reportStoppedLifecycle();
   var watchdogCount = stopEngines("watchdog.js");
   var mainCount = stopEngines("main.js");
   try {

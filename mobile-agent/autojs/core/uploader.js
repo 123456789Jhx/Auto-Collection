@@ -437,6 +437,11 @@ function createUploader(config, logger, storage) {
         lastMessage: payload.lastMessage,
         douyinAccountName: payload.douyinAccountName,
         capabilities: payload.capabilities,
+        agentLifecycleState: payload.agentLifecycleState,
+        pollingEnabled: payload.pollingEnabled,
+        agentStateReason: payload.agentStateReason,
+        agentStateChangedAt: payload.agentStateChangedAt,
+        agentSessionId: payload.agentSessionId,
         expectedEndAt: payload.expectedEndAt,
         rawPayload: payload,
         reportedAt: payload.reportedAt || new Date().toISOString()

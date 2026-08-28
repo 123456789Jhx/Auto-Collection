@@ -25,6 +25,40 @@ export async function createMobileCommand(values: typeof mobileCommands.$inferIn
   return command;
 }
 
+export async function reconcileAgentDisconnect(
+  deviceId: string,
+  reason = "LOCAL_STOP_BUTTON",
+  agentSessionId?: string
+) {
+  return db.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${config.tenantId}), hashtext(${`${deviceId}:AGENT_DISCONNECT`}))`
+    );
+    const now = new Date();
+    return transaction
+      .update(mobileCommands)
+      .set({
+        status: "FAILED",
+        acknowledgedAt: now,
+        resultJson: {
+          status: "AGENT_DISCONNECTED",
+          reason,
+          ...(agentSessionId ? { agentSessionId } : {})
+        },
+        updatedAt: now,
+        updatedBy: "agent_disconnect_reconciler"
+      })
+      .where(and(
+        eq(mobileCommands.tenantId, config.tenantId),
+        eq(mobileCommands.deviceId, deviceId),
+        eq(mobileCommands.executorType, "AGENT"),
+        inArray(mobileCommands.status, ["PENDING", "FETCHED", "CLAIMED", "RUNNING"]),
+        isNull(mobileCommands.deletedAt)
+      ))
+      .returning();
+  });
+}
+
 export async function finalizePendingVideoWarmupRun(deviceId: string, batchId: string) {
   return db.transaction(async (transaction) => {
     await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${config.tenantId}), hashtext(${`${deviceId}:BASE`}))`);
@@ -345,6 +379,18 @@ export async function claimPendingCommandByDeviceId(deviceId: string, executorTy
         WHERE command.tenant_id = ${config.tenantId}
           AND command.device_id = ${deviceId}
           AND command.executor_type = ${executorType}
+          AND (
+            command.executor_type = 'BASE'
+            OR EXISTS (
+              SELECT 1
+              FROM collector_devices AS device
+              WHERE device.id = command.device_id
+                AND device.agent_lifecycle_state = 'RUNNING'
+                AND device.polling_enabled = true
+                AND device.status <> 'stopped'
+                AND device.deleted_at IS NULL
+            )
+          )
           AND command.status = 'PENDING'
           AND command.deleted_at IS NULL
           AND command.expires_at > now()

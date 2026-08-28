@@ -75,6 +75,11 @@ export const mobileHeartbeatSchema = z.object({
   lastMessage: z.string().optional(),
   douyinAccountName: z.preprocess((value) => value === "" || value === null ? undefined : value, z.string().trim().min(1).max(100).optional()),
   capabilities: commerceCardAgentCapabilitiesSchema.optional(),
+  agentLifecycleState: z.enum(["RUNNING", "STOPPING", "STOPPED", "UNREACHABLE"]).optional(),
+  pollingEnabled: z.boolean().optional(),
+  agentStateReason: z.string().trim().max(64).optional(),
+  agentStateChangedAt: z.string().optional(),
+  agentSessionId: z.string().trim().max(128).optional(),
   expectedEndAt: z.string().nullable().optional(),
   rawPayload: z.record(z.unknown()).optional(),
   reportedAt: z.string().optional()
@@ -155,6 +160,12 @@ export const exitAgentAppStageSchema = z.object({
   reason: z.string().trim().min(1).optional()
 }).strict();
 
+const exitAgentAppCleanupStageSchema = z.object({
+  name: z.enum(["EXIT_DOUYIN", "OPEN_AGENT_HOME"]),
+  status: z.enum(["SUCCESS", "SKIPPED", "FAILED"]),
+  reason: z.string().trim().min(1).optional()
+}).strict();
+
 const stopAgentExitStageSchema = exitAgentAppStageSchema.extend({
   name: z.literal("STOP_AGENT")
 });
@@ -174,7 +185,8 @@ export const exitAgentAppResultSchema = z.object({
     stopAgentExitStageSchema,
     removeAppTaskExitStageSchema,
     lockScreenExitStageSchema
-  ])
+  ]),
+  cleanupStages: z.array(exitAgentAppCleanupStageSchema).max(2).optional()
 }).strict().superRefine((value, context) => {
   const [stopAgent, removeAppTask, lockScreen] = value.stages;
   const stopOrRemoveFailed = stopAgent.status === "FAILED" || removeAppTask.status === "FAILED";

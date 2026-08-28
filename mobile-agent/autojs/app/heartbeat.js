@@ -16,6 +16,52 @@ function createHeartbeatService(context) {
     agentConnectionStore = storages.create("AgriVideoCollectorAgentConnection");
   } catch (error) {
   }
+  var lifecycleStore = null;
+  try {
+    lifecycleStore = storages.create("AgriVideoCollectorAgentLifecycle");
+  } catch (error2) {
+  }
+
+  function lifecycleRead(key, fallback) {
+    try { return lifecycleStore ? lifecycleStore.get(key, fallback) : fallback; } catch (error) { return fallback; }
+  }
+
+  function lifecycleWrite(key, value) {
+    try { if (lifecycleStore) lifecycleStore.put(key, value); } catch (error) {}
+  }
+
+  function newSessionId() {
+    try {
+      if (typeof java !== "undefined" && java.util && java.util.UUID) return String(java.util.UUID.randomUUID().toString());
+    } catch (error) {}
+    return "agent-" + Date.now() + "-" + Math.floor(Math.random() * 1000000);
+  }
+
+  function initializeRunningLifecycle() {
+    var state = String(lifecycleRead("agentLifecycleState", "") || "");
+    var sessionId = String(lifecycleRead("agentSessionId", "") || "");
+    if (state !== "RUNNING" || !sessionId) {
+      sessionId = newSessionId();
+      lifecycleWrite("agentSessionId", sessionId);
+      lifecycleWrite("agentStateChangedAt", new Date().toISOString());
+    }
+    lifecycleWrite("agentLifecycleState", "RUNNING");
+    lifecycleWrite("pollingEnabled", true);
+    lifecycleWrite("agentStateReason", "AGENT_STARTED");
+    return sessionId;
+  }
+
+  var lifecycleSessionId = initializeRunningLifecycle();
+
+  function lifecyclePayload() {
+    return {
+      agentLifecycleState: String(lifecycleRead("agentLifecycleState", "RUNNING") || "RUNNING"),
+      pollingEnabled: lifecycleRead("pollingEnabled", true) !== false,
+      agentStateReason: String(lifecycleRead("agentStateReason", "AGENT_STARTED") || "AGENT_STARTED"),
+      agentStateChangedAt: String(lifecycleRead("agentStateChangedAt", new Date().toISOString()) || ""),
+      agentSessionId: String(lifecycleRead("agentSessionId", lifecycleSessionId) || lifecycleSessionId)
+    };
+  }
 
   function recordAgentConnection(result, status, message, taskType) {
     if (!agentConnectionStore) {
@@ -238,6 +284,11 @@ function createHeartbeatService(context) {
       paused: floatyControl.state.paused,
       stopRequested: floatyControl.state.stopRequested,
       status: floatyControl.state.paused ? "paused" : "running",
+      agentLifecycleState: lifecyclePayload().agentLifecycleState,
+      pollingEnabled: lifecyclePayload().pollingEnabled,
+      agentStateReason: lifecyclePayload().agentStateReason,
+      agentStateChangedAt: lifecyclePayload().agentStateChangedAt,
+      agentSessionId: lifecyclePayload().agentSessionId,
       runId: runIdentity.runId,
       batchId: runIdentity.batchId,
       featureKey: runIdentity.featureKey,
@@ -289,6 +340,11 @@ function createHeartbeatService(context) {
       paused: floatyControl.state.paused,
       stopRequested: floatyControl.state.stopRequested,
       status: heartbeatStatus,
+      agentLifecycleState: lifecyclePayload().agentLifecycleState,
+      pollingEnabled: lifecyclePayload().pollingEnabled,
+      agentStateReason: lifecyclePayload().agentStateReason,
+      agentStateChangedAt: lifecyclePayload().agentStateChangedAt,
+      agentSessionId: lifecyclePayload().agentSessionId,
       runId: runIdentity.runId,
       batchId: runIdentity.batchId,
       featureKey: runIdentity.featureKey,

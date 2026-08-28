@@ -11,6 +11,7 @@ class BaseControlCommandExecutor(private val context: Context) {
         val businessResult: String,
         val transportStatus: String,
         val stages: List<Stage>,
+        val cleanupStages: List<Stage> = emptyList(),
     )
     data class Result(
         val success: Boolean,
@@ -71,6 +72,8 @@ class BaseControlCommandExecutor(private val context: Context) {
                 "MALFORMED_PAYLOAD",
                 listOf(
                     Stage("STOP_AGENT", "FAILED", malformedReason),
+                    Stage("EXIT_DOUYIN", "SKIPPED", "PREVIOUS_STAGE_FAILED"),
+                    Stage("OPEN_AGENT_HOME", "SKIPPED", "PREVIOUS_STAGE_FAILED"),
                     Stage("REMOVE_APP_TASK", "SKIPPED", "PREVIOUS_STAGE_FAILED"),
                     Stage("LOCK_SCREEN", "SKIPPED", "PREVIOUS_STAGE_FAILED"),
                 ),
@@ -82,6 +85,8 @@ class BaseControlCommandExecutor(private val context: Context) {
                 "MALFORMED_PAYLOAD",
                 listOf(
                     Stage("STOP_AGENT", "FAILED", "MALFORMED_LOCK_SCREEN"),
+                    Stage("EXIT_DOUYIN", "SKIPPED", "PREVIOUS_STAGE_FAILED"),
+                    Stage("OPEN_AGENT_HOME", "SKIPPED", "PREVIOUS_STAGE_FAILED"),
                     Stage("REMOVE_APP_TASK", "SKIPPED", "PREVIOUS_STAGE_FAILED"),
                     Stage("LOCK_SCREEN", "SKIPPED", "PREVIOUS_STAGE_FAILED"),
                 ),
@@ -95,10 +100,18 @@ class BaseControlCommandExecutor(private val context: Context) {
         }
         stages += stopStage
         if (stopStage.status == "FAILED") {
+            stages += Stage("EXIT_DOUYIN", "SKIPPED", "PREVIOUS_STAGE_FAILED")
+            stages += Stage("OPEN_AGENT_HOME", "SKIPPED", "PREVIOUS_STAGE_FAILED")
             stages += Stage("REMOVE_APP_TASK", "SKIPPED", "PREVIOUS_STAGE_FAILED")
             stages += Stage("LOCK_SCREEN", "SKIPPED", "PREVIOUS_STAGE_FAILED")
             return@withLock exitFailure("STOP_AGENT_FAILED", stages)
         }
+
+        val cleanupResult = AgentDisconnectCleanupCoordinator(context).run(
+            deviceId = BaseConnectivityIdentity.load(context)?.deviceId ?: context.packageName,
+            stopAlreadyPerformed = true,
+        )
+        stages += cleanupResult.stages.filter { it.name != "STOP_AGENT" }
 
         val removeStage = when (AppUiForegroundController(context).removeTask()) {
             AppUiForegroundController.Result.REMOVED_EXISTING_TASK -> Stage("REMOVE_APP_TASK", "SUCCESS")
@@ -170,6 +183,7 @@ class BaseControlCommandExecutor(private val context: Context) {
                 businessResult = businessResult,
                 transportStatus = transportStatus,
                 stages = canonicalStages(stages),
+                cleanupStages = stages.filter { it.name == "EXIT_DOUYIN" || it.name == "OPEN_AGENT_HOME" },
             ),
         )
     }
@@ -178,6 +192,8 @@ class BaseControlCommandExecutor(private val context: Context) {
         val byName = stages.associateBy { it.name }
         return listOf(
             byName["STOP_AGENT"] ?: Stage("STOP_AGENT", "SKIPPED", "PREVIOUS_STAGE_FAILED"),
+            byName["EXIT_DOUYIN"] ?: Stage("EXIT_DOUYIN", "SKIPPED", "PREVIOUS_STAGE_FAILED"),
+            byName["OPEN_AGENT_HOME"] ?: Stage("OPEN_AGENT_HOME", "SKIPPED", "PREVIOUS_STAGE_FAILED"),
             byName["REMOVE_APP_TASK"] ?: Stage("REMOVE_APP_TASK", "SKIPPED", "PREVIOUS_STAGE_FAILED"),
             byName["LOCK_SCREEN"] ?: Stage("LOCK_SCREEN", "SKIPPED", "PREVIOUS_STAGE_FAILED"),
         )

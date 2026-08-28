@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App as AntdApp, Button, Checkbox, Input, Space, Tag, Typography } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getDevices } from "../lib/api-client";
+import { agentDisconnectMessage, isAgentCommandChannelOpen } from "../lib/agent-command-channel";
 import {
   getAccountWarmupCommands,
   startAccountWarmupDevice,
@@ -29,6 +30,7 @@ import type { DeviceRow } from "./DeviceList";
 type VideoWarmupRow = AccountWarmupMobileCommand & {
   deviceCode: string;
   deviceName: string;
+  agentReachable?: boolean;
 };
 
 function hasReportedTask(device: DeviceRow) {
@@ -44,10 +46,11 @@ export function VideoWarmupPage() {
   const [selectedDeviceCodes, setSelectedDeviceCodes] = useState<string[]>([]);
   const [stoppingCommandIds, setStoppingCommandIds] = useState<Set<string>>(() => new Set());
   const restoredBatchId = useRef("");
+  const agentNoticeKeys = useRef(new Set<string>());
   const devicesQuery = useQuery({
     queryKey: ["devices"],
     queryFn: getDevices,
-    refetchInterval: 15_000
+    refetchInterval: 3_000
   });
   const commandsQuery = useQuery({
     queryKey: ["videoWarmupCommands"],
@@ -70,7 +73,8 @@ export function VideoWarmupPage() {
         return {
           ...command,
           deviceCode: device?.deviceCode ?? "",
-          deviceName: device?.deviceName || device?.deviceCode || command.deviceId
+          deviceName: device?.deviceName || device?.deviceCode || command.deviceId,
+          agentReachable: device?.agentReachable
         };
       });
   }, [activeBatchId, commands, devices]);
@@ -81,16 +85,35 @@ export function VideoWarmupPage() {
     command.payloadJson?.batchId === activeBatchId), [activeBatchId, commands]);
   const stateFor = (row: VideoWarmupRow) => {
     const restored = resolveVideoWarmupCommandState(row, videoStopCommands, activeBatchId);
+    const device = devices.find((item) => item.id === row.deviceId);
+    if (device && !isAgentCommandChannelOpen(device)) {
+      return { key: "agent_disconnected", label: "Agent 已停止", color: "default", active: false };
+    }
     return stoppingCommandIds.has(row.id) && restored.active
       ? { key: "stopping", label: "停止中", color: "warning", active: true }
       : restored;
   };
-  const activeRows = batchRows.filter((row) => stateFor(row).active);
-  const stoppableRows = activeRows.filter((row) => stateFor(row).key !== "stopping");
+  const activeRows = batchRows.filter((row) => stateFor(row).active && row.agentReachable !== false);
+  const stoppableRows = activeRows.filter((row) => stateFor(row).key !== "stopping" && row.agentReachable !== false);
   const busyDeviceIds = new Set(devices.filter(hasReportedTask).map((device) => device.id));
-  const selectableDevices = onlineDevices.filter((device) => !busyDeviceIds.has(device.id));
+  const selectableDevices = onlineDevices.filter((device) => !busyDeviceIds.has(device.id) && isAgentCommandChannelOpen(device));
   const selectableCodes = selectableDevices.map((device) => device.deviceCode);
   const batchRestoring = Boolean(activeBatchId && commandsQuery.isPending);
+
+  useEffect(() => {
+    devices.forEach((device) => {
+      const closed = !isAgentCommandChannelOpen(device);
+      const key = `${device.id}:${device.agentLifecycleState || device.agentStatus || "unknown"}:${device.agentSessionId || ""}`;
+      if (closed && !agentNoticeKeys.current.has(key)) {
+        agentNoticeKeys.current.add(key);
+        const notice = agentDisconnectMessage(device);
+        message.info(`${notice.title}：${notice.description}${notice.recovery}`);
+      }
+      if (!closed) {
+        [...agentNoticeKeys.current].filter((item) => item.startsWith(`${device.id}:`)).forEach((item) => agentNoticeKeys.current.delete(item));
+      }
+    });
+  }, [devices, message]);
 
   useEffect(() => {
     if (!activeBatchId || !batchRows.length || restoredBatchId.current === activeBatchId) return;
@@ -239,13 +262,13 @@ export function VideoWarmupPage() {
             <Space direction="vertical" size="small" style={{ width: "100%" }}>
               {onlineDevices.map((device) => {
                 const row = rowByDeviceId.get(device.id);
-                const available = true;
+                const available = isAgentCommandChannelOpen(device);
                 const busy = busyDeviceIds.has(device.id) && !row;
                 const rowState = row ? stateFor(row) : null;
                 const displayName = videoWarmupDeviceName(device);
                 const status = row
                   ? rowState!
-                  : { label: busy ? "任务占用" : available ? "可用" : "不可用", color: busy ? "warning" : available ? "success" : "default" };
+                  : { label: busy ? "任务占用" : available ? "可用" : "Agent 已停止", color: busy ? "warning" : available ? "success" : "default" };
                 return (
                   <Space key={device.id} size="middle" wrap>
                     <Checkbox
