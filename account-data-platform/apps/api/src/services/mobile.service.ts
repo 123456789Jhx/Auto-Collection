@@ -1,6 +1,7 @@
 import { config } from "../config";
 import { parseOptionalDate } from "../lib/date";
 import { createHeartbeat } from "../repositories/heartbeat.repository";
+import { reconcileVideoWarmupRunFromHeartbeat } from "../repositories/command.repository";
 import { createRuntimeLog } from "../repositories/log.repository";
 import { upsertDeviceLogFile } from "../repositories/log-file.repository";
 import { createLiveCommentAction } from "../repositories/live-comment.repository";
@@ -243,7 +244,7 @@ export async function saveHeartbeat(payload: MobileHeartbeatPayload, clientIp?: 
     await updateDeviceCapabilities(device.id, payload.capabilities);
     rawPayload.capabilities = payload.capabilities;
   }
-  return createHeartbeat({
+  const heartbeat = await createHeartbeat({
     tenantId: config.tenantId,
     taskId: task?.id,
     deviceId: device.id,
@@ -264,6 +265,11 @@ export async function saveHeartbeat(payload: MobileHeartbeatPayload, clientIp?: 
     createdBy: "mobile_agent",
     updatedBy: "mobile_agent"
   });
+  const raw = rawPayload as Record<string, unknown>;
+  if (payload.status === "idle" && typeof raw.runId === "string") {
+    await reconcileVideoWarmupRunFromHeartbeat(device.id, payload.status, raw.runId);
+  }
+  return heartbeat;
 }
 
 export async function saveBaseHeartbeat(payload: MobileBaseHeartbeatPayload, clientIp?: string, deviceToken?: string) {

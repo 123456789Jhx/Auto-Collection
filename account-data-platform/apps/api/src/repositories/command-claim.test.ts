@@ -64,3 +64,11 @@ test("reconciles expired video stop commands before listing admin progress", () 
   expect(source).toContain("status = 'TIMED_OUT'");
   expect(source).toContain("expires_at <= now()");
 });
+
+test("reconciles an active video run only from an idle heartbeat carrying its runId", () => {
+  const source = readFileSync(repositoryPath, "utf8");
+
+  expect(source).toContain("reconcileVideoWarmupRunFromHeartbeat");
+  expect(source).toContain("heartbeatStatus !== 'idle'");
+  expect(source).toContain("run.id::text = runId");
+});

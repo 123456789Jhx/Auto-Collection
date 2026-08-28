@@ -65,6 +65,24 @@ export async function findActiveVideoWarmupRun(deviceId: string, batchId?: strin
   return command ?? null;
 }
 
+export async function reconcileVideoWarmupRunFromHeartbeat(deviceId: string, heartbeatStatus: string, runId: string) {
+  if (heartbeatStatus !== 'idle' || !runId) return null;
+  const now = new Date();
+  const [run] = await db.update(mobileCommands).set({
+    status: "DONE",
+    acknowledgedAt: now,
+    resultJson: { status: "STOPPED", reason: "agent_idle_heartbeat", runId },
+    updatedAt: now,
+    updatedBy: "heartbeat_reconciler"
+  }).where(and(
+    eq(mobileCommands.tenantId, config.tenantId), eq(mobileCommands.deviceId, deviceId),
+    eq(mobileCommands.id, runId), eq(mobileCommands.commandType, "ACCOUNT_WARMUP_RUN"),
+    inArray(mobileCommands.status, ["PENDING", "FETCHED", "CLAIMED", "RUNNING"]),
+    sql`${mobileCommands.payloadJson} ->> 'featureKey' = 'video_warmup'`, isNull(mobileCommands.deletedAt)
+  )).returning();
+  return run ?? null;
+}
+
 export async function findBaseCommandForAck(commandId: string, deviceId: string, claimToken: string) {
   const [command] = await db
     .select()
