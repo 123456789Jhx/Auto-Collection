@@ -70,5 +70,5 @@ test("reconciles an active video run only from an idle heartbeat carrying its ru
 
   expect(source).toContain("reconcileVideoWarmupRunFromHeartbeat");
   expect(source).toContain("heartbeatStatus !== 'idle'");
-  expect(source).toContain("run.id::text = runId");
+  expect(source).toContain("eq(mobileCommands.id, runId)");
 });
