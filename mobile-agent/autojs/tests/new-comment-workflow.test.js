@@ -58,7 +58,7 @@ function runIsolated(runtime, payload, received, overrides) {
   return { result: workflow.run(payload, { shouldStop: function () { return false; } }), stages: stages };
 }
 
-test("workflow waits for stop after entering without post-entry business actions", function () {
+test("workflow filters a qualifying room then waits for stop", function () {
   var entered = false;
   var stopRequested = false;
   var waitCount = 0;
@@ -66,10 +66,8 @@ test("workflow waits for stop after entering without post-entry business actions
   var cleanupCalls = 0;
   var runtime = runtimeFixture({
     detectPlatformVerification: function () { throw new Error("verification must not run"); },
-    isLiveRoom: function () {
-      entered = true;
-      return true;
-    },
+    isLiveRoom: function () { entered = true; return true; },
+    readViewerCount: function () { runtime.actions.push("readViewerCount"); return { count: 350 }; },
     waitRandom: function () {
       waitCount += 1;
       if (waitCount >= 5) {
@@ -103,7 +101,7 @@ test("workflow waits for stop after entering without post-entry business actions
   });
 
   assert.deepEqual(result, { status: "STOPPED" });
-  assert.equal(runtime.actions.includes("readViewerCount"), false);
+  assert.equal(runtime.actions.includes("readViewerCount"), true);
   assert.equal(runtime.actions.includes("nextLive"), false);
   assert.equal(captureCalls, 0);
   assert.equal(cleanupCalls, 0);
@@ -137,6 +135,61 @@ test("workflow does not fail the task when the live-room click reports failure",
   assert.equal(opens, 1);
   assert.equal(runtime.actions.includes("restartSearch:关键词"), false);
   assert.equal(runtime.actions.includes("isLiveRoom"), false);
+});
+
+test("workflow switches rooms until the viewer threshold is met", function () {
+  var counts = [8500, 12000];
+  var switches = 0;
+  var waitCalls = 0;
+  var stopRequested = false;
+  var runtime = runtimeFixture({
+    readViewerCount: function () { runtime.actions.push("readViewerCount"); return { count: counts.shift() }; },
+    nextLive: function () { switches += 1; runtime.actions.push("nextLive"); return true; },
+    waitRandom: function () {
+      waitCalls += 1;
+      if (waitCalls >= 6) stopRequested = true;
+      runtime.actions.push("waitRandom");
+      return true;
+    }
+  });
+  var result = feature("workflow").createIsolatedLiveCommentWorkflow({ runtime: runtime }).run(
+    { targetKeyword: "关键词", minViewerCount: 10000, maxRoomAttempts: 3 },
+    { shouldStop: function () { return stopRequested; } }
+  );
+  assert.equal(result.status, "STOPPED");
+  assert.equal(switches, 1);
+  assert.equal(runtime.actions.filter(function (item) { return item === "readViewerCount"; }).length, 2);
+});
+
+test("workflow reports NO_ROOM_MATCHED at the configured room limit", function () {
+  var switches = 0;
+  var runtime = runtimeFixture({
+    readViewerCount: function () { return { count: null }; },
+    nextLive: function () { switches += 1; return true; },
+    waitRandom: function () { return true; }
+  });
+  var result = feature("workflow").createIsolatedLiveCommentWorkflow({ runtime: runtime }).run(
+    { targetKeyword: "关键词", minViewerCount: 300, maxRoomAttempts: 3 },
+    { shouldStop: function () { return false; } }
+  );
+  assert.equal(result.status, "LIVE_COMMENT_ENTRY_FAILED");
+  assert.equal(result.reasonCode, "NO_ROOM_MATCHED");
+  assert.equal(result.attemptedRoomCount, 3);
+  assert.equal(switches, 2);
+});
+
+test("workflow stops immediately when the room switch receives a stop request", function () {
+  var stopped = false;
+  var runtime = runtimeFixture({
+    readViewerCount: function () { return { count: 1 }; },
+    nextLive: function () { stopped = true; return true; },
+    waitRandom: function () { return true; }
+  });
+  var result = feature("workflow").createIsolatedLiveCommentWorkflow({ runtime: runtime }).run(
+    { targetKeyword: "关键词", minViewerCount: 300 },
+    { shouldStop: function () { return stopped; } }
+  );
+  assert.deepEqual(result, { status: "STOPPED" });
 });
 
 test("workflow stops around actions without platform verification scans", function () {

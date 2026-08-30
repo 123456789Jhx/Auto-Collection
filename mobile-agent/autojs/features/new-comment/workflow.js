@@ -64,6 +64,45 @@ function createIsolatedLiveCommentWorkflow(options) {
     return { status: "STOPPED" };
   }
 
+  function viewerCount(value) {
+    value = value && value.value !== undefined ? value.value : value;
+    if (!value || value.count === undefined || value.count === null) return null;
+    var count = Number(value.count);
+    return isFinite(count) ? Math.floor(count) : null;
+  }
+
+  function screenRooms(config, control) {
+    var minimum = Number(config.minViewerCount);
+    minimum = isFinite(minimum) ? Math.max(0, Math.floor(minimum)) : 300;
+    var configuredLimit = Number(config.maxRoomAttempts || config.maxRooms || 10);
+    var maxAttempts = isFinite(configuredLimit) ? Math.max(1, Math.min(50, Math.floor(configuredLimit))) : 10;
+    var attempted = 0;
+    while (attempted < maxAttempts) {
+      if (stopped(control)) return { stopped: true };
+      attempted += 1;
+      stage("SCREENING_VIEWER_COUNT", { attempt: attempted, maxAttempts: maxAttempts });
+      var read = call("readViewerCount", "SCREENING_VIEWER_COUNT", [], control);
+      if (read.stopped) return { stopped: true };
+      var count = read.failed ? null : viewerCount(read.value);
+      if (count !== null && count >= minimum) {
+        stage("ROOM_FILTER_PASSED", { attempt: attempted, viewerCount: count, minViewerCount: minimum });
+        return { passed: true, attemptedRoomCount: attempted, viewerCount: count };
+      }
+      if (attempted >= maxAttempts) break;
+      stage("SWITCHING_LIVE_ROOM", {
+        attempt: attempted,
+        viewerCount: count,
+        reasonCode: count === null ? "VIEWER_COUNT_UNAVAILABLE" : "VIEWER_COUNT_BELOW_THRESHOLD"
+      });
+      var next = call("nextLive", "SWITCHING_LIVE_ROOM", [], control);
+      if (next.stopped) return { stopped: true };
+      if (next.failed) continue;
+      var settle = wait(control, 1000, 2000);
+      if (settle.stopped) return { stopped: true };
+    }
+    return { failed: true, reasonCode: "NO_ROOM_MATCHED", attemptedRoomCount: attempted, maxAttempts: maxAttempts };
+  }
+
   function run(payload, control) {
     payload = payload || {};
     control = control || {};
@@ -96,8 +135,20 @@ function createIsolatedLiveCommentWorkflow(options) {
     stage("OPENING_FIRST_RESULT", { attempt: 1 });
     result = call("openFirstLive", "OPENING_FIRST_RESULT", [], control);
     if (result.stopped) return { status: "STOPPED" };
-    result = wait(control, 1000, 3000);
+    result = wait(control, 3000, 3000);
     if (result.stopped) return { status: "STOPPED" };
+    var screening = screenRooms(payload, control);
+    if (screening.stopped) return { status: "STOPPED" };
+    if (screening.failed) {
+      stage("FAILED", screening);
+      return {
+        status: "LIVE_COMMENT_ENTRY_FAILED",
+        failedStage: "SCREENING_VIEWER_COUNT",
+        reasonCode: screening.reasonCode,
+        message: "连续筛选 " + screening.attemptedRoomCount + " 个直播间仍未达到人数阈值",
+        attemptedRoomCount: screening.attemptedRoomCount
+      };
+    }
     stage("ENTERED", { attempt: 1 });
     return waitForStop(control);
   }
