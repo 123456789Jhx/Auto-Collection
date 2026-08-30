@@ -42,10 +42,24 @@ function createIsolatedLiveCommentWorkflow(options) {
     return call("waitRandom", "WAITING", [min, max], control);
   }
 
+  function fallbackSleep(min, max) {
+    var milliseconds = Math.floor(min + Math.random() * (max - min + 1));
+    try {
+      if (typeof runtime.sleep === "function") {
+        runtime.sleep(milliseconds);
+        return;
+      }
+    } catch (error) {}
+    try {
+      if (typeof sleep === "function") sleep(milliseconds);
+    } catch (error2) {}
+  }
+
   function waitForStop(control) {
     while (!stopped(control)) {
       // Waiting is not a business operation. Timer errors must not turn an entered room into a failed task.
-      wait(control, 500, 800);
+      var result = wait(control, 500, 800);
+      if (result.failed) fallbackSleep(500, 800);
     }
     return { status: "STOPPED" };
   }

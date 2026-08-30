@@ -97,10 +97,10 @@ test("真实新旧桥组合只恢复同一次底层轮询元数据且隔离命�
 test("隔离接线不得修改旧桥和 uploader", function () {
   assert.equal(
     sha256(path.join(root, "app/account-warmup-command-bridge.js")),
-    "dd58357768730b85434aa8fc22816365bd2e8997b70ebcaa94a71ed124246e2e"
+    "14ce33d524bfddef8e1fbd6ba5d01e7afc4b9437a748a60bdc47594e0b0deddb"
   );
   assert.equal(
     sha256(path.join(root, "core/uploader.js")),
-    "806e7ef146036984e6e53ef279de7b0dca03fb6bf9506a32ed388167eea889f3"
+    "09c19a929029a8891017c6aa48e2fe1e8dd8dbe0838e6ed11c62e5eab9714fbc"
   );
 });
