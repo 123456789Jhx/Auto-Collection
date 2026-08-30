@@ -1,6 +1,6 @@
 param(
   [string]$AutoJs6Root = "D:\DevTools\Sources\AutoJs6",
-  [string]$JavaHome = "D:\Javasource\javaTools\jdk-21.0.10",
+  [string]$JavaHome = "D:\Javasource\javaTools\jdk-17.0.19+10",
   [string]$AndroidSdkRoot = "D:\DevTools\Android\Sdk",
   [string]$KeystorePath = "D:\DevTools\Android\Keystores\agri-video-collector-dev.jks",
   [string]$OutputDir = "dist\apk",
@@ -906,7 +906,7 @@ $env:Path = "$JavaHome\bin;$AndroidSdkRoot\platform-tools;$AndroidSdkRoot\cmdlin
 
 Push-Location $AutoJs6Root
 try {
-  .\gradlew.bat app:assembleInrtRelease --no-daemon --stacktrace
+  .\gradlew.bat app:assembleInrtRelease --no-daemon --stacktrace '-Dorg.gradle.jvmargs=-Xms512m -Xmx2g -Dkotlin.daemon.jvm.options=-Xmx1g -Dfile.encoding=UTF-8 -XX:+UseG1GC'
   Assert-LastCommandSucceeded "Gradle build"
 } finally {
   Pop-Location
