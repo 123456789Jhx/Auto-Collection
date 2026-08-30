@@ -45,6 +45,7 @@ import { singleInterfacePublishRoutes } from "./single-interface-publish";
 import { guardLegacyMobileCommand, guardLegacyTaskAssignment } from "../services/legacy-freeze";
 import { deleteAccountWarmupVocabulary, getAccountWarmupVocabulary, saveAccountWarmupVocabulary } from "../services/account-warmup-vocabulary.service";
 import { deviceRecoveryRoutes } from "../features/device-recovery/device-recovery.runtime";
+import { confirmLiveCommentCandidates, getPendingLiveCommentCandidates } from "../services/live-comment-candidate.service";
 
 const adminLoginSchema = z.object({
   username: z.string().trim().min(1),
@@ -58,6 +59,11 @@ const liveTargetDeviceBindingsSchema = z.object({
   defaultEnabled: z.boolean().default(false),
   expectedRevision: z.number().int().positive().optional()
 });
+
+const liveCommentCandidateConfirmSchema = z.object({
+  batchId: z.string().uuid(),
+  candidateIds: z.array(z.string().uuid()).max(200)
+}).strict();
 
 function liveTargetMutationError(c: Context<{ Variables: AdminVariables }>, error: unknown) {
   if (error instanceof ConfigRevisionConflictError || error instanceof ConfigRevisionRequiredError) {
@@ -124,6 +130,16 @@ adminRoutes.get("/account-warmup/vocabulary", async (c) => {
     return validationError(c, parsed.error);
   }
   return c.json(await getAccountWarmupVocabulary(parsed.data));
+});
+adminRoutes.get("/live-comment-candidates", async (c) => {
+  const batchId = z.string().uuid().safeParse(c.req.query("batchId"));
+  if (!batchId.success) return validationError(c, batchId.error);
+  return c.json(await getPendingLiveCommentCandidates(batchId.data));
+});
+adminRoutes.post("/live-comment-candidates/confirm", async (c) => {
+  const parsed = liveCommentCandidateConfirmSchema.safeParse(await c.req.json());
+  if (!parsed.success) return validationError(c, parsed.error);
+  return c.json(await confirmLiveCommentCandidates(parsed.data.batchId, parsed.data.candidateIds));
 });
 adminRoutes.post("/account-warmup/vocabulary", async (c) => {
   let body: unknown;

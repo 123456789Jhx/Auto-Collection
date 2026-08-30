@@ -10,7 +10,7 @@ import {
   upsertAccountWarmupVocabulary
 } from "../repositories/account-warmup-vocabulary.repository";
 
-function normalizeVocabularyValue(value: string) {
+export function normalizeVocabularyValue(value: string) {
   return value.normalize("NFKC").toLowerCase();
 }
 

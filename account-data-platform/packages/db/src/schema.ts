@@ -665,6 +665,36 @@ export const accountWarmupVocabulary = pgTable(
   ]
 );
 
+export const liveCommentCandidates = pgTable(
+  "live_comment_candidates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    batchId: uuid("batch_id").notNull(),
+    taskId: uuid("task_id").references(() => collectionTasks.id),
+    commandId: uuid("command_id").notNull().references(() => mobileCommands.id),
+    deviceId: uuid("device_id").notNull().references(() => collectorDevices.id),
+    commentText: varchar("comment_text", { length: 100 }).notNull(),
+    normalizedValue: text("normalized_value").notNull(),
+    sourcesJson: jsonb("sources_json").$type<Record<string, unknown>[]>().notNull().default([]),
+    status: varchar("status", { length: 16 }).notNull().default("PENDING"),
+    vocabularyEntryId: uuid("vocabulary_entry_id").references(() => accountWarmupVocabulary.id),
+    importedAt: timestamp("imported_at", { withTimezone: true }),
+    ...auditColumns
+  },
+  (table) => [
+    uniqueIndex("uniq_live_comment_candidates_tenant_batch_normalized").on(
+      table.tenantId,
+      table.batchId,
+      table.normalizedValue
+    ),
+    index("idx_live_comment_candidates_tenant_batch_status").on(
+      table.tenantId,
+      table.batchId,
+      table.status
+    )
+  ]
+);
+
 export const collectorDevicesRelations = relations(collectorDevices, ({ many }) => ({
   records: many(collectionRecords),
   heartbeats: many(deviceHeartbeats),
@@ -676,7 +706,8 @@ export const collectorDevicesRelations = relations(collectorDevices, ({ many }) 
   updateEvents: many(agentUpdateEvents),
   taskConfigs: many(deviceTaskConfigs),
   liveTargetBindings: many(liveTargetDeviceBindings),
-  featureRolloutAllowlist: many(featureRolloutDeviceAllowlist)
+  featureRolloutAllowlist: many(featureRolloutDeviceAllowlist),
+  liveCommentCandidates: many(liveCommentCandidates)
 }));
 
 export const collectionTasksRelations = relations(collectionTasks, ({ many }) => ({
@@ -687,7 +718,8 @@ export const collectionTasksRelations = relations(collectionTasks, ({ many }) =>
   commands: many(mobileCommands),
   taskAssignments: many(deviceTaskAssignments),
   liveCommentActions: many(liveCommentActions),
-  deviceConfigs: many(deviceTaskConfigs)
+  deviceConfigs: many(deviceTaskConfigs),
+  liveCommentCandidates: many(liveCommentCandidates)
 }));
 
 export const agentVersionsRelations = relations(agentVersions, ({ many }) => ({

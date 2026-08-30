@@ -33,6 +33,7 @@ import { supersededCommandTypesFor } from "./command-policy";
 import { desiredAgentStateForCommand, supersededAgentControlCommandsFor } from "./agent-control";
 import type { CommandExecutor } from "./command-executor";
 import { buildCanonicalSha256 } from "./live-target-config.service";
+import { captureLiveCommentCandidates } from "./live-comment-candidate.service";
 
 export class BaseCommandAckValidationError extends Error {
   readonly details: Record<string, unknown>;
@@ -358,6 +359,13 @@ export async function acknowledgeCommand(commandId: string, payload: MobileComma
     status: payload.status,
     result: payload.result ?? {},
     payloadHash: buildCanonicalSha256(payload)
+  });
+  await captureLiveCommentCandidates({
+    id: result.command.id,
+    taskId: result.command.taskId ?? null,
+    deviceId: result.command.deviceId ?? device.id,
+    payloadJson: result.command.payloadJson,
+    resultJson: result.command.resultJson
   });
   return result;
 }
