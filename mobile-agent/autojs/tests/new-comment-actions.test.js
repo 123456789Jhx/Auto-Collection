@@ -2,10 +2,10 @@
 
 var test = require("node:test");
 var assert = require("node:assert/strict");
-var contract = require("../features/new-comment/contract.js");
+var contract = require("../core/action-contract.js");
 var layout = require("../features/new-comment/douyin-layout.js");
-var createGestureActions = require("../features/new-comment/gesture-actions.js").createGestureActions;
-var createScreenActions = require("../features/new-comment/screen-actions.js").createScreenActions;
+var createGestureActions = require("../core/gesture-actions.js").createGestureActions;
+var createScreenActions = require("../core/screen-actions.js").createScreenActions;
 
 var STOP_RESULT = {
   success: false,
@@ -48,8 +48,7 @@ function createScreenDeps(overrides) {
   return deps;
 }
 
-test("contract exposes the isolated feature key and exact stop failure", function () {
-  assert.equal(contract.FEATURE_KEY, "isolated_live_comment_entry");
+test("contract exposes the exact stop failure", function () {
   assert.deepEqual(contract.stopped(), STOP_RESULT);
 });
 
