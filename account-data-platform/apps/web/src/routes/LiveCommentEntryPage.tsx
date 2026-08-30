@@ -12,7 +12,7 @@ import {
   Typography
 } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LiveCommentCandidates } from "../components/account-warmup/LiveCommentCandidates";
+import { LiveCommentCandidates } from "../components/live-comment-entry/LiveCommentCandidates";
 import {
   LiveCommentEntryProgress,
   liveCommentEntryResultText,
@@ -35,11 +35,9 @@ import {
   writeLiveCommentEntryBatchPlan,
   type LiveCommentEntryBatchPlan
 } from "../lib/live-comment-entry-batch";
-import { collectLiveCommentCandidates } from "../lib/live-comment-entry-candidates";
 import {
   buildLiveCommentEntryStopCommands,
   getRestoredLiveCommentEntryWarningIds,
-  isLiveCommentEntryCaptureCompleted,
   readActiveLiveCommentEntryBatchId,
   readLastLiveCommentEntryInput,
   isLiveCommentEntryBatchFinished,
@@ -133,7 +131,6 @@ export function LiveCommentEntryPage() {
   const activeRows = rows.filter((row) => row.viewState.active);
   const stoppableRows = activeRows.filter((row) => row.viewState.key !== "stopping" && row.deviceCode && row.agentReachable !== false);
   const summary = summarizeLiveCommentEntryStates(rows.map((row) => row.viewState));
-  const candidates = useMemo(() => collectLiveCommentCandidates(rows), [rows]);
   const warningRows = rows.filter((row) => [
     "platform_verification",
     "viewer_count_failed",
@@ -405,11 +402,7 @@ export function LiveCommentEntryPage() {
       <LiveCommentCandidates
         key={activeBatchId || "no-batch"}
         batchId={activeBatchId}
-        candidates={candidates}
         batchFinished={batchFinished}
-        deviceTotal={deviceTotal}
-        capturedCount={rows.filter(isLiveCommentEntryCaptureCompleted).length}
-        failedCount={summary.failed + dispatchFailures.length}
       />
     </div>
   );

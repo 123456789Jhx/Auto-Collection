@@ -57,29 +57,26 @@ test("shows inputs, multi-device control, progress and scoped stop actions", () 
 
 test("shows merged candidates with manual selection and explicit vocabulary upload", () => {
   const pageSource = fs.readFileSync(path.join(webRoot, "src/routes/LiveCommentEntryPage.tsx"), "utf8");
-  const candidateSource = fs.readFileSync(path.join(webRoot, "src/components/account-warmup/LiveCommentCandidates.tsx"), "utf8");
-  const helperSource = fs.readFileSync(path.join(webRoot, "src/lib/live-comment-entry-candidates.ts"), "utf8");
+  const candidateSource = fs.readFileSync(path.join(webRoot, "src/components/live-comment-entry/LiveCommentCandidates.tsx"), "utf8");
   const clientSource = fs.readFileSync(path.join(webRoot, "src/lib/api-client-live-comment-entry.ts"), "utf8");
 
-  assert(pageSource.includes("collectLiveCommentCandidates(rows)"));
-  assert(pageSource.includes("isLiveCommentEntryBatchFinished"));
+  assert(pageSource.includes("components/live-comment-entry/LiveCommentCandidates"));
+  assert(candidateSource.includes("getLiveCommentCandidates"));
   for (const text of [
     "本批候选评论",
-    "默认不选择",
-    "全选可入库评论",
-    "将所选评论加入评论词库",
-    "用户名 / 来源设备 / 页",
+    "设备回传后进入待入库",
+    "全选待入库",
+    "来源（设备 / 房间 / 轮次）",
     "批次抓取完成",
-    "所选评论入库完成",
-    "重试失败的"
+    "已入库",
+    "确认入库"
   ]) {
     assert(candidateSource.includes(text), `missing candidate workflow text: ${text}`);
   }
   assert(candidateSource.includes("useState<string[]>([])"));
-  assert(candidateSource.includes("onConfirm={uploadSelected}"));
-  assert(helperSource.includes("Promise.allSettled"));
-  assert(clientSource.includes('"/admin/account-warmup/vocabulary"'));
-  assert(clientSource.includes("relatedTerms: []"));
+  assert(candidateSource.includes("confirmLiveCommentCandidates"));
+  assert(clientSource.includes('"/admin/live-comment-candidates"'));
+  assert(clientSource.includes('"/admin/live-comment-candidates/confirm"'));
 });
 
 test("persists a batch before dispatch so timed-out responses remain recoverable", () => {

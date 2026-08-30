@@ -45,3 +45,22 @@ export function saveLiveCommentEntryComments(comments: string[]) {
     comments
   });
 }
+
+export type PendingLiveCommentCandidate = {
+  id: string;
+  batchId: string;
+  commentText: string;
+  status: "PENDING" | "IMPORTED";
+  sourcesJson: Array<{ deviceId?: string; roomKey?: string; pageIndex?: number | null; userName?: string }>;
+};
+
+export function getLiveCommentCandidates(batchId: string) {
+  return request<PendingLiveCommentCandidate[]>("/admin/live-comment-candidates", { batchId });
+}
+
+export function confirmLiveCommentCandidates(batchId: string, candidateIds: string[]) {
+  return mutate<{ selectedCount: number; importedCount: number }>("/admin/live-comment-candidates/confirm", {
+    batchId,
+    candidateIds
+  });
+}
