@@ -7,7 +7,6 @@ var capture = require("../features/new-comment/comment-capture.js");
 var runnerModule = require("../features/new-comment/comment-runner.js");
 var legacyCapture = require("../domain/live-comment-capture.js");
 var legacyRunnerModule = require("../features/account-warmup/live-comment-entry-comment-runner.js");
-
 var SCOPE = { batchId: "batch-1", deviceId: "device-1", roomKey: "room-1" };
 function copy(target, source) {
   Object.keys(source || {}).forEach(function (key) { target[key] = source[key]; });
@@ -21,6 +20,16 @@ function runIsolated(runtime, optionOverrides, control) {
   }, optionOverrides);
   var result = runnerModule.createCommentCaptureRunner(options).capture(SCOPE, control);
   return { result: result, events: events };
+}
+function withoutBackendSourceFields(value) {
+  var result = JSON.parse(JSON.stringify(value));
+  var comments = (result.comments || []).concat((result.events || []).reduce(function (all, event) {
+    return all.concat(event.comments || []);
+  }, []));
+  comments.forEach(function (comment) { (comment.sources || []).forEach(function (source) {
+    delete source.deviceId; delete source.roomKey;
+  }); });
+  return result;
 }
 function legacyCall(runtime, control, name, failedStage, args) {
   if (control && control.shouldStop && control.shouldStop()) return { stopped: true };
@@ -49,7 +58,6 @@ function runLegacy(runtime, control) {
   });
   return { result: runner.capture(SCOPE, control), events: events };
 }
-
 test("runner exports bounded loop constants", function () {
   assert.deepEqual([runnerModule.COMMENT_OCR_ATTEMPTS, runnerModule.MAX_CONSECUTIVE_NO_NEW_PAGES], [3, 2]);
 });
@@ -64,8 +72,8 @@ test("six-page success result and stage payloads stay equivalent to the legacy r
   }
   var legacyRun = runLegacy(runtime());
   var isolatedRun = runIsolated(runtime());
-  assert.deepEqual(isolatedRun.result, legacyRun.result);
-  assert.deepEqual(isolatedRun.events, legacyRun.events);
+  assert.deepEqual(withoutBackendSourceFields(isolatedRun.result), legacyRun.result);
+  assert.deepEqual(withoutBackendSourceFields({ events: isolatedRun.events }).events, legacyRun.events);
   assert.deepEqual([isolatedRun.result.commentSwipeCount, isolatedRun.result.commentPageCount], [5, 6]);
 });
 test("empty OCR retries up to the third attempt before continuing through five swipes", function () {

@@ -231,10 +231,10 @@ function createCommentCaptureRunner(options) {
   }
   function capture(scope, control) {
     scope = scope || {};
-    var configuredMax = Number(commentCapture.COMMENT_SWIPE_COUNT);
+    var configuredMax = Number(options.maxSwipeCount);
     var maxSwipeCount = isFinite(configuredMax)
-      ? Math.max(0, Math.min(defaultCommentCapture.COMMENT_SWIPE_COUNT, Math.floor(configuredMax)))
-      : defaultCommentCapture.COMMENT_SWIPE_COUNT;
+      ? Math.max(0, Math.min(20, Math.floor(configuredMax)))
+      : Number(defaultCommentCapture.COMMENT_SWIPE_COUNT);
     var pages = [];
     var actualSwipeCount = 0;
     var knownCommentCount = 0;

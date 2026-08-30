@@ -49,8 +49,23 @@ test("page flattening, normalization, identities and scoped candidates stay equi
   flat.forEach(function (comment) {
     assert.equal(isolated.commentIdentity(scope, comment), legacy.commentIdentity(scope, comment));
   });
-  assert.deepEqual(isolated.buildCandidates(pages, scope), legacy.buildCandidates(pages, scope));
-  assert.deepEqual(isolated.attachScope(flat, scope), legacy.attachScope(flat, scope));
+  var isolatedCandidates = isolated.buildCandidates(pages, scope);
+  var legacyCandidates = legacy.buildCandidates(pages, scope);
+  isolatedCandidates.forEach(function (candidate) {
+    candidate.sources.forEach(function (source) {
+      delete source.deviceId;
+      delete source.roomKey;
+    });
+  });
+  assert.deepEqual(isolatedCandidates, legacyCandidates);
+  var isolatedScoped = isolated.attachScope(flat, scope);
+  isolatedScoped.forEach(function (candidate) {
+    candidate.sources.forEach(function (source) {
+      delete source.deviceId;
+      delete source.roomKey;
+    });
+  });
+  assert.deepEqual(isolatedScoped, legacy.attachScope(flat, scope));
   assert.match(isolated.buildCandidates(pages, scope)[0].commentId, /^lc_[0-9a-f]{8}$/);
 });
 

@@ -1,5 +1,7 @@
 "use strict";
 
+var defaultCommentRunner = require("./comment-runner.js");
+
 function createIsolatedLiveCommentWorkflow(options) {
   options = options || {};
   var runtime = options.runtime || {};
@@ -149,8 +151,29 @@ function createIsolatedLiveCommentWorkflow(options) {
         attemptedRoomCount: screening.attemptedRoomCount
       };
     }
-    stage("ENTERED", { attempt: 1 });
-    return waitForStop(control);
+    stage("ENTERED", { attempt: 1, viewerCount: screening.viewerCount });
+    var configuredSwipeCount = Number(payload.commentSwipeCount || payload.maxCommentSwipes || 6);
+    var commentRunner = options.commentRunner;
+    if (!commentRunner && typeof runtime.readComments === "function") {
+      commentRunner = defaultCommentRunner.createCommentCaptureRunner({
+        runtime: runtime,
+        reportStage: reportStage,
+        maxSwipeCount: isFinite(configuredSwipeCount) ? Math.max(0, Math.min(20, Math.floor(configuredSwipeCount))) : 6,
+        shouldStop: function (activeControl) { return stopped(activeControl); }
+      });
+    }
+    if (!commentRunner || typeof commentRunner.capture !== "function") return waitForStop(control);
+    var capture = commentRunner.capture({
+      batchId: String(payload.batchId || ""),
+      deviceId: String(options.deviceId || ""),
+      roomKey: String(payload.roomKey || "")
+    }, control);
+    if (capture && capture.status === "STOPPED") return capture;
+    if (capture && capture.comments) {
+      capture.screeningAttemptedRoomCount = screening.attemptedRoomCount;
+      return capture;
+    }
+    return capture || waitForStop(control);
   }
 
   return { run: run };

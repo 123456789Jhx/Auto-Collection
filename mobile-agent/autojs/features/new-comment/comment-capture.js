@@ -3,6 +3,7 @@
 var layout = require("./douyin-layout.js");
 
 var COMMENT_SWIPE_COUNT = 5;
+var COMMENT_SEPARATOR_PATTERN = /[:：]/;
 
 function screenDimensions(input) {
   input = input || {};
@@ -80,7 +81,7 @@ function parseCommentLines(rawText) {
   for (var index = 0; index < lines.length; index += 1) {
     var line = compactText(lines[index]);
     if (!line) continue;
-    var separator = line.search(/[:：]/);
+    var separator = line.search(COMMENT_SEPARATOR_PATTERN);
     if (separator > 0) {
       flush();
       var userName = compactText(line.slice(0, separator));
@@ -143,9 +144,11 @@ function buildCandidates(pages, scope) {
   var byText = {};
   flattenPages(pages).forEach(function (comment) {
     var normalized = normalizedCommentKey(comment.commentText);
-    if (!normalized) return;
+    if (!normalized || normalized.length > 100) return;
     var key = "comment:" + normalized;
     var source = {
+      deviceId: String(scope.deviceId || ""),
+      roomKey: String(scope.roomKey || ""),
       pageIndex: comment.pageIndex,
       userName: comment.userName,
       commentText: comment.commentText
@@ -184,6 +187,7 @@ function attachScope(comments, scope) {
 
 module.exports = {
   COMMENT_SWIPE_COUNT: COMMENT_SWIPE_COUNT,
+  COMMENT_SEPARATOR_PATTERN: COMMENT_SEPARATOR_PATTERN,
   commentOcrRegion: commentOcrRegion,
   commentOcrRegions: commentOcrRegions,
   commentSwipeCoordinates: commentSwipeCoordinates,

@@ -238,7 +238,7 @@ function createNewCommentCommandBridge(context) {
       var module = loadEntry();
       if (!module) throw preloadError || new Error("isolated comment entry is unavailable");
       runState.task = module.createIsolatedLiveCommentEntryTask(context, {
-        reportStage: function (event) { reportStage(runState, event); }
+        reportStage: function (event) { reportStage(runState, event); }, deviceId: String(context.config && context.config.device && context.config.device.deviceId || "")
       });
     } catch (error) {
       finish(runState, "FAILED", { status: "FAILED", reasonCode: "ENTRY_LOAD_FAILED", message: String(error) });

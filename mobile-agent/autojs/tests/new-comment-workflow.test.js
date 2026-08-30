@@ -1,19 +1,15 @@
 "use strict";
-
 var assert = require("node:assert/strict");
 var test = require("node:test");
 var commentCapture = require("../features/new-comment/comment-capture.js");
 var layout = require("../features/new-comment/douyin-layout.js");
 var cleanupModule = require("../features/publish-video/douyin-post-publish-cleanup.js");
-
 function feature(name) {
   return require("../features/new-comment/" + name + ".js");
 }
-
 function copy(value) {
   return JSON.parse(JSON.stringify(value));
 }
-
 function runtimeFixture(overrides) {
   var actions = [];
   var runtime = {
@@ -31,7 +27,6 @@ function runtimeFixture(overrides) {
   runtime.actions = actions;
   return runtime;
 }
-
 function captureFixture(received, result) {
   return {
     capture: function (scope) {
@@ -44,7 +39,6 @@ function captureFixture(received, result) {
     }
   };
 }
-
 function runIsolated(runtime, payload, received, overrides) {
   var stages = [];
   var options = {
@@ -57,7 +51,6 @@ function runIsolated(runtime, payload, received, overrides) {
   var workflow = feature("workflow").createIsolatedLiveCommentWorkflow(options);
   return { result: workflow.run(payload, { shouldStop: function () { return false; } }), stages: stages };
 }
-
 test("workflow filters a qualifying room then waits for stop", function () {
   var entered = false;
   var stopRequested = false;
@@ -95,19 +88,16 @@ test("workflow filters a qualifying room then waits for stop", function () {
       }
     }
   });
-
   var result = workflow.run({ targetKeyword: "关键词", minViewerCount: 300 }, {
     shouldStop: function () { return stopRequested; }
   });
-
-  assert.deepEqual(result, { status: "STOPPED" });
+  assert.equal(result.status, "LIVE_COMMENT_ENTRY_CAPTURED");
   assert.equal(runtime.actions.includes("readViewerCount"), true);
   assert.equal(runtime.actions.includes("nextLive"), false);
-  assert.equal(captureCalls, 0);
+  assert.equal(captureCalls, 1);
   assert.equal(cleanupCalls, 0);
   assert.equal(stages.filter(function (event) { return event.stage === "ENTERED"; }).length, 1);
 });
-
 test("workflow does not fail the task when the live-room click reports failure", function () {
   var opens = 0;
   var stopRequested = false;
@@ -130,13 +120,11 @@ test("workflow does not fail the task when the live-room click reports failure",
     commentRunner: captureFixture([])
   });
   var result = workflow.run({ targetKeyword: "关键词" }, { shouldStop: function () { return stopRequested; } });
-
   assert.equal(result.status, "STOPPED");
   assert.equal(opens, 1);
   assert.equal(runtime.actions.includes("restartSearch:关键词"), false);
   assert.equal(runtime.actions.includes("isLiveRoom"), false);
 });
-
 test("workflow switches rooms until the viewer threshold is met", function () {
   var counts = [8500, 12000];
   var switches = 0;
@@ -160,7 +148,6 @@ test("workflow switches rooms until the viewer threshold is met", function () {
   assert.equal(switches, 1);
   assert.equal(runtime.actions.filter(function (item) { return item === "readViewerCount"; }).length, 2);
 });
-
 test("workflow reports NO_ROOM_MATCHED at the configured room limit", function () {
   var switches = 0;
   var runtime = runtimeFixture({
@@ -177,7 +164,6 @@ test("workflow reports NO_ROOM_MATCHED at the configured room limit", function (
   assert.equal(result.attemptedRoomCount, 3);
   assert.equal(switches, 2);
 });
-
 test("workflow stops immediately when the room switch receives a stop request", function () {
   var stopped = false;
   var runtime = runtimeFixture({
@@ -191,7 +177,45 @@ test("workflow stops immediately when the room switch receives a stop request", 
   );
   assert.deepEqual(result, { status: "STOPPED" });
 });
-
+test("workflow extracts paged comments and returns backend-compatible sources", function () {
+  var pages = ["甲：重复评论\n欢迎来到直播间", "乙：第二条\n甲：重复评论", "丙：第三条\n欢迎来到直播间", "丁：" + "超长".repeat(101)];
+  var pageIndex = 0;
+  var swipes = 0;
+  var runtime = runtimeFixture({
+    readViewerCount: function () { return { count: 500 }; },
+    readComments: function () { return { text: pages[pageIndex++] || "" }; },
+    swipeComments: function () { swipes += 1; return true; },
+    waitRandom: function () { return true; }
+  });
+  var result = feature("workflow").createIsolatedLiveCommentWorkflow({ runtime: runtime, deviceId: "device-1" }).run(
+    { targetKeyword: "关键词", minViewerCount: 300, batchId: "batch-1", roomKey: "room-1", commentSwipeCount: 3 },
+    { shouldStop: function () { return false; } }
+  );
+  assert.equal(result.captureStatus, "LIVE_COMMENT_ENTRY_CAPTURED");
+  assert.equal(swipes, 3);
+  assert.deepEqual(result.comments.map(function (item) { return item.commentText; }), ["重复评论", "第二条", "第三条"]);
+  assert.deepEqual(result.comments[0].sources[0], {
+    deviceId: "device-1", roomKey: "room-1", pageIndex: 0, userName: "甲", commentText: "重复评论"
+  });
+});
+test("workflow returns partial comments when stopped during comment paging", function () {
+  var stopped = false;
+  var swipes = 0;
+  var runtime = runtimeFixture({
+    readViewerCount: function () { return { count: 500 }; },
+    readComments: function () { return { text: "甲：已抓到" }; },
+    swipeComments: function () { swipes += 1; stopped = true; return true; },
+    waitRandom: function () { return true; }
+  });
+  var result = feature("workflow").createIsolatedLiveCommentWorkflow({ runtime: runtime, deviceId: "device-1" }).run(
+    { targetKeyword: "关键词", minViewerCount: 300, batchId: "batch-1", roomKey: "room-1", commentSwipeCount: 3 },
+    { shouldStop: function () { return stopped; } }
+  );
+  assert.equal(result.status, "STOPPED");
+  assert.equal(result.captureCompleted, false);
+  assert.equal(result.comments[0].commentText, "已抓到");
+  assert.equal(swipes, 1);
+});
 test("workflow stops around actions without platform verification scans", function () {
   var calls = 0;
   var stopped = feature("workflow").createIsolatedLiveCommentWorkflow({
@@ -200,7 +224,6 @@ test("workflow stops around actions without platform verification scans", functi
   }).run({}, { shouldStop: function () { return true; } });
   assert.deepEqual(stopped, { status: "STOPPED" });
   assert.equal(calls, 0);
-
   var stopRequested = false;
   var detectorCalls = 0;
   var runtime = runtimeFixture({
@@ -218,7 +241,6 @@ test("workflow stops around actions without platform verification scans", functi
   assert.equal(result.status, "STOPPED");
   assert.equal(detectorCalls, 0);
 });
-
 test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnostics", function () {
   var events = [];
   var liveEntryOptions = null;
@@ -269,7 +291,6 @@ test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnost
     } },
     actionTraceLimit: 4
   });
-
   assert.equal(runtime.openDouyin().success, true);
   assert.equal(runtime.openLiveTab().success, true);
   assert.equal(runtime.openFirstLive().success, true);
@@ -293,7 +314,6 @@ test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnost
   assert.equal(diagnosticRecycled, 1);
   assert.equal(events.indexOf("openLiveRoomFromCurrentScreen") >= 0, true);
   assert.deepEqual(events.slice(-2), ["swipe", "swipe"]);
-
   var failureRecycles = 0;
   var failureClips = 0;
   var parserFailureRuntime = feature("runtime").createIsolatedRuntime({
@@ -309,7 +329,6 @@ test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnost
   assert.equal(failureRecycles, 1);
   assert.equal(failureClips, 2);
 });
-
 test("public cleanup performs exact recents order and falls back safely", function () {
   var events = [];
   var lifecycleCalls = 0;
@@ -328,7 +347,6 @@ test("public cleanup performs exact recents order and falls back safely", functi
   assert.deepEqual(events, ["recents", "find:douyin", "left-dismiss", "lifecycle", "find:agent", "open:agent"]);
   assert.equal(first.completed, true);
   assert.equal(lifecycleCalls, 1);
-
   var fallbackEvents = [];
   var fallback = cleanupModule.createDouyinPostPublishCleanup({
     cooldownMs: 0,
@@ -341,7 +359,6 @@ test("public cleanup performs exact recents order and falls back safely", functi
   assert.equal(fallback.completed, true);
   assert.equal(fallback.fallback, "PACKAGE");
   assert.deepEqual(fallbackEvents, ["home", "package"]);
-
   var stable = cleanupModule.createDouyinPostPublishCleanup({
     cooldownMs: 0,
     openRecents: function () { return false; },
@@ -351,7 +368,6 @@ test("public cleanup performs exact recents order and falls back safely", functi
   assert.equal(stable.completed, false);
   assert.equal(stable.reason, "HOME_FALLBACK_FAILED");
 });
-
 test("entry task creates a runtime per run and exposes the same idempotent cleanup", function () {
   var controls = [];
   var cleanup = { run: function () { return { completed: true }; } };

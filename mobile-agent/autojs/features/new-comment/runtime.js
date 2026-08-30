@@ -349,7 +349,7 @@ function createIsolatedRuntime(context, options) {
   }
 
   function swipeComments() { return swipeCoordinates("swipeComments", commentCapture.commentSwipeCoordinates(screenSize())); }
-  function nextLive() { return swipeCoordinates("nextLive", commentCapture.liveRoomSwipeCoordinates(screenSize())); }
+  function nextLive() { return swipeCoordinates("nextLive", layout.getLiveRoomSwitchSwipe(screenSize())); }
   function waitRandom(min, max) { trace("waitRandom"); return gestures.waitRandom(min, max); }
 
   function detectPlatformVerification() {
