@@ -25,6 +25,20 @@ function createStartupIdleStatePatch(options) {
   };
 }
 
+function resolveCollectorAgentStatus(state, warmupActive) {
+  state = state || {};
+  if (state.stopRequested) {
+    return "stopped";
+  }
+  if (state.paused) {
+    return "paused";
+  }
+  if (state.running || warmupActive) {
+    return "running";
+  }
+  return "idle";
+}
+
 function createCollectorApp(context) {
   var config = context.config;
   var logger = context.logger;
@@ -218,16 +232,12 @@ function createCollectorApp(context) {
   }
 
   function currentAgentStatus() {
-    if (floatyControl.state.stopRequested) {
-      return "stopped";
-    }
-    if (floatyControl.state.paused) {
-      return "paused";
-    }
-    if (floatyControl.state.running) {
-      return "running";
-    }
-    return "idle";
+    var warmupActive = !!(
+      context.accountWarmupCommandBridge &&
+      context.accountWarmupCommandBridge.getActive &&
+      context.accountWarmupCommandBridge.getActive()
+    );
+    return resolveCollectorAgentStatus(floatyControl.state, warmupActive);
   }
 
   function checkBizScriptVersion(force) {
@@ -1321,5 +1331,6 @@ function createCollectorApp(context) {
 module.exports = {
   createCollectorApp: createCollectorApp,
   createFinishedTaskStatePatch: createFinishedTaskStatePatch,
-  createStartupIdleStatePatch: createStartupIdleStatePatch
+  createStartupIdleStatePatch: createStartupIdleStatePatch,
+  resolveCollectorAgentStatus: resolveCollectorAgentStatus
 };

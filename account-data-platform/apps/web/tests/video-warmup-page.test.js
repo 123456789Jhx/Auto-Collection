@@ -13,6 +13,7 @@ const {
   readVideoWarmupDeviceKeywords,
   resolveVideoWarmupKeyword,
   resolveVideoWarmupCommandState,
+  shouldClearVideoWarmupBatch,
   selectOnlineVideoWarmupDevices,
   videoWarmupDeviceName,
   writeLastVideoWarmupKeyword,
@@ -257,6 +258,22 @@ test("treats a RUNNING video warmup command as an active running state", () => {
   }, [], "batch-1");
 
   assert.deepEqual(state, { key: "running", label: "刷视频中", color: "processing", active: true });
+});
+
+test("does not clear a batch while the run is active or the agent is disconnected", () => {
+  assert.equal(shouldClearVideoWarmupBatch([
+    { key: "running" },
+    { key: "agent_disconnected" }
+  ]), false);
+});
+
+test("clears a batch only after every run reaches a terminal state", () => {
+  assert.equal(shouldClearVideoWarmupBatch([
+    { key: "completed" },
+    { key: "stopped" },
+    { key: "failed" }
+  ]), true);
+  assert.equal(shouldClearVideoWarmupBatch([]), false);
 });
 
 test("shows only enabled online devices and prefers the bound Douyin account name", () => {

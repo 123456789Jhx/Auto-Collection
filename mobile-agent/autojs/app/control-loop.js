@@ -409,13 +409,24 @@ function createControlLoop(context) {
   }
 
   function currentAgentStatus() {
+    var warmupRun = null;
+    if (context.accountWarmupCommandBridge && context.accountWarmupCommandBridge.getActive) {
+      try {
+        warmupRun = context.accountWarmupCommandBridge.getActive() || null;
+      } catch (error) {
+        logger.warn("读取养号任务活动状态失败", { message: String(error) });
+      }
+    }
     if (floatyControl.state.stopRequested) {
       return "stopped";
     }
     if (floatyControl.state.paused) {
       return "paused";
     }
-    if (floatyControl.state.running) {
+    if (warmupRun && warmupRun.stopRequested) {
+      return "stopped";
+    }
+    if (floatyControl.state.running || warmupRun) {
       return "running";
     }
     return "idle";
@@ -556,7 +567,6 @@ function createControlLoop(context) {
       return { success: false, message: "upload disabled" };
     }
 
-    var wasBackendReady = backendSync.ready === true;
     var tokenResult = uploader.registerDeviceToken();
     if (!tokenResult || !tokenResult.success) {
       backendSync.failureCount += 1;
@@ -584,15 +594,6 @@ function createControlLoop(context) {
 
     var configResult = refreshRuntimeConfig();
     if (tokenResult && tokenResult.success && configResult && configResult.applied) {
-      var preloadResult = ensurePublishVideoPreloaded(reason, wasBackendReady);
-      if (!preloadResult.ready) {
-        backendSync.failureCount += 1;
-        backendSync.ready = false;
-        floatyControl.update({
-          lastMessage: "发布模块预加载失败，等待重试"
-        });
-        return { success: false, applied: true, message: "publish module preload failed" };
-      }
       backendSync.failureCount = 0;
       backendSync.ready = true;
       applyBackendRecoveryState();
@@ -691,7 +692,11 @@ function createControlLoop(context) {
         logger.info("发布执行器启动", { commandId: command.id, taskId: payload.taskId || "" });
         var publishVideoHandler = publishVideoPreloader.getHandler();
         if (!publishVideoHandler) {
-          throw new Error("publish video handler is not preloaded");
+          publishVideoPreloader.preload();
+          publishVideoHandler = publishVideoPreloader.getHandler();
+        }
+        if (!publishVideoHandler) {
+          throw new Error("publish video handler is not available");
         }
         publishVideoHandler.handle(command);
         return;

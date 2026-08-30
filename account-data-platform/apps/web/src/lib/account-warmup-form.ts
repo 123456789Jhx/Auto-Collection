@@ -348,6 +348,12 @@ export function resolveVideoWarmupCommandState(
   return { key: "unknown", label: runCommand.status || "未知", color: "default", active: false };
 }
 
+const videoWarmupTerminalStateKeys = new Set(["stopped", "failed", "completed", "expired"]);
+
+export function shouldClearVideoWarmupBatch(states: Array<{ key: string }>) {
+  return states.length > 0 && states.every((state) => videoWarmupTerminalStateKeys.has(state.key));
+}
+
 export async function dispatchAccountWarmupCommands<T>(
   commands: AccountWarmupCommandInput[],
   dispatch: (command: AccountWarmupCommandInput) => Promise<T>

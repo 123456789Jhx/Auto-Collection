@@ -46,8 +46,19 @@ test("lifecycle reporter creates a fresh session when the Agent starts", () => {
 
 test("launcher reports stopped before stopping main and watchdog engines", () => {
   const source = fs.readFileSync(launcherPath, "utf8");
-  assert.ok(source.indexOf("reportStopped") < source.indexOf('stopEngines("watchdog.js")'));
+  const stopStart = source.indexOf("function stopAllScripts");
+  const stopBody = source.slice(stopStart, stopStart + 1200);
+  assert.ok(stopBody.indexOf("cancelActiveTasksBeforeStop") >= 0);
+  assert.ok(stopBody.indexOf("cancelActiveTasksBeforeStop") < stopBody.indexOf("reportStoppedLifecycle"));
+  assert.ok(stopBody.indexOf("reportStopped") < stopBody.indexOf('stopEngines("watchdog.js")'));
   assert.ok(source.indexOf("reportRunning") < source.indexOf("ensureManagedRuntime"));
+});
+
+test("uploader exposes a dedicated active-task cancellation request", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "core", "uploader.js"), "utf8");
+  assert.match(source, /function cancelActiveAgentCommands/);
+  assert.match(source, /\/mobile\/commands\/cancel-active/);
+  assert.match(source, /cancelActiveAgentCommands: cancelActiveAgentCommands/);
 });
 
 test("shared heartbeat service restores a running lifecycle for remote-wake starts", () => {
@@ -63,4 +74,25 @@ test("uploader forwards lifecycle fields without rewriting the heartbeat contrac
   assert.match(source, /agentLifecycleState: payload\.agentLifecycleState/);
   assert.match(source, /pollingEnabled: payload\.pollingEnabled/);
   assert.match(source, /agentSessionId: payload\.agentSessionId/);
+});
+
+test("launcher submits the bound task identity as a manual stop receipt", () => {
+  const source = fs.readFileSync(launcherPath, "utf8");
+  assert.match(source, /activeRunIdentity/);
+  assert.match(source, /manual.*stop|MANUAL_STOP/i);
+  assert.match(source, /reportManualAgentStop/);
+});
+
+test("manual stop logs attempt, HTTP response, and backend result", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "core", "uploader.js"), "utf8");
+  assert.match(source, /手动停止任务请求开始/);
+  assert.match(source, /手动停止任务回执完成[\s\S]*success/);
+  assert.match(source, /responseBody/);
+});
+
+test("launcher exposes manual stop progress in logcat", () => {
+  const source = fs.readFileSync(launcherPath, "utf8");
+  assert.match(source, /停止运行按钮点击/);
+  assert.match(source, /手动停止任务最终结果/);
+  assert.match(source, /console\.log/);
 });

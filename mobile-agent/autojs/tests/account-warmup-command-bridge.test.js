@@ -14,6 +14,7 @@ function createHarness(commandSets, ackResults, featureStatus) {
   var runnerOptions = null;
   var moduleLoadCalls = [];
   var baselineModuleLoadCalls = [];
+  var runStorageValues = {};
   var uploader = {
     pollCommands: function () { return commandSets[Math.min(pollIndex++, commandSets.length - 1)] || []; },
     ackCommand: function (id, status, result) {
@@ -24,6 +25,11 @@ function createHarness(commandSets, ackResults, featureStatus) {
   };
   var context = {
     uploader: uploader,
+    runIdentityStorage: {
+      get: function (key, fallback) { return Object.prototype.hasOwnProperty.call(runStorageValues, key) ? runStorageValues[key] : fallback; },
+      put: function (key, value) { runStorageValues[key] = value; },
+      remove: function (key) { delete runStorageValues[key]; }
+    },
     logger: { info: function () {}, warn: function () {}, error: function () {} },
     loadBizScript: function (modulePath) {
       moduleLoadCalls.push(modulePath);
@@ -69,6 +75,7 @@ function createHarness(commandSets, ackResults, featureStatus) {
     getRunnerOptions: function () { return runnerOptions; },
     getModuleLoadCalls: function () { return moduleLoadCalls; },
     getBaselineModuleLoadCalls: function () { return baselineModuleLoadCalls; }
+    ,getRunIdentityStorage: function () { return runStorageValues; }
   };
 }
 
@@ -145,6 +152,13 @@ function testMaintainsRunIdentityForActiveWarmupTask() {
     batchId: "batch-identity",
     featureKey: "video_warmup"
   });
+  assert.notStrictEqual(harness.getRunIdentityStorage().activeRunIdentity, undefined);
+  assert.deepStrictEqual(JSON.parse(harness.getRunIdentityStorage().activeRunIdentity), {
+    runId: "run-identity-explicit",
+    batchId: "batch-identity",
+    featureKey: "video_warmup",
+    commandId: "run-identity"
+  });
 }
 
 function testClearsRunIdentityAfterTerminalAck() {
@@ -162,6 +176,7 @@ function testClearsRunIdentityAfterTerminalAck() {
   assert.strictEqual(harness.context.accountWarmupRunIdentity.runId, "run-identity-clear");
   harness.queuedThreads[0]();
   assert.strictEqual(harness.context.accountWarmupRunIdentity, null);
+  assert.strictEqual(harness.getRunIdentityStorage().activeRunIdentity, undefined);
 }
 
 function testRetriesFailedTerminalAckWithoutRerunningFeature() {

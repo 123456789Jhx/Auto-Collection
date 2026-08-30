@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isAgentCommandChannelOpen } from "../src/lib/agent-command-channel.ts";
+import { agentDisconnectMessage, isAgentCommandChannelOpen, shouldNotifyAgentDisconnect } from "../src/lib/agent-command-channel.ts";
 
 test("keeps the command channel open for a reachable Agent", () => {
   assert.equal(isAgentCommandChannelOpen({ agentReachable: true, desiredAgentState: "running" }), true);
@@ -35,4 +35,32 @@ test("opens the command channel only for a running polling lifecycle", () => {
     agentLifecycleState: "UNREACHABLE",
     pollingEnabled: true
   }), false);
+});
+
+test("notifies only for a new explicit Agent stop event", () => {
+  assert.equal(shouldNotifyAgentDisconnect({
+    agentLifecycleState: "STOPPED",
+    agentStateReason: "LOCAL_STOP_BUTTON",
+    agentStateChangedAt: "2026-08-28T15:00:00.000Z",
+    agentSessionId: "session-1"
+  }), true);
+  assert.equal(shouldNotifyAgentDisconnect({
+    agentLifecycleState: "STOPPED",
+    agentStateReason: "TASK_STOPPED",
+    agentStateChangedAt: "2026-08-28T15:00:00.000Z"
+  }), false);
+  assert.equal(shouldNotifyAgentDisconnect({
+    agentLifecycleState: "UNREACHABLE",
+    agentStateReason: "LOCAL_STOP_BUTTON"
+  }), false);
+});
+
+test("shows a dedicated message for a manual local Agent stop", () => {
+  const message = agentDisconnectMessage({
+    agentLifecycleState: "STOPPED",
+    pollingEnabled: false,
+    agentStateReason: "LOCAL_STOP_BUTTON"
+  });
+  assert.equal(message.title, "Agent 已手动停止");
+  assert.match(message.description, /任务已停止/);
 });

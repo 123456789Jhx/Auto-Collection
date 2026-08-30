@@ -3,6 +3,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { test } = require("node:test");
 
+test("养号桥接器有活动任务时主循环必须保持 running 状态", () => {
+  const collector = require("../app/collector-app.js");
+  assert.equal(typeof collector.resolveCollectorAgentStatus, "function");
+  assert.equal(collector.resolveCollectorAgentStatus({ running: false, paused: false, stopRequested: false }, true), "running");
+});
+
 test("业务脚本更新在预加载前检查，并在空闲循环持续检查", () => {
   const source = fs.readFileSync(path.join(__dirname, "../app/collector-app.js"), "utf8");
   const startupIdle = source.indexOf("floatyControl.update(startupIdleState);");

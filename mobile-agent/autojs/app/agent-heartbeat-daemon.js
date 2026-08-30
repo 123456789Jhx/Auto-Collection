@@ -54,15 +54,32 @@ function createAgentHeartbeatDaemon(context, deps) {
     return !!state().exitRequested;
   }
 
+  function activeWarmupRun() {
+    var bridge = context.accountWarmupCommandBridge;
+    if (!bridge || typeof bridge.getActive !== "function") {
+      return null;
+    }
+    try {
+      return bridge.getActive() || null;
+    } catch (error) {
+      logWarn("读取养号任务活动状态失败", { message: String(error) });
+      return null;
+    }
+  }
+
   function currentStatus() {
     var current = state();
+    var warmupRun = activeWarmupRun();
     if (current.stopRequested) {
       return "stopped";
     }
     if (current.paused) {
       return "paused";
     }
-    if (current.running) {
+    if (warmupRun && warmupRun.stopRequested) {
+      return "stopped";
+    }
+    if (current.running || warmupRun) {
       return "running";
     }
     return "idle";

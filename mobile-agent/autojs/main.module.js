@@ -190,6 +190,7 @@ var context = {
   logger: logger,
   permissions: permissions,
   storage: storage,
+  runIdentityStorage: storages.create("AgriVideoCollectorActiveRun"),
   uploader: uploader,
   deviceRecoveryJournal: deviceRecoveryJournal,
   deviceRecoverySync: deviceRecoverySync,

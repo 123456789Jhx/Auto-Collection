@@ -4,7 +4,7 @@ import { App as AntdApp, Button, Form, Input, InputNumber, Select, Space, Table,
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SharedVocabularySelect } from "../components/account-warmup/SharedVocabularySelect";
 import { getDevices } from "../lib/api-client";
-import { agentDisconnectMessage, isAgentCommandChannelOpen } from "../lib/agent-command-channel";
+import { agentDisconnectMessage, claimAgentDisconnectNotice, isAgentCommandChannelOpen } from "../lib/agent-command-channel";
 import {
   getAccountWarmupCommands,
   saveAccountWarmupVocabulary,
@@ -67,7 +67,7 @@ export function AccountWarmupPage() {
 
   useEffect(() => {
     devices.forEach((device) => {
-      if (isAgentCommandChannelOpen(device)) return;
+      if (isAgentCommandChannelOpen(device) || !claimAgentDisconnectNotice(device)) return;
       const key = `${device.id}:${device.agentLifecycleState || device.agentStatus || "unknown"}:${device.agentSessionId || ""}`;
       if (agentNoticeKeys.current.has(key)) return;
       agentNoticeKeys.current.add(key);

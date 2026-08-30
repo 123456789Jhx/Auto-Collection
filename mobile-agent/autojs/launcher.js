@@ -132,6 +132,14 @@ function loadConfig() {
 }
 
 var lifecycleReporter = null;
+var controlUploader = null;
+function logStopEvent(message, details) {
+  try {
+    console.log("[launcher-stop] " + message + " " + JSON.stringify(details || {}));
+  } catch (error) {
+    try { console.log("[launcher-stop] " + message); } catch (ignored) {}
+  }
+}
 function getLifecycleReporter() {
   if (lifecycleReporter) return lifecycleReporter;
   try {
@@ -139,10 +147,11 @@ function getLifecycleReporter() {
     var uploaderFactory = require(files.join(SCRIPT_DIR, "core/uploader.js"));
     var uploader = uploaderFactory && uploaderFactory.createUploader
       ? uploaderFactory.createUploader(config, {
-        info: function () {},
-        warn: function (message) { try { console.warn(String(message)); } catch (error) {} }
+        info: function (message, details) { logStopEvent(String(message), details); },
+        warn: function (message, details) { logStopEvent("WARN " + String(message), details); }
       }, storages.create("AgriVideoCollectorLauncher"))
       : null;
+    controlUploader = uploader;
     var reporterFactory = require(files.join(SCRIPT_DIR, "app/agent-lifecycle-reporter.js"));
     lifecycleReporter = reporterFactory.createAgentLifecycleReporter({
       config: config,
@@ -160,6 +169,73 @@ function getLifecycleReporter() {
 
 function reportRunningLifecycle() {
   try { return getLifecycleReporter().reportRunning(); } catch (error) { return { success: false, message: String(error) }; }
+}
+
+function cancelActiveTasksBeforeStop() {
+  try {
+    getLifecycleReporter();
+    if (!controlUploader || typeof controlUploader.cancelActiveAgentCommands !== "function") {
+      return { success: false, message: "uploader_missing" };
+    }
+    var identity = {};
+    try {
+      var identityStore = storages.create("AgriVideoCollectorActiveRun");
+      var rawIdentity = identityStore.get("activeRunIdentity", "");
+      identity = rawIdentity ? JSON.parse(String(rawIdentity)) : {};
+    } catch (identityError) {
+      identity = {};
+    }
+    var sessionId = "";
+    try {
+      sessionId = String(storages.create("AgriVideoCollectorAgentLifecycle").get("agentSessionId", "") || "");
+    } catch (error) {
+    }
+    var result = null;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      result = controlUploader.cancelActiveAgentCommands(
+        "LOCAL_STOP_BUTTON_BEFORE_AGENT_STOP",
+        sessionId,
+        identity,
+        attempt + 1
+      );
+      if (result && result.success !== false) return result;
+      try { sleep(300); } catch (sleepError) {}
+    }
+    return result || { success: false, message: "cancel_failed" };
+  } catch (error) {
+    return { success: false, message: String(error) };
+  }
+}
+
+function reportManualTaskStopBeforeAgentStop() {
+  try {
+    getLifecycleReporter();
+    if (!controlUploader || typeof controlUploader.reportManualAgentStop !== "function") {
+      return { success: false, message: "manual_stop_reporter_missing" };
+    }
+    var identity = {};
+    try {
+      var identityStore = storages.create("AgriVideoCollectorActiveRun");
+      var raw = identityStore.get("activeRunIdentity", "");
+      identity = raw ? JSON.parse(String(raw)) : {};
+    } catch (error) {
+      identity = {};
+    }
+    var sessionId = "";
+    try {
+      sessionId = String(storages.create("AgriVideoCollectorAgentLifecycle").get("agentSessionId", "") || "");
+    } catch (error2) {
+    }
+    var result = null;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      result = controlUploader.reportManualAgentStop(identity, "LOCAL_STOP_BUTTON", sessionId, attempt + 1);
+      if (result && result.success !== false) return result;
+      try { sleep(300); } catch (sleepError) {}
+    }
+    return result || { success: false, message: "manual_stop_report_failed" };
+  } catch (error3) {
+    return { success: false, message: String(error3) };
+  }
 }
 
 function reportStoppedLifecycle() {
@@ -450,7 +526,19 @@ function ensureManagedRuntime() {
 }
 
 function stopAllScripts() {
+  logStopEvent("停止运行按钮点击", { scriptDir: SCRIPT_DIR });
+  var manualStopResult = reportManualTaskStopBeforeAgentStop();
+  logStopEvent("手动停止任务最终结果", manualStopResult);
+  if (!manualStopResult || manualStopResult.success === false) {
+    try { console.warn("手动停止任务回执失败，继续执行断联收口", manualStopResult); } catch (error) {}
+    var cancelResult = cancelActiveTasksBeforeStop();
+    logStopEvent("活动任务取消最终结果", cancelResult);
+    if (!cancelResult || cancelResult.success === false) {
+      try { console.warn("活动业务任务断联收口失败", cancelResult); } catch (error2) {}
+    }
+  }
   reportStoppedLifecycle();
+  logStopEvent("开始停止本地脚本", { watchdog: isRunning("watchdog.js"), main: isRunning("main.js") });
   var watchdogCount = stopEngines("watchdog.js");
   var mainCount = stopEngines("main.js");
   try {
@@ -577,7 +665,11 @@ ui.oneTapStart.click(function () {
   ensureManagedRuntime();
 });
 ui.oneTapStop.click(function () {
-  stopAllScripts();
+  // Auto.js forbids synchronous network calls on the UI thread. Keep the
+  // stop sequence ordered, but run it on a worker before stopping engines.
+  threads.start(function () {
+    stopAllScripts();
+  });
 });
 
 refreshStatus();

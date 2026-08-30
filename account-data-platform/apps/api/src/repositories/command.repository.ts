@@ -59,6 +59,60 @@ export async function reconcileAgentDisconnect(
   });
 }
 
+export async function acknowledgeManualAgentStop(
+  deviceId: string,
+  commandId?: string,
+  batchId?: string,
+  reason = "LOCAL_STOP_BUTTON",
+  agentSessionId?: string
+) {
+  return db.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${config.tenantId}), hashtext(${`${deviceId}:AGENT_MANUAL_STOP`}))`
+    );
+    const now = new Date();
+    const conditions = [
+      eq(mobileCommands.tenantId, config.tenantId),
+      eq(mobileCommands.deviceId, deviceId),
+      eq(mobileCommands.executorType, "AGENT"),
+      eq(mobileCommands.commandType, "ACCOUNT_WARMUP_RUN"),
+      inArray(mobileCommands.status, ["PENDING", "FETCHED", "CLAIMED", "RUNNING"]),
+      isNull(mobileCommands.deletedAt)
+    ];
+    if (commandId) conditions.push(eq(mobileCommands.id, commandId));
+    if (batchId) conditions.push(sql`${mobileCommands.payloadJson} ->> 'batchId' = ${batchId}`);
+    if (!commandId && !batchId) {
+      conditions.push(sql`${mobileCommands.payloadJson} ->> 'featureKey' = 'video_warmup'`);
+    }
+    if (!commandId && !batchId) {
+      const [activeVideoRun] = await transaction
+        .select({ id: mobileCommands.id })
+        .from(mobileCommands)
+        .where(and(...conditions))
+        .orderBy(desc(mobileCommands.createdAt))
+        .limit(1);
+      if (!activeVideoRun) return [];
+      conditions.push(eq(mobileCommands.id, activeVideoRun.id));
+    }
+    return transaction
+      .update(mobileCommands)
+      .set({
+        status: "DONE",
+        acknowledgedAt: now,
+        resultJson: {
+          status: "STOPPED",
+          reason,
+          ...(batchId ? { batchId } : {}),
+          ...(agentSessionId ? { agentSessionId } : {})
+        },
+        updatedAt: now,
+        updatedBy: "manual_stop_reporter"
+      })
+      .where(and(...conditions))
+      .returning();
+  });
+}
+
 export async function finalizePendingVideoWarmupRun(deviceId: string, batchId: string) {
   return db.transaction(async (transaction) => {
     await transaction.execute(sql`select pg_advisory_xact_lock(hashtext(${config.tenantId}), hashtext(${`${deviceId}:BASE`}))`);

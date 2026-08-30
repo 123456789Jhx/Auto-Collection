@@ -391,6 +391,60 @@ function testRefreshRuntimeConfigAppliesCommerceCardConfig() {
   assert.strictEqual(context.config.task.commerceCardLiveComment.targetRoom.similarityThreshold, 0.9);
 }
 
+function testRefreshRuntimeConfigReportsWarmupBridgeAsRunning() {
+  var reports = [];
+  var context = createContext({
+    config: {
+      upload: { controlEnabled: true, commandPollIntervalSeconds: 5 },
+      device: { deviceId: "test-device" },
+      task: { taskId: "local-task", liveComment: {}, commerceCardLiveComment: {} },
+      schedule: { autoStart: false },
+      runtime: { heartbeatMinutes: 1, idleHeartbeatSeconds: 60 },
+      match: { agricultureKeywords: [] }
+    },
+    accountWarmupCommandBridge: {
+      getActive: function () {
+        return { commandId: "warmup-command", featureKey: "video_warmup", stopRequested: false };
+      }
+    },
+    heartbeatService: {
+      reportImmediateHeartbeat: function (_phase, status, message) {
+        reports.push({ status: status, message: message });
+      },
+      reportAgentHeartbeat: function () {}
+    },
+    uploader: {
+      isRegistered: function () { return true; },
+      pollCommands: function () { return []; },
+      uploadRuntimeLog: function () {},
+      ackCommand: function () {},
+      fetchCurrentTask: function () {
+        return {
+          taskId: "remote-task",
+          platform: "douyin",
+          mode: "search",
+          videoMinutesMin: 120,
+          videoMinutesMax: 180,
+          liveMinutesMin: 60,
+          liveMinutesMax: 120,
+          heartbeatMinutes: 1,
+          autoStart: false,
+          collectComments: true,
+          commentLimit: 10,
+          liveCommentMode: "agri_chatbot",
+          liveCommentRole: "none",
+          commerceCardLiveComment: { enabled: false }
+        };
+      }
+    }
+  });
+  var controlLoop = createControlLoop(context);
+
+  controlLoop.refreshRuntimeConfig();
+
+  assert.strictEqual(reports[reports.length - 1].status, "running");
+}
+
 function testCommerceCardLiveStartUsesIndependentTaskType() {
   var ack = null;
   var requestedTasks = [];
@@ -746,6 +800,7 @@ testControlCommandsWaitForBackendSync();
 testLiveCommentPauseRequestsInterrupt();
 testStopIsNotSupersededByLaterStartInSamePoll();
 testRefreshRuntimeConfigAppliesCommerceCardConfig();
+testRefreshRuntimeConfigReportsWarmupBridgeAsRunning();
 testCommerceCardLiveStartUsesIndependentTaskType();
 testUnsupportedExplicitStartTaskDoesNotFallbackToVideo();
 testV2PauseWaitsForSafeCheckpoint();

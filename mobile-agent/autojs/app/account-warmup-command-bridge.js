@@ -10,21 +10,44 @@ function createAccountWarmupCommandBridge(context) {
   var lastVideoStop = null;
   var installed = false;
   var originalPoll = null;
+  var runIdentityStorage = context.runIdentityStorage || null;
+
+  function persistRunIdentity(identity) {
+    if (!runIdentityStorage || typeof runIdentityStorage.put !== "function") return;
+    try {
+      runIdentityStorage.put("activeRunIdentity", JSON.stringify(identity));
+    } catch (error) {
+      logger.warn("养号任务身份持久化失败", { message: String(error) });
+    }
+  }
+
+  function clearPersistedRunIdentity() {
+    if (!runIdentityStorage) return;
+    try {
+      if (typeof runIdentityStorage.remove === "function") runIdentityStorage.remove("activeRunIdentity");
+      else if (typeof runIdentityStorage.put === "function") runIdentityStorage.put("activeRunIdentity", "");
+    } catch (error) {
+      logger.warn("养号任务身份清理失败", { message: String(error) });
+    }
+  }
 
   function setRunIdentity(runState) {
     if (!runState) return;
     var identity = {
       runId: runState.runIdentity.runId,
       batchId: runState.runIdentity.batchId,
-      featureKey: runState.runIdentity.featureKey
+      featureKey: runState.runIdentity.featureKey,
+      commandId: runState.commandId
     };
     context.accountWarmupRunIdentity = identity;
+    persistRunIdentity(identity);
   }
 
   function clearRunIdentity(runState) {
     var current = context.accountWarmupRunIdentity;
     if (!runState || !current || String(current.runId || "") !== runState.runIdentity.runId) return;
     context.accountWarmupRunIdentity = null;
+    clearPersistedRunIdentity();
   }
 
   function preloadRegistry() {

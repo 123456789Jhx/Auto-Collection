@@ -19,7 +19,7 @@ import {
   type LiveCommentEntryRow
 } from "../components/account-warmup/LiveCommentEntryProgress";
 import { getDevices } from "../lib/api-client";
-import { agentDisconnectMessage, isAgentCommandChannelOpen } from "../lib/agent-command-channel";
+import { agentDisconnectMessage, claimAgentDisconnectNotice, isAgentCommandChannelOpen } from "../lib/agent-command-channel";
 import {
   getLiveCommentEntryCommands,
   startLiveCommentEntryDevice,
@@ -147,7 +147,7 @@ export function LiveCommentEntryPage() {
   const selectableCodes = useMemo(() => new Set(selectableDevices.map((device) => device.deviceCode)), [selectableDevices]);
   useEffect(() => {
     devices.forEach((device) => {
-      if (isAgentCommandChannelOpen(device)) return;
+      if (isAgentCommandChannelOpen(device) || !claimAgentDisconnectNotice(device)) return;
       const key = `${device.id}:${device.agentLifecycleState || device.agentStatus || "unknown"}:${device.agentSessionId || ""}`;
       if (agentNoticeKeys.current.has(key)) return;
       agentNoticeKeys.current.add(key);

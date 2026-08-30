@@ -71,6 +71,11 @@ function createFixture(options) {
     taskScheduler: { getActiveTaskType: function () { return ""; } },
     logs: logs
   };
+  if (options.preloadFails) {
+    context.loadBizScript = function () {
+      throw new Error("publish preload blocked");
+    };
+  }
   return {
     context: context,
     state: state,
@@ -131,8 +136,18 @@ function testManualPauseAndStopArePreserved() {
   });
 }
 
+function testBackendReadyDoesNotDependOnPublishPreload() {
+  var fixture = createFixture({ registered: true, configAvailable: true, preloadFails: true });
+  var result = fixture.controlLoop.syncBackendOnce("recovery");
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(fixture.context.backendSync.ready, true);
+  assert.strictEqual(fixture.state.backendRecoveryPending, false);
+  assert.strictEqual(fixture.state.paused, false);
+}
+
 testRegistrationFailureEntersSafeRecoveryPause();
 testSuccessfulAutoStartClearsRecoveryAndRuns();
 testSuccessfulNoAutoStartLeavesIdle();
 testManualPauseAndStopArePreserved();
+testBackendReadyDoesNotDependOnPublishPreload();
 console.log("agent registration recovery tests passed");

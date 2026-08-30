@@ -107,7 +107,56 @@ function testDaemonStatusSnapshotUsesPausedAndStoppedStates() {
   assert.strictEqual(heartbeats[0].message, "后台指令暂停");
 }
 
+function testDaemonReportsRunningWhenWarmupBridgeIsActive() {
+  var heartbeats = [];
+  var context = {
+    config: {
+      runtime: {
+        agentHeartbeatDaemonSeconds: 1
+      }
+    },
+    logger: createLogger(),
+    floatyControl: {
+      state: {
+        running: false,
+        paused: false,
+        stopRequested: false,
+        exitRequested: false,
+        lastMessage: "等待控制循环"
+      }
+    },
+    accountWarmupCommandBridge: {
+      getActive: function () {
+        return {
+          commandId: "warmup-command-1",
+          featureKey: "video_warmup",
+          stopRequested: false
+        };
+      }
+    },
+    heartbeatService: {
+      reportAgentHeartbeat: function (status, message) {
+        heartbeats.push({ status: status, message: message });
+      }
+    }
+  };
+  var daemon = createAgentHeartbeatDaemon(context, {
+    threadStart: function (fn) {
+      fn();
+      return {};
+    },
+    sleep: function () {
+      context.floatyControl.state.exitRequested = true;
+    }
+  });
+
+  daemon.start();
+
+  assert.strictEqual(heartbeats[0].status, "running");
+}
+
 testDaemonKeepsReportingWhileMainTaskIsBusy();
 testDaemonStatusSnapshotUsesPausedAndStoppedStates();
+testDaemonReportsRunningWhenWarmupBridgeIsActive();
 
 console.log("agent-heartbeat-daemon tests passed");

@@ -100,11 +100,12 @@ function testBackendRecoveryPreloadsPublishHandler() {
   var recoveryResult = controlLoop.syncBackendOnce("idle_loop");
   assert.strictEqual(recoveryResult.success, true);
   assert.strictEqual(context.backendSync.ready, true);
-  assert(loadCalls.length > 0, "backend recovery must preload the publish handler");
-  assert(logs.some(function (entry) { return entry.message === "publish module preload ready"; }));
+  assert.strictEqual(loadCalls.length, 0, "backend recovery must not block on publish preload");
 
   controlLoop.pollControlCommands(true);
   assert.deepStrictEqual(handled, [command]);
+  assert(loadCalls.length > 0, "publish command must preload the publish handler on demand");
+  assert(logs.some(function (entry) { return entry.message === "publish module preload ready"; }));
   assert.strictEqual(logs.some(function (entry) {
     return entry.message === "后台控制指令执行失败" && /not preloaded/.test(String(entry.payload && entry.payload.message));
   }), false);

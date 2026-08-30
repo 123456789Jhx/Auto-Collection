@@ -983,6 +983,81 @@ function createUploader(config, logger, storage) {
     }
   }
 
+  function cancelActiveAgentCommands(reason, agentSessionId, identity, attempt) {
+    if (!config.upload.controlEnabled) {
+      return { success: false, message: "control disabled" };
+    }
+
+    try {
+      ensureDeviceIdentity();
+      var requestUrl = endpoint("/mobile/commands/cancel-active");
+      logger.info("活动业务任务取消请求开始", {
+        attempt: Number(attempt || 1),
+        commandId: identity && identity.commandId || "",
+        batchId: identity && identity.batchId || ""
+      });
+      var response = postJson(requestUrl, {
+        deviceId: config.device.deviceId,
+        commandId: identity && identity.commandId || "",
+        batchId: identity && identity.batchId || "",
+        reason: reason || "LOCAL_STOP_BUTTON_BEFORE_AGENT_STOP",
+        agentSessionId: agentSessionId || ""
+      });
+      var parsed = parseJsonResponse(response);
+      logger.info("活动业务任务取消完成", {
+        success: parsed.success,
+        statusCode: response.statusCode,
+        responseBody: String(parsed.body || "").slice(0, 500),
+        errorCode: parsed.errorCode || "",
+        cancelledCount: parsed.data && parsed.data.cancelledCount || parsed.data && parsed.data.stoppedCount || 0
+      });
+      return parsed;
+    } catch (error) {
+      logger.warn("活动业务任务取消失败", { attempt: Number(attempt || 1), message: String(error) });
+      return { success: false, message: String(error) };
+    }
+  }
+
+  function reportManualAgentStop(identity, reason, agentSessionId, attempt) {
+    if (!config.upload.controlEnabled) {
+      return { success: false, message: "control disabled" };
+    }
+    identity = identity || {};
+    try {
+      ensureDeviceIdentity();
+      var requestUrl = endpoint("/mobile/commands/manual-stop");
+      logger.info("手动停止任务请求开始", {
+        attempt: Number(attempt || 1),
+        commandId: identity.commandId || "",
+        batchId: identity.batchId || ""
+      });
+      var response = postJson(requestUrl, {
+        deviceId: config.device.deviceId,
+        commandId: identity.commandId || "",
+        batchId: identity.batchId || "",
+        reason: reason || "LOCAL_STOP_BUTTON",
+        agentSessionId: agentSessionId || ""
+      });
+      var parsed = parseJsonResponse(response);
+      if (parsed.data && parsed.data.success === false) parsed.success = false;
+      logger.info("手动停止任务回执完成", {
+        success: parsed.success && !(parsed.data && parsed.data.success === false),
+        attempt: Number(attempt || 1),
+        statusCode: response.statusCode,
+        commandId: identity.commandId || "",
+        batchId: identity.batchId || "",
+        responseBody: String(parsed.body || "").slice(0, 500),
+        errorCode: parsed.errorCode || "",
+        backendMessage: parsed.data && parsed.data.message || "",
+        stoppedCount: parsed.data && parsed.data.stoppedCount || 0
+      });
+      return parsed;
+    } catch (error) {
+      logger.warn("手动停止任务回执失败", { attempt: Number(attempt || 1), message: String(error) });
+      return { success: false, message: String(error) };
+    }
+  }
+
   function fetchCurrentTask() {
     if (!config.upload.enabled) {
       return null;
@@ -1286,6 +1361,8 @@ function createUploader(config, logger, storage) {
     retryCached: retryCached,
     pollCommands: pollCommands,
     ackCommand: ackCommand,
+    cancelActiveAgentCommands: cancelActiveAgentCommands,
+    reportManualAgentStop: reportManualAgentStop,
     fetchCurrentTask: fetchCurrentTask,
     checkAgentVersion: checkAgentVersion,
     applyAgentUpdate: applyAgentUpdate,

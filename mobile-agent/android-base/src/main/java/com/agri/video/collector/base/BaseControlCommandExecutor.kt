@@ -111,7 +111,9 @@ class BaseControlCommandExecutor(private val context: Context) {
             deviceId = BaseConnectivityIdentity.load(context)?.deviceId ?: context.packageName,
             stopAlreadyPerformed = true,
         )
-        stages += cleanupResult.stages.filter { it.name != "STOP_AGENT" }
+        stages += cleanupResult.stages
+            .filter { it.name != "STOP_AGENT" }
+            .map { Stage(it.name, it.status, it.reason) }
 
         val removeStage = when (AppUiForegroundController(context).removeTask()) {
             AppUiForegroundController.Result.REMOVED_EXISTING_TASK -> Stage("REMOVE_APP_TASK", "SUCCESS")

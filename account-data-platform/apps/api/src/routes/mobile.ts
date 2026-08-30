@@ -28,7 +28,7 @@ import {
 } from "../services/command.service";
 import { isCommandExecutor } from "../services/command-executor";
 import { getAgentVersionCheck, saveAgentUpdateEvent } from "../services/agent-version.service";
-import { getCurrentTask, registerDeviceToken, saveBaseConnectivityHeartbeat, saveBaseHeartbeat, saveCollectionRecord, saveHeartbeat, saveLiveCommentAction, saveLogFile, saveRuntimeLog } from "../services/mobile.service";
+import { cancelActiveAgentCommands, getCurrentTask, registerDeviceToken, reportManualAgentStop, saveBaseConnectivityHeartbeat, saveBaseHeartbeat, saveCollectionRecord, saveHeartbeat, saveLiveCommentAction, saveLogFile, saveRuntimeLog } from "../services/mobile.service";
 import { getCommentActionByKey, reserveCommentAction, updateCommentAction } from "../services/commerce-card-comment-action.service";
 import { completeTaskAssignment, saveTaskAssignmentEvent, saveTaskAssignmentProgress } from "../services/task-assignment-runtime.service";
 import { AssignmentRuntimeError } from "../repositories/task-assignment.repository";
@@ -45,6 +45,22 @@ const mobileBaseCommandAckEnvelopeSchema = z.object({
   claimToken: z.string().uuid(),
   status: z.enum(["DONE", "FAILED"]),
   result: z.record(z.unknown()).optional()
+}).strict();
+
+const mobileCancelActiveCommandsSchema = z.object({
+  deviceId: z.string().trim().min(1).max(64),
+  commandId: z.string().trim().max(100).optional(),
+  batchId: z.string().trim().max(100).optional(),
+  reason: z.string().trim().max(100).optional(),
+  agentSessionId: z.string().trim().max(100).optional()
+}).strict();
+
+const mobileManualStopSchema = z.object({
+  deviceId: z.string().trim().min(1).max(64),
+  commandId: z.string().trim().max(100).optional(),
+  batchId: z.string().trim().max(100).optional(),
+  reason: z.string().trim().max(100).optional(),
+  agentSessionId: z.string().trim().max(100).optional()
 }).strict();
 
 export const mobileRoutes = new Hono<{ Variables: MobileVariables }>();
@@ -385,6 +401,41 @@ mobileRoutes.post("/log-files", async (c) => {
     clientIp: clientIp(c)
   });
   return c.json(savedResponse(file.id, file.createdAt));
+});
+
+mobileRoutes.post("/commands/cancel-active", async (c) => {
+  const body = mobileBody(c);
+  const parsed = mobileCancelActiveCommandsSchema.safeParse(body);
+  if (!parsed.success) {
+    logValidationError("/commands/cancel-active", body, parsed.error);
+    return validationError(c, parsed.error);
+  }
+  const result = await cancelActiveAgentCommands(parsed.data, clientIp(c), deviceToken(c));
+  mobileLog("active_agent_commands_cancelled", {
+    deviceId: result.deviceId,
+    cancelledCount: result.cancelledCount,
+    reason: parsed.data.reason || "LOCAL_STOP_BUTTON_BEFORE_AGENT_STOP",
+    clientIp: clientIp(c)
+  });
+  return c.json(result);
+});
+
+mobileRoutes.post("/commands/manual-stop", async (c) => {
+  const body = mobileBody(c);
+  const parsed = mobileManualStopSchema.safeParse(body);
+  if (!parsed.success) {
+    logValidationError("/commands/manual-stop", body, parsed.error);
+    return validationError(c, parsed.error);
+  }
+  const result = await reportManualAgentStop(parsed.data, clientIp(c), deviceToken(c));
+  mobileLog("manual_task_stop_reported", {
+    deviceId: result.deviceId,
+    commandId: parsed.data.commandId || "",
+    batchId: parsed.data.batchId || "",
+    stoppedCount: result.stoppedCount,
+    clientIp: clientIp(c)
+  });
+  return c.json(result);
 });
 
 mobileRoutes.get("/commands", async (c) => {

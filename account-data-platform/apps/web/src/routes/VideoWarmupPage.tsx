@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App as AntdApp, Button, Checkbox, Input, Space, Tag, Typography } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getDevices } from "../lib/api-client";
-import { agentDisconnectMessage, isAgentCommandChannelOpen } from "../lib/agent-command-channel";
+import { agentDisconnectMessage, claimAgentDisconnectNotice, isAgentCommandChannelOpen } from "../lib/agent-command-channel";
 import {
   getAccountWarmupCommands,
   startAccountWarmupDevice,
@@ -20,6 +20,7 @@ import {
   readVideoWarmupDeviceKeywords,
   resolveVideoWarmupCommandState,
   selectOnlineVideoWarmupDevices,
+  shouldClearVideoWarmupBatch,
   videoWarmupDeviceName,
   writeActiveVideoWarmupBatchId,
   writeLastVideoWarmupKeyword,
@@ -86,7 +87,7 @@ export function VideoWarmupPage() {
   const stateFor = (row: VideoWarmupRow) => {
     const restored = resolveVideoWarmupCommandState(row, videoStopCommands, activeBatchId);
     const device = devices.find((item) => item.id === row.deviceId);
-    if (device && !isAgentCommandChannelOpen(device)) {
+    if (device && !isAgentCommandChannelOpen(device) && !["stopped", "failed", "completed", "expired"].includes(restored.key)) {
       return { key: "agent_disconnected", label: "Agent 已停止", color: "default", active: false };
     }
     return stoppingCommandIds.has(row.id) && restored.active
@@ -99,12 +100,14 @@ export function VideoWarmupPage() {
   const selectableDevices = onlineDevices.filter((device) => !busyDeviceIds.has(device.id) && isAgentCommandChannelOpen(device));
   const selectableCodes = selectableDevices.map((device) => device.deviceCode);
   const batchRestoring = Boolean(activeBatchId && commandsQuery.isPending);
+  const batchTerminal = shouldClearVideoWarmupBatch(batchRows.map((row) =>
+    resolveVideoWarmupCommandState(row, videoStopCommands, activeBatchId)));
 
   useEffect(() => {
     devices.forEach((device) => {
       const closed = !isAgentCommandChannelOpen(device);
       const key = `${device.id}:${device.agentLifecycleState || device.agentStatus || "unknown"}:${device.agentSessionId || ""}`;
-      if (closed && !agentNoticeKeys.current.has(key)) {
+      if (closed && claimAgentDisconnectNotice(device) && !agentNoticeKeys.current.has(key)) {
         agentNoticeKeys.current.add(key);
         const notice = agentDisconnectMessage(device);
         message.info(`${notice.title}：${notice.description}${notice.recovery}`);
@@ -124,12 +127,12 @@ export function VideoWarmupPage() {
   }, [activeBatchId, activeRows, batchRows.length, onlineDevices]);
 
   useEffect(() => {
-    if (!activeBatchId || commandsQuery.isPending || !batchRows.length || activeRows.length) return;
+    if (!activeBatchId || commandsQuery.isPending || !batchTerminal) return;
     setActiveBatchId("");
     writeActiveVideoWarmupBatchId("");
     setSelectedDeviceCodes([]);
     restoredBatchId.current = "";
-  }, [activeBatchId, activeRows.length, batchRows.length, commandsQuery.isPending]);
+  }, [activeBatchId, batchTerminal, commandsQuery.isPending]);
 
   useEffect(() => {
     const persistedDeviceIds = new Set(videoStopCommands.map((command) => command.deviceId));

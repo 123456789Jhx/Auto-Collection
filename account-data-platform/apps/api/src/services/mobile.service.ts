@@ -1,7 +1,7 @@
 import { config } from "../config";
 import { parseOptionalDate } from "../lib/date";
 import { createHeartbeat } from "../repositories/heartbeat.repository";
-import { reconcileAgentDisconnect, reconcileVideoWarmupRunFromHeartbeat } from "../repositories/command.repository";
+import { acknowledgeManualAgentStop, reconcileAgentDisconnect, reconcileVideoWarmupRunFromHeartbeat } from "../repositories/command.repository";
 import { createRuntimeLog } from "../repositories/log.repository";
 import { upsertDeviceLogFile } from "../repositories/log-file.repository";
 import { createLiveCommentAction } from "../repositories/live-comment.repository";
@@ -271,8 +271,7 @@ export async function saveHeartbeat(payload: MobileHeartbeatPayload, clientIp?: 
     createdBy: "mobile_agent",
     updatedBy: "mobile_agent"
   });
-  const raw = rawPayload as Record<string, unknown>;
-  if (payload.agentLifecycleState === "STOPPED" || payload.pollingEnabled === false || payload.status === "stopped") {
+  if (payload.agentLifecycleState === "STOPPED" || payload.pollingEnabled === false) {
     const reconciled = await reconcileAgentDisconnect(
       device.id,
       payload.agentStateReason || "LOCAL_STOP_BUTTON",
@@ -288,10 +287,96 @@ export async function saveHeartbeat(payload: MobileHeartbeatPayload, clientIp?: 
       });
     }
   }
-  if (payload.status === "idle" && typeof raw.runId === "string") {
-    await reconcileVideoWarmupRunFromHeartbeat(device.id, payload.status, raw.runId);
+  if (payload.status === "idle" && typeof rawPayload.runId === "string") {
+    await reconcileVideoWarmupRunFromHeartbeat(device.id, payload.status, rawPayload.runId);
   }
   return heartbeat;
+}
+
+export async function cancelActiveAgentCommands(payload: {
+  deviceId: string;
+  commandId?: string;
+  batchId?: string;
+  reason?: string;
+  agentSessionId?: string;
+}, clientIp?: string, deviceToken?: string) {
+  const device = await resolveMobileDevice({
+    deviceId: payload.deviceId,
+    clientIp,
+    deviceToken
+  });
+  const commands = payload.commandId || payload.batchId
+    ? await acknowledgeManualAgentStop(
+      device.id,
+      payload.commandId,
+      payload.batchId,
+      payload.reason || "LOCAL_STOP_BUTTON_BEFORE_AGENT_STOP",
+      payload.agentSessionId
+    )
+    : await reconcileAgentDisconnect(
+      device.id,
+      payload.reason || "LOCAL_STOP_BUTTON_BEFORE_AGENT_STOP",
+      payload.agentSessionId
+    );
+  let exitCommandId: string | undefined;
+  if (commands.length > 0) {
+    const exitCommand = await createCommand({
+      deviceId: device.deviceCode,
+      commandType: "EXIT_AGENT_APP",
+      payload: { lockScreen: false },
+      idempotencyKey: `agent-disconnect-cleanup:${device.id}:${payload.agentSessionId || "unknown"}`,
+      expiresInSeconds: 300
+    });
+    exitCommandId = exitCommand.id;
+  }
+
+  return {
+    status: payload.commandId || payload.batchId ? "STOPPED" : "CANCELLED",
+    success: commands.length > 0,
+    deviceId: device.deviceCode,
+    cancelledCount: commands.length,
+    cancelledCommandIds: commands.map((command) => command.id),
+    exitCommandId
+  };
+}
+
+export async function reportManualAgentStop(payload: {
+  deviceId: string;
+  commandId?: string;
+  batchId?: string;
+  reason?: string;
+  agentSessionId?: string;
+}, clientIp?: string, deviceToken?: string) {
+  const device = await resolveMobileDevice({ deviceId: payload.deviceId, clientIp, deviceToken });
+  const commands = await acknowledgeManualAgentStop(
+    device.id,
+    payload.commandId,
+    payload.batchId,
+    payload.reason || "LOCAL_STOP_BUTTON",
+    payload.agentSessionId
+  );
+  let exitCommandId: string | undefined;
+  if (commands.length > 0) {
+    const exitCommand = await createCommand({
+      deviceId: device.deviceCode,
+      commandType: "EXIT_AGENT_APP",
+      payload: { lockScreen: false },
+      idempotencyKey: `agent-disconnect-cleanup:${device.id}:${payload.agentSessionId || "unknown"}`,
+      expiresInSeconds: 300
+    });
+    exitCommandId = exitCommand.id;
+  }
+  return {
+    status: "STOPPED",
+    success: commands.length > 0,
+    ...(commands.length ? {} : { message: "ACTIVE_TASK_NOT_FOUND_OR_TERMINAL" }),
+    deviceId: device.deviceCode,
+    stoppedCount: commands.length,
+    stoppedCommandIds: commands.map((command) => command.id),
+    taskId: commands[0]?.id || payload.commandId || "",
+    exitCommandId,
+    reason: payload.reason || "LOCAL_STOP_BUTTON"
+  };
 }
 
 export async function saveBaseHeartbeat(payload: MobileBaseHeartbeatPayload, clientIp?: string, deviceToken?: string) {

@@ -25,6 +25,14 @@ function adminGet(path: string) {
   });
 }
 
+function mobilePost(path: string, body: unknown) {
+  return app.request(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-device-token": deviceToken },
+    body: JSON.stringify(body)
+  });
+}
+
 beforeAll(async () => {
   const login = await app.request("/api/v1/admin/auth/login", {
     method: "POST",
@@ -187,4 +195,64 @@ describe("account warmup mobile commands", () => {
       ));
     expect(rows).toHaveLength(1);
   });
+
+  test("records an APK manual stop against the bound running command", async () => {
+    const manualBatchId = crypto.randomUUID();
+    const start = await adminRequest("/api/v1/admin/mobile-commands", {
+      deviceId: deviceCode,
+      commandType: "ACCOUNT_WARMUP_RUN",
+      payload: { featureKey: "video_warmup", batchId: manualBatchId, config: { targetKeyword: "手动停止测试" } }
+    });
+    expect(start.status).toBe(201);
+    const created = await start.json();
+    await db.update(mobileCommands).set({ status: "RUNNING" }).where(eq(mobileCommands.id, created.id));
+
+    const response = await mobilePost("/api/v1/mobile/commands/manual-stop", {
+      deviceId: deviceCode,
+      commandId: created.id,
+      batchId: manualBatchId,
+      reason: "LOCAL_STOP_BUTTON"
+    });
+    expect(response.status).toBe(200);
+    const receipt = await response.json();
+    expect(receipt).toMatchObject({ status: "STOPPED", success: true, stoppedCount: 1, taskId: created.id });
+    expect(receipt.exitCommandId).toBeString();
+
+    const [saved] = await db.select().from(mobileCommands).where(eq(mobileCommands.id, created.id));
+    expect(saved).toMatchObject({ status: "DONE", resultJson: { status: "STOPPED", reason: "LOCAL_STOP_BUTTON" } });
+
+    const [cleanup] = await db.select().from(mobileCommands).where(eq(mobileCommands.id, receipt.exitCommandId));
+    expect(cleanup).toMatchObject({ commandType: "EXIT_AGENT_APP", status: "PENDING" });
+
+    const repeated = await mobilePost("/api/v1/mobile/commands/manual-stop", {
+      deviceId: deviceCode,
+      commandId: created.id,
+      batchId: manualBatchId,
+      reason: "LOCAL_STOP_BUTTON"
+    });
+    expect(await repeated.json()).toMatchObject({ status: "STOPPED", success: false, stoppedCount: 0, message: "ACTIVE_TASK_NOT_FOUND_OR_TERMINAL" });
+  });
+
+  test("falls back to the active video warmup command when APK identity is missing", async () => {
+    const fallbackBatchId = crypto.randomUUID();
+    const start = await adminRequest("/api/v1/admin/mobile-commands", {
+      deviceId: deviceCode,
+      commandType: "ACCOUNT_WARMUP_RUN",
+      payload: { featureKey: "video_warmup", batchId: fallbackBatchId, config: { targetKeyword: "缺少身份停止测试" } }
+    });
+    expect(start.status).toBe(201);
+    const created = await start.json();
+    await db.update(mobileCommands).set({ status: "RUNNING" }).where(eq(mobileCommands.id, created.id));
+
+    const response = await mobilePost("/api/v1/mobile/commands/manual-stop", {
+      deviceId: deviceCode,
+      reason: "LOCAL_STOP_BUTTON"
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "STOPPED", success: true, stoppedCount: 1, taskId: created.id });
+
+    const [saved] = await db.select().from(mobileCommands).where(eq(mobileCommands.id, created.id));
+    expect(saved).toMatchObject({ status: "DONE", resultJson: { status: "STOPPED", reason: "LOCAL_STOP_BUTTON" } });
+  });
+
 });
