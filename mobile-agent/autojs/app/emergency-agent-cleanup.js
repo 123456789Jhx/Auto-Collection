@@ -29,9 +29,9 @@ function runEmergencyCleanup(options) {
 
   var result = { terminal: true, cleanupKey: cleanupKey, status: "FAILED", reason: "CLEANUP_MODULE_UNAVAILABLE" };
   try {
-    var cleanupModule = require("../features/new-comment/cleanup.js");
-    var cleanup = cleanupModule && cleanupModule.createIsolatedCleanup
-      ? cleanupModule.createIsolatedCleanup({}, options.cleanupOptions || {}) : null;
+    var cleanupModule = require("../features/publish-video/douyin-post-publish-cleanup.js");
+    var cleanup = cleanupModule && cleanupModule.createDouyinPostPublishCleanup
+      ? cleanupModule.createDouyinPostPublishCleanup(options.cleanupOptions || {}) : null;
     if (!cleanup || typeof cleanup.run !== "function") throw new Error("CLEANUP_MODULE_UNAVAILABLE");
     var cleanupResult = cleanup.run(request.payload || request, {});
     result = {
