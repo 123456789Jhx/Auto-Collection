@@ -1,10 +1,10 @@
 "use strict";
 
-var contract = require("./contract.js");
+var contract = require("../../core/action-contract.js");
 var layout = require("./douyin-layout.js");
 var commentCapture = require("./comment-capture.js");
-var createGestureActions = require("./gesture-actions.js").createGestureActions;
-var createScreenActions = require("./screen-actions.js").createScreenActions;
+var createGestureActions = require("../../core/gesture-actions.js").createGestureActions;
+var createScreenActions = require("../../core/screen-actions.js").createScreenActions;
 var defaultAccessibility = require("../../core/accessibility.js");
 
 function createIsolatedRuntime(context, options) {
