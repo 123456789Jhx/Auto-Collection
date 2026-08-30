@@ -2,7 +2,6 @@
 
 var assert = require("node:assert/strict");
 var test = require("node:test");
-var legacyFactory = require("../features/account-warmup/live-comment-entry.js").createLiveCommentEntryTask;
 var commentCapture = require("../features/new-comment/comment-capture.js");
 var layout = require("../features/new-comment/douyin-layout.js");
 
@@ -45,18 +44,6 @@ function captureFixture(received, result) {
   };
 }
 
-function runLegacy(runtime, payload, received) {
-  var stages = [];
-  var capture = captureFixture(received);
-  var task = legacyFactory({
-    runtime: runtime,
-    deviceId: "device-1",
-    reportStage: function (event) { stages.push(copy(event)); },
-    captureRunnerModule: { createCommentCaptureRunner: function () { return capture; } }
-  });
-  return { result: task.run(payload, { shouldStop: function () { return false; } }), stages: stages };
-}
-
 function runIsolated(runtime, payload, received, overrides) {
   var stages = [];
   var options = {
@@ -70,81 +57,88 @@ function runIsolated(runtime, payload, received, overrides) {
   return { result: workflow.run(payload, { shouldStop: function () { return false; } }), stages: stages };
 }
 
-test("workflow keeps legacy success actions, stages, result fields and capture scope", function () {
-  var payload = { targetKeyword: "药材种植", minViewerCount: 10, batchId: "batch-1" };
-  var legacyScope = [];
-  var isolatedScope = [];
-  var legacyRuntime = runtimeFixture();
-  var isolatedRuntime = runtimeFixture();
-  var legacy = runLegacy(legacyRuntime, payload, legacyScope);
-  var isolated = runIsolated(isolatedRuntime, payload, isolatedScope);
-  var withoutWait = function (item) { return item !== "waitRandom"; };
-
-  assert.deepEqual(isolatedRuntime.actions.filter(withoutWait), legacyRuntime.actions.filter(withoutWait));
-  assert.deepEqual(isolated.stages.map(function (event) { return event.stage; }),
-    legacy.stages.map(function (event) { return event.stage; }));
-  assert.deepEqual(isolated.result, legacy.result);
-  assert.deepEqual(isolatedScope, legacyScope);
-  assert.deepEqual(isolatedScope[0], {
-    batchId: "batch-1",
-    deviceId: "device-1",
-    roomKey: "live-comment:药材种植:candidate:1"
+test("workflow waits for stop after entering without post-entry business actions", function () {
+  var entered = false;
+  var stopRequested = false;
+  var waitCount = 0;
+  var captureCalls = 0;
+  var cleanupCalls = 0;
+  var runtime = runtimeFixture({
+    detectPlatformVerification: function () { throw new Error("verification must not run"); },
+    isLiveRoom: function () {
+      entered = true;
+      return true;
+    },
+    waitRandom: function () {
+      waitCount += 1;
+      if (waitCount >= 5) {
+        entered = true;
+        stopRequested = true;
+      }
+      runtime.actions.push("waitRandom");
+      return true;
+    }
   });
+  var stages = [];
+  var workflow = feature("workflow").createIsolatedLiveCommentWorkflow({
+    runtime: runtime,
+    reportStage: function (event) { stages.push(copy(event)); },
+    commentRunner: {
+      capture: function () {
+        captureCalls += 1;
+        return { status: "LIVE_COMMENT_ENTRY_CAPTURED" };
+      }
+    },
+    finalCleanup: {
+      run: function () {
+        cleanupCalls += 1;
+        return { completed: true };
+      }
+    }
+  });
+
+  var result = workflow.run({ targetKeyword: "关键词", minViewerCount: 300 }, {
+    shouldStop: function () { return stopRequested; }
+  });
+
+  assert.deepEqual(result, { status: "STOPPED" });
+  assert.equal(runtime.actions.includes("readViewerCount"), false);
+  assert.equal(runtime.actions.includes("nextLive"), false);
+  assert.equal(captureCalls, 0);
+  assert.equal(cleanupCalls, 0);
+  assert.equal(stages.filter(function (event) { return event.stage === "ENTERED"; }).length, 1);
 });
 
-test("workflow retries one missing first result and confirms a room at most three times", function () {
+test("workflow does not fail the task when the live-room click reports failure", function () {
   var opens = 0;
-  var confirmations = 0;
+  var stopRequested = false;
+  var waitCount = 0;
   var runtime = runtimeFixture({
     openFirstLive: function () {
       opens += 1;
-      return opens === 1 ? { success: false, reason: "NO_RESULT" } : true;
+      return { success: false, reason: "NO_RESULT" };
     },
-    isLiveRoom: function () { confirmations += 1; return confirmations === 3; }
+    waitRandom: function () {
+      waitCount += 1;
+      if (waitCount >= 4) stopRequested = true;
+      runtime.actions.push("waitRandom");
+      return true;
+    },
+    detectPlatformVerification: function () { throw new Error("verification must not run"); }
   });
-  var run = runIsolated(runtime, { targetKeyword: "关键词" }, []);
+  var workflow = feature("workflow").createIsolatedLiveCommentWorkflow({
+    runtime: runtime,
+    commentRunner: captureFixture([])
+  });
+  var result = workflow.run({ targetKeyword: "关键词" }, { shouldStop: function () { return stopRequested; } });
 
-  assert.equal(run.result.status, "LIVE_COMMENT_ENTRY_ENTERED");
-  assert.deepEqual([opens, confirmations], [2, 3]);
-  assert.equal(runtime.actions.filter(function (action) {
-    return action === "restartSearch:关键词";
-  }).length, 1);
-  assert.equal(run.stages.filter(function (event) { return event.stage === "RETRYING_SEARCH"; }).length, 1);
+  assert.equal(result.status, "STOPPED");
+  assert.equal(opens, 1);
+  assert.equal(runtime.actions.includes("restartSearch:关键词"), false);
+  assert.equal(runtime.actions.includes("isLiveRoom"), false);
 });
 
-test("workflow skips ended rooms and exhausts bounded low-viewer candidates", function () {
-  var endedReads = 0;
-  var endedRuntime = runtimeFixture({
-    readViewerCount: function () {
-      endedReads += 1;
-      return endedReads === 1
-        ? { count: null, ended: true, source: "ocr", endedTextSample: "直播已结束" }
-        : { count: 21, ended: false, source: "ocr" };
-    }
-  });
-  var ended = runIsolated(endedRuntime, {
-    targetKeyword: "关键词", minViewerCount: 10, maxCandidateRooms: 2
-  }, []);
-  assert.equal(ended.result.status, "LIVE_COMMENT_ENTRY_ENTERED");
-  assert.equal(ended.result.viewerCount, 21);
-  assert.ok(ended.stages.some(function (event) { return event.stage === "SKIPPING_ENDED_LIVE_ROOM"; }));
-
-  var lowReads = [2, 3];
-  var lowRuntime = runtimeFixture({
-    readViewerCount: function () { return { count: lowReads.shift(), source: "ocr" }; }
-  });
-  var low = runIsolated(lowRuntime, {
-    targetKeyword: "关键词", minViewerCount: 10, maxCandidateRooms: 2
-  }, []);
-  assert.deepEqual({ status: low.result.status, reason: low.result.reasonCode, count: low.result.viewerCount }, {
-    status: "LIVE_COMMENT_ENTRY_VIEWER_THRESHOLD_EXHAUSTED",
-    reason: "VIEWER_THRESHOLD_NOT_MET",
-    count: 3
-  });
-  assert.equal(lowRuntime.actions.filter(function (action) { return action === "nextLive"; }).length, 1);
-});
-
-test("workflow stops around actions and fails closed on verification detection errors", function () {
+test("workflow stops around actions without platform verification scans", function () {
   var calls = 0;
   var stopped = feature("workflow").createIsolatedLiveCommentWorkflow({
     runtime: { openDouyin: function () { calls += 1; } },
@@ -153,85 +147,27 @@ test("workflow stops around actions and fails closed on verification detection e
   assert.deepEqual(stopped, { status: "STOPPED" });
   assert.equal(calls, 0);
 
-  var diagnostics = {
-    risk: { detected: true },
-    pageStructure: { title: "安全验证" },
-    actionTrace: ["openDouyin"]
-  };
-  var detected = runIsolated(runtimeFixture({
+  var stopRequested = false;
+  var detectorCalls = 0;
+  var runtime = runtimeFixture({
     detectPlatformVerification: function () {
-      return { success: false, reason: "PLATFORM_VERIFICATION", details: diagnostics };
-    }
-  }), { targetKeyword: "关键词" }, []).result;
-  assert.equal(detected.status, "LIVE_COMMENT_ENTRY_PLATFORM_VERIFICATION");
-  assert.equal(detected.cleanupRequired, true);
-  assert.deepEqual(detected.verificationDiagnostics, diagnostics);
-
-  var failedOpenVerification = runIsolated(runtimeFixture({
-    openDouyin: function () { return false; },
-    detectPlatformVerification: function () {
-      return { success: false, reason: "PLATFORM_VERIFICATION", details: diagnostics };
-    }
-  }), { targetKeyword: "关键词" }, []).result;
-  assert.equal(failedOpenVerification.status, "LIVE_COMMENT_ENTRY_PLATFORM_VERIFICATION");
-
-  var laterActions = 0;
-  var checkFailed = runIsolated(runtimeFixture({
-    detectPlatformVerification: function () {
-      return { success: false, reason: "VERIFICATION_CHECK_FAILED", message: "detector crashed",
-        details: { actionTrace: ["openDouyin"] } };
+      detectorCalls += 1;
+      return { success: false, reason: "PLATFORM_VERIFICATION" };
     },
-    openSearch: function () { laterActions += 1; return true; }
-  }), { targetKeyword: "关键词" }, []).result;
-  assert.equal(checkFailed.status, "LIVE_COMMENT_ENTRY_FAILED");
-  assert.equal(checkFailed.reasonCode, "VERIFICATION_CHECK_FAILED");
-  assert.equal(laterActions, 0);
-});
-
-test("workflow always cleans capture results and preserves legacy cleanup conversions", function () {
-  function captureResult(value) { return { capture: function () { return copy(value); } }; }
-  var cleanupCalls = 0;
-  var cleanup = { run: function (payload, lifecycle) {
-    cleanupCalls += 1;
-    lifecycle.beforeReturnToAgent();
-    return { completed: true };
-  } };
-  var success = runIsolated(runtimeFixture(), { targetKeyword: "关键词" }, [], {
-    commentRunner: captureResult({ status: "LIVE_COMMENT_ENTRY_ENTERED", captureStatus: "LIVE_COMMENT_ENTRY_CAPTURED" }),
-    finalCleanup: cleanup
+    waitRandom: function () {
+      stopRequested = true;
+      return true;
+    }
   });
-  assert.deepEqual([success.result.status, success.result.captureStatus, cleanupCalls],
-    ["LIVE_COMMENT_ENTRY_ENTERED", "LIVE_COMMENT_ENTRY_CAPTURED", 1]);
-  assert.ok(success.stages.some(function (event) { return event.stage === "RETURNING_TO_AGENT"; }));
-
-  var failed = runIsolated(runtimeFixture(), { targetKeyword: "关键词" }, [], {
-    commentRunner: captureResult({ status: "LIVE_COMMENT_ENTRY_ENTERED" }),
-    finalCleanup: { run: function () { return { completed: false, reason: "DISMISS_FAILED" }; } }
-  }).result;
-  assert.equal(failed.status, "LIVE_COMMENT_ENTRY_CLEANUP_FAILED");
-
-  var verification = runIsolated(runtimeFixture(), { targetKeyword: "关键词" }, [], {
-    commentRunner: captureResult({
-      status: "LIVE_COMMENT_ENTRY_PLATFORM_VERIFICATION",
-      capturePlatformVerification: true,
-      cleanupRequired: true
-    }),
-    finalCleanup: cleanup
-  }).result;
-  assert.equal(verification.status, "LIVE_COMMENT_ENTRY_CAPTURE_PLATFORM_VERIFICATION");
-  assert.equal(verification.cleanupRequired, false);
-
-  var stopCleanupCalls = 0;
-  var partialStop = runIsolated(runtimeFixture(), { targetKeyword: "关键词" }, [], {
-    commentRunner: captureResult({ status: "STOPPED", commentCount: 1, comments: [{ commentText: "部分" }] }),
-    finalCleanup: { run: function () { stopCleanupCalls += 1; } }
-  }).result;
-  assert.equal(partialStop.commentCount, 1);
-  assert.equal(stopCleanupCalls, 0);
+  var result = feature("workflow").createIsolatedLiveCommentWorkflow({ runtime: runtime }).run(
+    { targetKeyword: "关键词" }, { shouldStop: function () { return stopRequested; } });
+  assert.equal(result.status, "STOPPED");
+  assert.equal(detectorCalls, 0);
 });
 
 test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnostics", function () {
   var events = [];
+  var liveEntryOptions = null;
   var requestedRegions = [];
   var screenRecycled = 0;
   var clipRecycled = 0;
@@ -248,7 +184,11 @@ test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnost
   var runtime = feature("runtime").createIsolatedRuntime({
     douyin: {
       openApp: function () { events.push("openApp"); return true; },
-      openLiveRoomFromCurrentScreen: function () { events.push("openLiveRoomFromCurrentScreen"); return true; }
+      openLiveRoomFromCurrentScreen: function (visibleTextHint, options) {
+        events.push("openLiveRoomFromCurrentScreen");
+        liveEntryOptions = options;
+        return true;
+      }
     },
     screenRecognizer: recognizer,
     ocrEngine: { recognize: function (clip) { return clip.text; } },
@@ -279,6 +219,7 @@ test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnost
   assert.equal(runtime.openDouyin().success, true);
   assert.equal(runtime.openLiveTab().success, true);
   assert.equal(runtime.openFirstLive().success, true);
+  assert.deepEqual(liveEntryOptions, { skipLiveRoomVerification: true });
   assert.equal(runtime.swipeComments().success, true);
   assert.equal(runtime.nextLive().success, true);
   var comments = runtime.readComments();

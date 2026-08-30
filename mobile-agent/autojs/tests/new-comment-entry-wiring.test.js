@@ -10,6 +10,7 @@ var createOldBridge = require("../app/account-warmup-command-bridge.js").createA
 
 var root = path.join(__dirname, "..");
 var mainPath = path.join(root, "main.module.js");
+var entryPath = path.join(root, "features/new-comment/index.js");
 
 function sha256(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
@@ -29,6 +30,12 @@ test("主入口先安装隔离评论桥，再安装旧养号桥", function () {
   assert(createOld > installNew);
   assert(installOld > createOld);
   assert(preserveMetadata > installOld);
+});
+
+test("隔离评论任务默认复用视频养号退出清理器", function () {
+  var source = fs.readFileSync(entryPath, "utf8");
+  assert.match(source, /douyin-post-publish-cleanup\.js/);
+  assert.match(source, /createDouyinPostPublishCleanup/);
 });
 
 test("真实新旧桥组合只恢复同一次底层轮询元数据且隔离命令仍先消费", function () {

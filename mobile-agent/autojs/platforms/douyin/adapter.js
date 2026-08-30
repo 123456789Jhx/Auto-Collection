@@ -3511,7 +3511,9 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return best;
   }
 
-  function openLiveRoomFromCurrentScreen(visibleTextHint) {
+  function openLiveRoomFromCurrentScreen(visibleTextHint, options) {
+    options = options || {};
+    var skipLiveRoomVerification = options.skipLiveRoomVerification === true;
     var entryNode = findLiveRoomEntryNode();
 
     if (entryNode) {
@@ -3523,6 +3525,13 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       });
       autojsUtils.axisClick(entryNode, logger);
       autojsUtils.sleepRandom(2500, 4000);
+      if (skipLiveRoomVerification) {
+        logger.info("抓取评论词已执行直播入口点击，跳过直播间状态验证", {
+          text: entryNode.text && entryNode.text(),
+          bounds: autojsUtils.formatBounds(entryBounds)
+        });
+        return true;
+      }
       if (isLiveRoomVisible()) {
         return true;
       }
@@ -3650,6 +3659,10 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       });
       autojsUtils.clickPoint(Math.floor(points[i].x), Math.floor(points[i].y), logger, "live_entry_fallback_" + points[i].name);
       autojsUtils.sleepRandom(2200, 3200);
+      if (skipLiveRoomVerification) {
+        logger.info("抓取评论词已执行直播入口兜底点击，跳过直播间状态验证", { point: points[i].name });
+        return true;
+      }
       if (isLiveRoomVisible()) {
         logger.info("坐标兜底进入直播间成功", { point: points[i].name });
         return true;

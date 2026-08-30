@@ -279,7 +279,8 @@ function createIsolatedRuntime(context, options) {
       return invoke("openFirstLive", douyin, douyin.openFirstLive, [], "CLICK_FAILED");
     }
     if (typeof douyin.openLiveRoomFromCurrentScreen === "function") {
-      return invoke("openFirstLive", douyin, douyin.openLiveRoomFromCurrentScreen, [], "NO_RESULT");
+      return invoke("openFirstLive", douyin, douyin.openLiveRoomFromCurrentScreen,
+        [undefined, { skipLiveRoomVerification: true }], "NO_RESULT");
     }
     trace("openFirstLive");
     if (stopped()) return contract.stopped();

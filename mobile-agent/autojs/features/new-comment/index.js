@@ -2,7 +2,7 @@
 
 var runtimeModule = require("./runtime.js");
 var workflowModule = require("./workflow.js");
-var cleanupModule = require("./cleanup.js");
+var cleanupModule = require("../publish-video/douyin-post-publish-cleanup.js");
 
 function assign(target, source) {
   Object.keys(source || {}).forEach(function (key) { target[key] = source[key]; });
@@ -15,7 +15,11 @@ function createIsolatedLiveCommentEntryTask(context, options) {
   var createRuntime = options.createRuntime || runtimeModule.createIsolatedRuntime;
   var createWorkflow = options.createWorkflow || workflowModule.createIsolatedLiveCommentWorkflow;
   var finalCleanup = options.finalCleanup || options.cleanup ||
-    cleanupModule.createIsolatedCleanup(context, options.cleanupOptions || options);
+    cleanupModule.createDouyinPostPublishCleanup({
+      logger: options.logger || context.logger,
+      cooldownMs: 0,
+      isPublishing: function () { return false; }
+    });
 
   function run(payload, control) {
     control = control || {};
