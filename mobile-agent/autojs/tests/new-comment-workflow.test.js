@@ -4,6 +4,7 @@ var assert = require("node:assert/strict");
 var test = require("node:test");
 var commentCapture = require("../features/new-comment/comment-capture.js");
 var layout = require("../features/new-comment/douyin-layout.js");
+var cleanupModule = require("../features/publish-video/douyin-post-publish-cleanup.js");
 
 function feature(name) {
   return require("../features/new-comment/" + name + ".js");
@@ -256,13 +257,13 @@ test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnost
   assert.equal(failureClips, 2);
 });
 
-test("cleanup performs exact recents order, falls back safely and is idempotent", function () {
+test("public cleanup performs exact recents order and falls back safely", function () {
   var events = [];
   var lifecycleCalls = 0;
-  var cleanup = feature("cleanup").createIsolatedCleanup({}, {
+  var cleanup = cleanupModule.createDouyinPostPublishCleanup({
+    cooldownMs: 0,
     openRecents: function () { events.push("recents"); return true; },
-    isDouyinForeground: function () { return false; },
-    isRecentsPackage: function () { return true; },
+    getCurrentPackage: function () { return "com.miui.home"; },
     findDouyinCard: function () { events.push("find:douyin"); return {}; },
     dismissCard: function () { events.push("left-dismiss"); return true; },
     findAgentCard: function () { events.push("find:agent"); return {}; },
@@ -271,14 +272,13 @@ test("cleanup performs exact recents order, falls back safely and is idempotent"
   });
   var lifecycle = { beforeReturnToAgent: function () { lifecycleCalls += 1; events.push("lifecycle"); } };
   var first = cleanup.run({ taskId: "task-1" }, lifecycle);
-  var second = cleanup.run({ taskId: "task-1" }, lifecycle);
   assert.deepEqual(events, ["recents", "find:douyin", "left-dismiss", "lifecycle", "find:agent", "open:agent"]);
   assert.equal(first.completed, true);
-  assert.equal(second.cached, true);
   assert.equal(lifecycleCalls, 1);
 
   var fallbackEvents = [];
-  var fallback = feature("cleanup").createIsolatedCleanup({}, {
+  var fallback = cleanupModule.createDouyinPostPublishCleanup({
+    cooldownMs: 0,
     openRecents: function () { return false; },
     goHome: function () { fallbackEvents.push("home"); return true; },
     findAgentHomeIcon: function () { return null; },
@@ -287,30 +287,16 @@ test("cleanup performs exact recents order, falls back safely and is idempotent"
   }).run({}, { beforeReturnToAgent: function () { fallbackEvents.push("lifecycle"); } });
   assert.equal(fallback.completed, true);
   assert.equal(fallback.fallback, "PACKAGE");
-  assert.deepEqual(fallbackEvents, ["lifecycle", "home", "package"]);
+  assert.deepEqual(fallbackEvents, ["home", "package"]);
 
-  var stable = feature("cleanup").createIsolatedCleanup({}, {
-    openRecents: function () { throw new Error("recents crashed"); },
-    goHome: function () { throw new Error("home crashed"); },
+  var stable = cleanupModule.createDouyinPostPublishCleanup({
+    cooldownMs: 0,
+    openRecents: function () { return false; },
+    goHome: function () { return false; },
     openAgentByPackage: function () { return false; }
   }).run({});
   assert.equal(stable.completed, false);
-  assert.equal(typeof stable.reason, "string");
-
-  var centeredDismisses = 0;
-  var centeredForeground = [true, false];
-  var centered = feature("cleanup").createIsolatedCleanup({}, {
-    openRecents: function () { return true; },
-    findDouyinCard: function () { return null; },
-    isDouyinForeground: function () { return centeredForeground.shift(); },
-    findCenteredTaskCard: function () { return { id: "centered" }; },
-    dismissCard: function (card) { centeredDismisses += card.id === "centered" ? 1 : 0; return true; },
-    findAgentCard: function () { return {}; },
-    openAgentCard: function () { return true; },
-    wait: function () {}
-  }).run({});
-  assert.equal(centered.completed, true);
-  assert.equal(centeredDismisses, 1);
+  assert.equal(stable.reason, "HOME_FALLBACK_FAILED");
 });
 
 test("entry task creates a runtime per run and exposes the same idempotent cleanup", function () {

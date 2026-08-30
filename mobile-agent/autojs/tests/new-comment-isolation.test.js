@@ -7,7 +7,7 @@ var test = require("node:test");
 var workflowModule = require("../features/new-comment/workflow.js");
 
 var featureRoot = path.join(__dirname, "../features/new-comment");
-var requiredFiles = ["runtime.js", "workflow.js", "cleanup.js", "index.js"];
+var requiredFiles = ["runtime.js", "workflow.js", "index.js"];
 
 function stoppingControl(stopAfter) {
   var calls = 0;
