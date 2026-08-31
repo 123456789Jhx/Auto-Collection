@@ -3523,7 +3523,18 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         desc: entryNode.desc && entryNode.desc(),
         bounds: autojsUtils.formatBounds(entryBounds)
       });
-      autojsUtils.axisClick(entryNode, logger);
+      if (skipLiveRoomVerification) {
+        var screen = autojsUtils.getScreenSize();
+        var randomPoint = randomLiveContentPoint(screen);
+        logger.info("抓取评论词改用直播画面区域随机点击进入直播间", {
+          x: randomPoint.x,
+          y: randomPoint.y,
+          bounds: autojsUtils.formatBounds(entryBounds)
+        });
+        autojsUtils.clickPoint(randomPoint.x, randomPoint.y, logger, "new_comment_live_content_random");
+      } else {
+        autojsUtils.axisClick(entryNode, logger);
+      }
       autojsUtils.sleepRandom(2500, 4000);
       if (skipLiveRoomVerification) {
         logger.info("抓取评论词已执行直播入口点击，跳过直播间状态验证", {
@@ -3543,7 +3554,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
       return false;
     }
 
-    if (tryLiveEntryFallback(visibleTextHint)) {
+    if (tryLiveEntryFallback(visibleTextHint, options)) {
       return true;
     }
 
@@ -3634,43 +3645,43 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     return true;
   }
 
-  function tryLiveEntryFallback(visibleTextHint) {
+  function tryLiveEntryFallback(visibleTextHint, options) {
+    options = options || {};
+    var skipLiveRoomVerification = options.skipLiveRoomVerification === true;
     var visibleText = visibleTextHint || extractVisibleText();
     if (!/进入直播间|点击进入直播间|正在直播|直播中|主播|讲解中|热聊中|直播[，,\s]*按钮/.test(visibleText)) {
       return false;
     }
 
     var screen = autojsUtils.getScreenSize();
-    var points = [
-      { x: screen.width * 0.50, y: screen.height * 0.20, name: "top_center" },
-      { x: screen.width * 0.50, y: screen.height * 0.28, name: "upper_card" },
-      { x: screen.width * 0.68, y: screen.height * 0.28, name: "upper_right" },
-      { x: screen.width * 0.50, y: screen.height * 0.36, name: "card_center" },
-      { x: screen.width * 0.50, y: screen.height * 0.42, name: "center_upper" },
-      { x: screen.width * 0.70, y: screen.height * 0.42, name: "right_upper" }
-    ];
-
-    for (var i = 0; i < points.length; i++) {
+    for (var i = 0; i < 3; i++) {
+      var point = randomLiveContentPoint(screen);
       logger.warn("直播入口控件未找到，尝试坐标兜底点击", {
-        point: points[i].name,
-        x: Math.floor(points[i].x),
-        y: Math.floor(points[i].y),
+        point: "live_content_random_" + (i + 1),
+        x: point.x,
+        y: point.y,
         textSample: visibleText.slice(0, 160)
       });
-      autojsUtils.clickPoint(Math.floor(points[i].x), Math.floor(points[i].y), logger, "live_entry_fallback_" + points[i].name);
+      autojsUtils.clickPoint(point.x, point.y, logger, "live_entry_fallback_random_" + (i + 1));
       autojsUtils.sleepRandom(2200, 3200);
       if (skipLiveRoomVerification) {
-        logger.info("抓取评论词已执行直播入口兜底点击，跳过直播间状态验证", { point: points[i].name });
+        logger.info("抓取评论词已执行直播入口兜底点击，跳过直播间状态验证", { point: "live_content_random_" + (i + 1) });
         return true;
       }
       if (isLiveRoomVisible()) {
-        logger.info("坐标兜底进入直播间成功", { point: points[i].name });
+        logger.info("坐标兜底进入直播间成功", { point: "live_content_random_" + (i + 1) });
         return true;
       }
       back();
       autojsUtils.sleepRandom(700, 1100);
     }
     return false;
+  }
+
+  function randomLiveContentPoint(screen) {
+    var x = 0.17 + Math.random() * 0.69;
+    var y = 0.28 + Math.random() * 0.37;
+    return { x: Math.floor(screen.width * x), y: Math.floor(screen.height * y) };
   }
 
   function isLiveRoomVisible() {
