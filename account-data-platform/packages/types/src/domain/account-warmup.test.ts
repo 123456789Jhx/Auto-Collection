@@ -106,7 +106,7 @@ describe("account warmup command contracts", () => {
     })).toEqual({
       featureKey: "isolated_live_comment_entry",
       batchId,
-      config: { targetKeyword: "药材种植", minViewerCount: 300 }
+      config: { targetKeyword: "药材种植", minViewerCount: 300, captureDurationMinutes: 5 }
     });
   });
 

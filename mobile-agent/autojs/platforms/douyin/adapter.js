@@ -3531,10 +3531,13 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
           y: randomPoint.y,
           bounds: autojsUtils.formatBounds(entryBounds)
         });
-        autojsUtils.clickPoint(randomPoint.x, randomPoint.y, logger, "new_comment_live_content_random");
+        var randomClickResult = autojsUtils.clickPoint(randomPoint.x, randomPoint.y, logger, "new_comment_live_content_random");
+        logger.info("抓取评论词直播画面随机点击完成", { x: randomPoint.x, y: randomPoint.y, result: randomClickResult });
       } else {
         autojsUtils.axisClick(entryNode, logger);
+        logger.info("抖音直播入口控件点击完成", { bounds: autojsUtils.formatBounds(entryBounds) });
       }
+      logger.info("抓取评论词等待点击后的直播间响应", { waitMinMs: 2500, waitMaxMs: 4000 });
       autojsUtils.sleepRandom(2500, 4000);
       if (skipLiveRoomVerification) {
         logger.info("抓取评论词已执行直播入口点击，跳过直播间状态验证", {
@@ -3663,6 +3666,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
         textSample: visibleText.slice(0, 160)
       });
       autojsUtils.clickPoint(point.x, point.y, logger, "live_entry_fallback_random_" + (i + 1));
+      logger.info("抓取评论词直播入口随机兜底点击完成", { x: point.x, y: point.y, attempt: i + 1 });
       autojsUtils.sleepRandom(2200, 3200);
       if (skipLiveRoomVerification) {
         logger.info("抓取评论词已执行直播入口兜底点击，跳过直播间状态验证", { point: "live_content_random_" + (i + 1) });
@@ -3682,6 +3686,40 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     var x = 0.17 + Math.random() * 0.69;
     var y = 0.28 + Math.random() * 0.37;
     return { x: Math.floor(screen.width * x), y: Math.floor(screen.height * y) };
+  }
+
+  function clickFirstLiveByRandomArea(options) {
+    options = options || {};
+    var screen = autojsUtils.getScreenSize();
+    var point = randomLiveContentPoint(screen);
+    logger.info("抓取评论词随机点击第一个直播间", {
+      x: point.x,
+      y: point.y,
+      area: "live_content"
+    });
+    var clicked = autojsUtils.clickPoint(point.x, point.y, logger, "new_comment_first_live_random");
+    if (!clicked) {
+      logger.warn("抓取评论词随机点击第一个直播间失败", { x: point.x, y: point.y });
+      return false;
+    }
+    var waitMs = Math.floor(7500 + Math.random() * 1001);
+    logger.info("抓取评论词等待直播间响应", { waitMs: waitMs });
+    var elapsedMs = 0;
+    while (elapsedMs < waitMs) {
+      if (typeof options.shouldStop === "function" && options.shouldStop()) {
+        logger.info("抓取评论词直播间响应等待被停止令抢占", { waitMs: waitMs, elapsedMs: elapsedMs });
+        return { success: false, reason: "STOP_REQUESTED", message: "task stopped" };
+      }
+      var sliceMs = Math.min(100, waitMs - elapsedMs);
+      sleep(sliceMs);
+      elapsedMs += sliceMs;
+    }
+    if (typeof options.shouldStop === "function" && options.shouldStop()) {
+      logger.info("抓取评论词直播间响应等待完成时检测到停止令", { waitMs: waitMs });
+      return { success: false, reason: "STOP_REQUESTED", message: "task stopped" };
+    }
+    logger.info("抓取评论词直播间响应等待完成", { waitMs: waitMs });
+    return true;
   }
 
   function isLiveRoomVisible() {
@@ -4106,6 +4144,7 @@ function createDouyinAdapter(config, logger, ocrEngine, floatyControl, injectedS
     ensurePlayableFeed: ensurePlayableFeed,
     enterLiveFeed: enterLiveFeed,
     ensureFeedContext: ensureFeedContext,
+    clickFirstLiveByRandomArea: clickFirstLiveByRandomArea,
     openLiveRoomFromCurrentScreen: openLiveRoomFromCurrentScreen,
     isLiveRoomVisible: isLiveRoomVisible,
     exitLiveRoom: exitLiveRoom,

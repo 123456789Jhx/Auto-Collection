@@ -34,6 +34,7 @@ import { desiredAgentStateForCommand, supersededAgentControlCommandsFor } from "
 import type { CommandExecutor } from "./command-executor";
 import { buildCanonicalSha256 } from "./live-target-config.service";
 import { captureLiveCommentCandidates } from "./live-comment-candidate.service";
+import { captureLiveRoomSnapshots } from "./live-room-capture.service";
 
 export class BaseCommandAckValidationError extends Error {
   readonly details: Record<string, unknown>;
@@ -367,5 +368,15 @@ export async function acknowledgeCommand(commandId: string, payload: MobileComma
     payloadJson: result.command.payloadJson,
     resultJson: result.command.resultJson
   });
+  try {
+    await captureLiveRoomSnapshots({
+      id: result.command.id,
+      deviceId: result.command.deviceId ?? device.id,
+      payloadJson: result.command.payloadJson,
+      resultJson: result.command.resultJson
+    });
+  } catch {
+    // The profile snapshot is secondary data and must not reject an existing command acknowledgement.
+  }
   return result;
 }

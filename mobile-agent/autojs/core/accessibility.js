@@ -203,7 +203,89 @@ function createGestureDriver(options) {
     }
   }
 
+  function swipeAndHold(input, inspect) {
+    input = input || {};
+    var now = options.now || Date.now;
+    var pause = options.sleep || function (ms) { sleep(ms); };
+    var state, failure, move, releaseGesture, handler, callback, holdCallback;
+    var holdUntil = 0, accepted = false;
+    function stopped() { return !!(input.shouldStop && input.shouldStop()); }
+    function build(stroke) { return new classes.GestureDescription.Builder().addStroke(stroke).build(); }
+    function waitFor(test, timeout) {
+      var until = now() + timeout;
+      while (!test() && now() < until) pause(Math.min(20, until - now()));
+      if (!test()) throw new Error("gesture completion timeout");
+    }
+    function release() {
+      try {
+        if (service.dispatchGesture(releaseGesture, holdCallback, handler) === false) state.set(-1);
+      } catch (error) { state.set(-1); }
+    }
+    try {
+      if (stopped()) return unavailable("STOP_REQUESTED");
+      if (!service || !classes.Path || !classes.GestureDescription) return unavailable("ACCESSIBILITY_GESTURE_UNAVAILABLE");
+      var points = (input.points || []).map(normalizePoint);
+      if (points.length < 2 || points.some(function (point) { return !validPoint(point); })) {
+        return unavailable("ACCESSIBILITY_GESTURE_POINTS_INVALID");
+      }
+      var AtomicInteger = options.AtomicInteger || java.util.concurrent.atomic.AtomicInteger;
+      state = new AtomicInteger(0);
+      callback = options.createGestureCallback || function (methods) {
+        return new JavaAdapter(android.accessibilityservice.AccessibilityService.GestureResultCallback, methods);
+      };
+      handler = options.handler || new android.os.Handler(android.os.Looper.getMainLooper());
+      var path = new classes.Path(), endpoint = new classes.Path();
+      path.moveTo(points[0].x, points[0].y);
+      for (var i = 1; i < points.length; i += 1) path.lineTo(points[i].x, points[i].y);
+      endpoint.moveTo(points[points.length - 1].x, points[points.length - 1].y);
+      var duration = Math.max(1, Number(input.durationMs) || 520);
+      var holdMs = Math.max(1, Math.min(2000, Number(input.holdMs) || 2000));
+      move = new classes.GestureDescription.StrokeDescription(path, 0, duration, true);
+      // The continuation ends natively after holdMs, even if OCR blocks the worker.
+      var holdGesture = build(move.continueStroke(endpoint, 0, holdMs, false));
+      releaseGesture = build(move.continueStroke(endpoint, 0, 1, false));
+      holdCallback = callback({
+        onCompleted: function () { state.set(failure ? -1 : 2); },
+        onCancelled: function () { failure = unavailable("ACCESSIBILITY_GESTURE_CANCELLED"); state.set(-1); }
+      });
+      var moveCallback = callback({
+        onCompleted: function () {
+          if (failure) { release(); return; }
+          try {
+            holdUntil = now() + holdMs;
+            state.set(1);
+            if (service.dispatchGesture(holdGesture, holdCallback, handler) === false) {
+              failure = unavailable("ACCESSIBILITY_HOLD_REJECTED"); release();
+            }
+          } catch (error) {
+            failure = unavailable("ACCESSIBILITY_HOLD_FAILED"); release();
+          }
+        },
+        onCancelled: function () { failure = unavailable("ACCESSIBILITY_GESTURE_CANCELLED"); state.set(-1); }
+      });
+      accepted = service.dispatchGesture(build(move), moveCallback, handler) !== false;
+      if (!accepted) return unavailable("ACCESSIBILITY_GESTURE_REJECTED");
+      waitFor(function () { return state.get() !== 0; }, duration + 1500);
+      var result;
+      try {
+        if (!failure && state.get() === 1 && !stopped()) {
+          result = inspect(function () { return state.get() === 1 && now() < holdUntil; });
+        }
+      } finally {
+        waitFor(function () { return state.get() === 2 || state.get() === -1; }, holdMs + 1500);
+      }
+      if (stopped()) return unavailable("STOP_REQUESTED");
+      return failure || result || unavailable("ACCESSIBILITY_HOLD_NOT_OBSERVED");
+    } catch (error) {
+      failure = { success: false, reason: "ACCESSIBILITY_HOLD_FAILED", message: String(error) };
+      // A missing movement callback must not leave a continuing stroke held down.
+      if (accepted && state && state.get() === 0 && releaseGesture) release();
+      return failure;
+    }
+  }
+
   return {
+    swipeAndHold: swipeAndHold,
     tap: function (input) {
       input = input || {};
       return dispatch([{ x: input.x, y: input.y }], input.durationMs || 150);

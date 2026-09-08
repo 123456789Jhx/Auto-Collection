@@ -137,6 +137,42 @@ test("精确隔离 RUN 预加载新入口并透传配置、批次和停止控制
   assert.equal(stageLog.detail.batchId, "batch-exact");
 });
 
+test("隔离评论桥接器暴露统一运行状态快照", function () {
+  var harness = createHarness();
+  var bridge = createBridge(harness.context);
+  bridge.intercept([isolatedRun("run-snapshot", "batch-snapshot")]);
+
+  var snapshot = bridge.getStatusSnapshot();
+  assert.deepEqual(snapshot, {
+    status: "running",
+    stopRequested: false,
+    runId: "run-snapshot",
+    batchId: "batch-snapshot",
+    featureKey: FEATURE_KEY,
+    taskType: "live_comment",
+    stage: "",
+    lastMessage: "隔离评论任务执行中"
+  });
+
+  harness.taskCreates[0].options.reportStage({ stage: "SCREENING_VIEWER_COUNT" });
+  snapshot = bridge.getStatusSnapshot();
+  assert.strictEqual(snapshot.stage, "SCREENING_VIEWER_COUNT");
+  assert.strictEqual(snapshot.status, "running");
+});
+
+test("终态回执暂未送达时快照不再报告运行中", function () {
+  var harness = createHarness({
+    ackResults: [new Error("ack offline")]
+  });
+  var bridge = createBridge(harness.context);
+  bridge.intercept([isolatedRun("run-terminal-snapshot", "batch-terminal-snapshot")]);
+  harness.threads[0]();
+
+  var snapshot = bridge.getStatusSnapshot();
+  assert.strictEqual(snapshot.status, "stopped");
+  assert.strictEqual(snapshot.runId, "run-terminal-snapshot");
+});
+
 test("畸形隔离路由终态拒绝，legacy 命令及数组属性原样透传", function () {
   var harness = createHarness();
   var bridge = createBridge(harness.context);

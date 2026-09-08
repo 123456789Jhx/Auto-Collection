@@ -1,11 +1,13 @@
 "use strict";
-
 var contract = require("../../core/action-contract.js");
 var layout = require("./douyin-layout.js");
 var commentCapture = require("./comment-capture.js");
 var createGestureActions = require("../../core/gesture-actions.js").createGestureActions;
 var createScreenActions = require("../../core/screen-actions.js").createScreenActions;
 var defaultAccessibility = require("../../core/accessibility.js");
+var cartDetector = require("./commerce-cart-detector.js");
+var anchorProfile = require("./anchor-profile.js");
+var commentWhiteFilter = require("./comment-white-filter.js");
 
 function createIsolatedRuntime(context, options) {
   context = context || {};
@@ -15,8 +17,14 @@ function createIsolatedRuntime(context, options) {
   var recognizer = options.screenRecognizer || context.screenRecognizer || {};
   var riskDetector = options.riskDetector || context.riskDetector || {};
   var viewerParser = options.viewerCountParser || context.viewerCountParser || {};
+  var logger = options.logger || context.logger || {};
   var imageApi = options.images || context.images || (typeof images !== "undefined" ? images : null);
+  var fileApi = options.files || context.files || (typeof files !== "undefined" ? files : null);
+  var captureScreenFn = options.captureScreen || context.captureScreen ||
+    (typeof captureScreen !== "undefined" && typeof captureScreen === "function" ? captureScreen : null);
   var ocrEngine = options.ocrEngine || context.ocrEngine || {};
+  var uploader = options.uploader || context.uploader || {};
+  var commerceCartTemplate = options.commerceCartTemplate || context.commerceCartTemplate || null;
   var accessibility = options.accessibility || context.accessibility || defaultAccessibility;
   var traceLimit = Math.max(1, Math.min(100, Math.floor(Number(options.actionTraceLimit) || 40)));
   var actionTrace = [];
@@ -24,6 +32,31 @@ function createIsolatedRuntime(context, options) {
   var lastVerificationStructure = null;
   var lastVerificationText = "";
 
+  function loadCommerceCartTemplate() {
+    if (commerceCartTemplate || !imageApi || typeof imageApi.read !== "function" || !fileApi) return commerceCartTemplate;
+    try {
+      var root = typeof fileApi.cwd === "function" ? fileApi.cwd() : "";
+      var path = typeof fileApi.join === "function" ? fileApi.join(root, "assets", "commerce-cart-template.png") : root + "/assets/commerce-cart-template.png";
+      commerceCartTemplate = imageApi.read(path);
+    } catch (error) {
+      log("warn", "小黄车模板加载失败", { message: String(error && error.message || error) });
+    }
+    return commerceCartTemplate;
+  }
+  function detectCommerceCartFromScreenshot(region) {
+    if (typeof captureScreenFn !== "function") return { detected: false, similarity: 0, reason: "SCREEN_CAPTURE_UNAVAILABLE" };
+    var snapshot = null;
+    try {
+      snapshot = captureScreenFn();
+      var image = snapshot && snapshot.image ? snapshot.image : snapshot;
+      return cartDetector.matchCommerceCart(imageApi, image, loadCommerceCartTemplate(), region, 0.5);
+    } catch (error) {
+      return { detected: false, similarity: 0, reason: "SCREEN_CAPTURE_FAILED", message: String(error && error.message || error) };
+    } finally {
+      var imageToRecycle = snapshot && snapshot.image ? snapshot.image : snapshot;
+      if (imageToRecycle && typeof imageToRecycle.recycle === "function") imageToRecycle.recycle();
+    }
+  }
   function stopped() {
     try {
       return !!(control && typeof control.shouldStop === "function" && control.shouldStop());
@@ -31,16 +64,16 @@ function createIsolatedRuntime(context, options) {
       return true;
     }
   }
-
   function trace(name) {
     actionTrace.push(String(name));
     if (actionTrace.length > traceLimit) actionTrace.splice(0, actionTrace.length - traceLimit);
   }
-
+  function log(level, message, details) {
+    try { if (typeof logger[level] === "function") logger[level](message, details || {}); } catch (error) {}
+  }
   function traceSnapshot() {
     return actionTrace.slice(Math.max(0, actionTrace.length - traceLimit));
   }
-
   function screenSize() {
     var source;
     try {
@@ -52,20 +85,17 @@ function createIsolatedRuntime(context, options) {
     } catch (error) {}
     return layout.normalizeScreenSize(source);
   }
-
   function sleepAdapter(milliseconds) {
     if (typeof options.sleep === "function") return options.sleep(milliseconds);
     if (typeof context.sleep === "function") return context.sleep(milliseconds);
     if (typeof sleep === "function") return sleep(milliseconds);
     return false;
   }
-
   function randomAdapter(min, max) {
     if (typeof options.random === "function") return options.random(min, max);
     if (typeof context.random === "function") return context.random(min, max);
     return Math.floor(min + Math.random() * (max - min + 1));
   }
-
   function resolveGestureDriver() {
     if (gestureDriver) return gestureDriver;
     try {
@@ -77,7 +107,6 @@ function createIsolatedRuntime(context, options) {
     }
     return gestureDriver;
   }
-
   var gestures = createGestureActions({
     shouldStop: stopped,
     screenSize: screenSize,
@@ -113,7 +142,6 @@ function createIsolatedRuntime(context, options) {
     } catch (error) {}
     return description;
   }
-
   function findNode(description) {
     if (typeof options.findNode === "function") return options.findNode(description);
     if (typeof context.findNode === "function") return context.findNode(description);
@@ -125,14 +153,12 @@ function createIsolatedRuntime(context, options) {
     } catch (error) {}
     return null;
   }
-
   function extractFastText() {
     var extractor = options.extractFastText || recognizer.extractFastText || douyin.extractFastText;
     if (typeof extractor !== "function") return null;
     var owner = options.extractFastText ? options : (recognizer.extractFastText ? recognizer : douyin);
     return extractor.call(owner);
   }
-
   function riskMethod() {
     return typeof riskDetector === "function" ? riskDetector : riskDetector.detectRisk;
   }
@@ -169,7 +195,6 @@ function createIsolatedRuntime(context, options) {
     lastVerificationStructure = stableDiagnosticValue(explicit || snapshot, 4);
     return snapshot;
   }
-
   function recycleSnapshot(snapshot) {
     var image = snapshot && snapshot.image ? snapshot.image :
       (snapshot && typeof snapshot.recycle === "function" ? snapshot : null);
@@ -212,9 +237,27 @@ function createIsolatedRuntime(context, options) {
       return imageApi && typeof imageApi.clip === "function" ? imageApi.clip(image,
         region.left, region.top, region.width, region.height) : null;
     },
-    recognize: function (image) {
+    recognize: function (image, region) {
       if (typeof ocrEngine.recognize !== "function") throw new Error("ocr recognize unavailable");
-      return ocrEngine.recognize(image);
+      if (!region || region.name !== "commentArea") return ocrEngine.recognize(image);
+      var filtered = commentWhiteFilter.preprocess(imageApi, image, options.commentWhiteFilter);
+      if (!filtered.success) {
+        log("error", "评论近白色文字过滤失败", {
+          reason: filtered.reason,
+          message: filtered.message || ""
+        });
+        throw new Error(filtered.reason + ": " + (filtered.message || "comment white filter failed"));
+      }
+      log("info", "评论近白色文字过滤完成", {
+        minBrightness: filtered.minBrightness,
+        maxSaturation: filtered.maxSaturation
+      });
+      try {
+        return ocrEngine.recognize(filtered.image);
+      } finally {
+        var recycleFailure = recycleSnapshot(filtered.image);
+        if (recycleFailure) throw new Error(recycleFailure.message);
+      }
     },
     detectRisk: detectRisk,
     getPageStructure: function () { return lastVerificationStructure; },
@@ -275,20 +318,19 @@ function createIsolatedRuntime(context, options) {
   }
 
   function openFirstLive() {
-    if (typeof douyin.openFirstLive === "function") {
-      return invoke("openFirstLive", douyin, douyin.openFirstLive, [], "CLICK_FAILED");
-    }
-    if (typeof douyin.openLiveRoomFromCurrentScreen === "function") {
-      return invoke("openFirstLive", douyin, douyin.openLiveRoomFromCurrentScreen,
-        [undefined, { skipLiveRoomVerification: true }], "NO_RESULT");
-    }
+    if (typeof douyin.clickFirstLiveByRandomArea === "function") return invoke(
+      "openFirstLive", douyin, douyin.clickFirstLiveByRandomArea, [control], "CLICK_FAILED");
+    if (typeof douyin.openFirstLive === "function") return invoke(
+      "openFirstLive", douyin, douyin.openFirstLive, [], "CLICK_FAILED");
+    if (typeof douyin.openLiveRoomFromCurrentScreen === "function") return invoke(
+      "openFirstLive", douyin, douyin.openLiveRoomFromCurrentScreen,
+      [undefined, { skipLiveRoomVerification: true }], "NO_RESULT");
     trace("openFirstLive");
     if (stopped()) return contract.stopped();
     var target = typeof douyin.findFirstLive === "function" ? douyin.findFirstLive() : null;
     if (!target) return contract.failure("NO_RESULT", "first live result not found");
     return gestures.click(target);
   }
-
   function isLiveRoom() {
     var method = douyin.isLiveRoomVisible || douyin.isLiveRoom || options.isLiveRoom;
     return invoke("isLiveRoom", douyin, method, []);
@@ -298,11 +340,14 @@ function createIsolatedRuntime(context, options) {
     trace("readComments");
     if (stopped()) return contract.stopped();
     var region = commentCapture.commentOcrRegion(screenSize());
+    log("info", "抓取评论词评论区 OCR 开始", { commentOcrExecuted: true, commentRegion: { x: region.x, y: region.y, width: region.w, height: region.h } });
     var captured = screens.captureRegions([{ name: "commentArea", left: region.x, top: region.y,
       width: region.w, height: region.h }]);
-    if (!captured.success) return captured;
+    if (!captured.success) { log("error", "抓取评论词评论区 OCR 失败", { commentOcrExecuted: false, reason: captured.reason || "CAPTURE_FAILED", message: captured.message || "" }); return captured; }
+    var text = String(captured.value && captured.value[0] && captured.value[0].value || "");
+    log("info", "抓取评论词评论区 OCR 完成", { commentOcrExecuted: true, commentTextRecognized: text.trim().length > 0, commentTextLength: text.length, commentLineCount: text.split(/\r?\n/).filter(function (line) { return line.trim(); }).length });
     var result = contract.success({
-      text: String(captured.value && captured.value[0] && captured.value[0].value || ""),
+      text: text,
       source: "commentArea"
     });
     if (stopped()) return contract.stopped();
@@ -314,42 +359,180 @@ function createIsolatedRuntime(context, options) {
     return { name: outputName, left: region.left, top: region.top,
       width: region.width, height: region.height };
   }
-
   function readViewerCount() {
     trace("readViewerCount");
     if (stopped()) return contract.stopped();
-    var captured = screens.captureRegions([regionValue("viewerCount", "viewerBadge"),
-      regionValue("liveEnded", "liveEndedBanner")]);
-    if (!captured.success) return captured;
+    var viewerRegion = regionValue("viewerCount", "viewerBadge");
+    log("info", "抓取评论词旧 OCR 人数扫描开始", {
+      legacyOcrStep: "viewer_count",
+      viewerOcrExecuted: true,
+      captureMode: "screen-region",
+      viewerRegion: viewerRegion
+    });
+    var captured = screens.captureRegions([viewerRegion]);
+    if (!captured.success) {
+      log("error", "抓取评论词旧 OCR 人数扫描失败", {
+        legacyOcrStep: "viewer_count",
+        viewerOcrExecuted: false,
+        reason: captured.reason,
+        message: captured.message || ""
+      });
+      return captured;
+    }
     var result;
     try {
       var values = captured.value || [];
       var badge = String(values[0] && values[0].value || "").trim();
-      var endedText = String(values[1] && values[1].value || "").trim();
+      var endedText = "";
       var parser = typeof viewerParser === "function" ? viewerParser : viewerParser.parseViewerBadgeCount;
-      var count = typeof parser === "function" ? parser.call(viewerParser, badge) : null;
+      var parserError = null;
+      var count = null;
+      try {
+        count = typeof parser === "function" ? parser.call(viewerParser, badge) : null;
+      } catch (error) {
+        parserError = error;
+      }
+      log("info", "抓取评论词旧 OCR 人数扫描完成", {
+        legacyOcrStep: "viewer_count",
+        viewerOcrExecuted: true,
+        viewerTextRecognized: badge.length > 0,
+        viewerCountParsed: count !== null && count !== undefined && isFinite(Number(count)),
+        viewerCount: count === null || count === undefined || !isFinite(Number(count)) ? null : Number(count),
+        viewerRegion: viewerRegion,
+        badgeText: badge
+      });
+      if (parserError) throw parserError;
+      log("info", "抓取评论词人数 OCR 原始结果", { badgeText: badge, endedText: endedText, parsedCount: count });
+      log("info", "抓取评论词 OCR 识别状态", {
+        legacyOcrStep: "viewer_count",
+        viewerOcrExecuted: true,
+        viewerTextRecognized: badge.length > 0,
+        viewerCountParsed: count !== null && count !== undefined && isFinite(Number(count)),
+        viewerCount: count === null || count === undefined || !isFinite(Number(count)) ? null : Number(count),
+        commerceCartScanExecuted: false
+      });
       result = contract.success({
         count: count === null || count === undefined || !isFinite(Number(count)) ? null : Number(count),
         ended: /直播已结束|主播已下播/.test(endedText.replace(/\s/g, "")), source: "viewerBadge",
         textSample: badge.slice(0, 260), endedTextSample: endedText.slice(0, 260)
       });
     } catch (error) {
+      log("error", "抓取评论词人数解析异常", { badgeText: badge, message: String(error && error.message || error) });
       result = contract.failure(contract.REASON.OCR_FAILED, String(error && error.message || error));
     }
     if (stopped()) return contract.stopped();
     return result;
   }
 
-  function swipeCoordinates(name, coordinates) {
-    trace(name);
-    var size = screenSize();
-    return gestures.swipe("up", { ratios: { startX: coordinates.startX / size.width,
-      startY: coordinates.startY / size.height, endX: coordinates.endX / size.width,
-      endY: coordinates.endY / size.height }, durationMs: coordinates.durationMs });
+  function readCommerceCart() {
+    trace("readCommerceCart");
+    if (stopped()) return contract.stopped();
+    var region = regionValue("commerceCart", "commerceCart");
+    var match = detectCommerceCartFromScreenshot(region);
+    if (match.reason && match.reason !== "MATCH_COMPLETED") {
+      log("error", "抓取评论词小黄车检测失败", { commerceCartScanExecuted: false,
+        reason: match.reason, message: match.message || "", commerceCartRegion: region });
+      return contract.failure(contract.REASON.SCREEN_CAPTURE_FAILED, match.message || match.reason);
+    }
+    log("info", "抓取评论词小黄车检测完成", { commerceCartScanExecuted: true,
+      commerceCartDetected: !!match.detected, commerceCartSimilarity: match.similarity,
+      commerceCartRegion: region });
+    return contract.success({ detected: !!match.detected, similarity: match.similarity,
+      source: "commerceCartTemplate" });
   }
 
-  function swipeComments() { return swipeCoordinates("swipeComments", commentCapture.commentSwipeCoordinates(screenSize())); }
-  function nextLive() { return swipeCoordinates("nextLive", layout.getLiveRoomSwitchSwipe(screenSize())); }
+  function clickRegion(name, actionName) {
+    trace(actionName);
+    var region = layout.getRegion(name, screenSize());
+    log("info", "抓取评论词主播身份动作开始", { action: actionName, region: region });
+    var result = gestures.click({ bounds: {
+      left: region.left,
+      top: region.top,
+      right: region.left + region.width,
+      bottom: region.top + region.height
+    } }, {
+      jitterX: Math.floor((region.width - 1) / 2),
+      jitterY: Math.floor((region.height - 1) / 2)
+    });
+    log(result && result.success === false ? "error" : "info", "抓取评论词主播身份动作完成", {
+      action: actionName,
+      success: !!(result && result.success),
+      point: result && result.value
+    });
+    return result;
+  }
+
+  function openAnchorSummary() { return clickRegion("anchorHeaderTap", "openAnchorSummary"); }
+  function openAnchorProfile() {
+    var avatar = findNode({ method: "descContains", value: "的头像" });
+    if (avatar) {
+      trace("openAnchorProfile");
+      log("info", "抓取评论词主播身份动作开始", { action: "openAnchorProfile", selector: "descContains:的头像" });
+      var nodeResult = gestures.click(avatar);
+      log(nodeResult && nodeResult.success === false ? "error" : "info", "抓取评论词主播身份动作完成", {
+        action: "openAnchorProfile", success: !!(nodeResult && nodeResult.success),
+        point: nodeResult && nodeResult.value, selector: "descContains:的头像"
+      });
+      return nodeResult;
+    }
+    return clickRegion("anchorSummaryProfileTap", "openAnchorProfile");
+  }
+  function closeAnchorProfile() { return clickRegion("anchorProfileBackTap", "closeAnchorProfile"); }
+
+  function readRoomIdentity() {
+    trace("readRoomIdentity");
+    if (stopped()) return contract.stopped();
+    var output = context.config && context.config.output || {};
+    var result = anchorProfile.readAnchorProfile({
+      captureScreen: captureScreenFn,
+      images: imageApi,
+      files: fileApi,
+      ocrEngine: ocrEngine,
+      screenSize: screenSize(),
+      screenshotDir: options.profileScreenshotDir || output.screenshotDir || "",
+      shouldStop: stopped,
+      logger: logger
+    });
+    if (result.success) return contract.success(result.value);
+    return contract.failure(result.reason || contract.REASON.OCR_FAILED,
+      result.message || "anchor profile unavailable", result.details);
+  }
+
+  function swipeComments() {
+    trace("swipeComments");
+    if (stopped()) return contract.stopped();
+    log("info", "评论区下滑并保持开始", { holdMs: 2000, coordinates: commentCapture.commentSwipeCoordinates(screenSize()) });
+    var result = commentCapture.swipeAndCheckEnd({ driver: resolveGestureDriver(),
+      screenSize: screenSize(), captureScreen: captureScreenFn, images: imageApi,
+      ocrEngine: ocrEngine, shouldStop: stopped, sleep: sleepAdapter });
+    log(result.success ? "info" : "error", "评论历史到底提示检查完成", result);
+    return result;
+  }
+  function nextLive() {
+    trace("nextLive");
+    log("info", "抓取评论词动作开始", { action: "nextLive", source: "douyin.nextVideo" });
+    if (stopped()) return contract.stopped();
+    if (!douyin || typeof douyin.nextVideo !== "function") {
+      var missing = contract.failure(contract.REASON.DEPENDENCY_MISSING, "douyin.nextVideo dependency missing");
+      log("error", "抓取评论词动作完成", { action: "nextLive", source: "douyin.nextVideo", success: false, result: missing });
+      return missing;
+    }
+    var raw;
+    try { raw = douyin.nextVideo(); } catch (error) {
+      var failed = contract.failure(contract.REASON.DRIVER_ERROR, String(error && error.message || error));
+      log("error", "抓取评论词动作完成", { action: "nextLive", source: "douyin.nextVideo", success: false, result: failed });
+      return failed;
+    }
+    if (stopped()) return contract.stopped();
+    var result = raw === false || raw && raw.success === false
+      ? contract.failure(raw && raw.reason || contract.REASON.DRIVER_REJECTED,
+        raw && raw.message || "douyin.nextVideo failed")
+      : raw && raw.success === true ? raw : contract.success(raw === undefined ? true : raw);
+    log(result.success ? "info" : "error", "抓取评论词动作完成", {
+      action: "nextLive", source: "douyin.nextVideo", success: result.success, result: result
+    });
+    return result;
+  }
   function waitRandom(min, max) { trace("waitRandom"); return gestures.waitRandom(min, max); }
 
   function detectPlatformVerification() {
@@ -387,7 +570,10 @@ function createIsolatedRuntime(context, options) {
 
   return { openDouyin: openDouyin, openSearch: openSearch, restartSearch: restartSearch,
     openLiveTab: openLiveTab, openFirstLive: openFirstLive, isLiveRoom: isLiveRoom,
-    readViewerCount: readViewerCount, nextLive: nextLive, readComments: readComments,
+    readViewerCount: readViewerCount, readCommerceCart: readCommerceCart, nextLive: nextLive, readComments: readComments,
+    openAnchorSummary: openAnchorSummary, openAnchorProfile: openAnchorProfile,
+    readRoomIdentity: readRoomIdentity,
+    closeAnchorProfile: closeAnchorProfile,
     swipeComments: swipeComments, detectPlatformVerification: detectPlatformVerification,
     waitRandom: waitRandom, getActionTrace: traceSnapshot };
 }

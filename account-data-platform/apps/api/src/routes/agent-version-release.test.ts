@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { agentUpdateEvents, agentVersions, collectorDevices } from "@pkg/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { app } from "../app";
 import { db } from "../repositories/db";
 import { BizScriptBuildError, bizScriptReleaseService } from "../services/biz-script-release.service";
@@ -33,8 +33,19 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (deviceId) {
-    await db.delete(agentUpdateEvents).where(eq(agentUpdateEvents.deviceId, deviceId));
+  const versionRows = await db
+    .select({ id: agentVersions.id })
+    .from(agentVersions)
+    .where(and(
+      eq(agentVersions.channel, "biz-scripts"),
+      eq(agentVersions.version, version)
+    ));
+  const versionIds = versionRows.map((row) => row.id);
+  const eventConditions = [];
+  if (deviceId) eventConditions.push(eq(agentUpdateEvents.deviceId, deviceId));
+  if (versionIds.length > 0) eventConditions.push(inArray(agentUpdateEvents.agentVersionId, versionIds));
+  if (eventConditions.length > 0) {
+    await db.delete(agentUpdateEvents).where(or(...eventConditions));
   }
   await db.delete(agentVersions).where(and(
     eq(agentVersions.channel, "biz-scripts"),

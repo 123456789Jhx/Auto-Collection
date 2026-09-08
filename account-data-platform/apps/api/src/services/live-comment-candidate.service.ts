@@ -6,6 +6,7 @@ import {
 } from "../repositories/live-comment-candidate.repository";
 import { normalizeVocabularyValue } from "./account-warmup-vocabulary.service";
 import { upsertAccountWarmupVocabulary } from "../repositories/account-warmup-vocabulary.repository";
+import { cleanLiveCommentCandidates } from "./live-comment-candidate-cleaning";
 
 function objectValue(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" ? value as Record<string, unknown> : {};
@@ -35,6 +36,16 @@ export async function captureLiveCommentCandidates(command: {
       const source = objectValue(sourceValue);
       const sourceText = commentText || textValue(source.commentText);
       if (!sourceText || sourceText.length > 100) continue;
+      const sourceRecord: Record<string, unknown> = {
+        deviceId: command.deviceId,
+        roomKey: textValue(source.roomKey ?? comment.roomKey),
+        pageIndex: source.pageIndex ?? comment.pageIndex ?? null,
+        commandId: command.id
+      };
+      const accountName = textValue(source.accountName ?? comment.accountName);
+      const accountId = textValue(source.accountId ?? comment.accountId);
+      if (accountName) sourceRecord.accountName = accountName;
+      if (accountId) sourceRecord.accountId = accountId;
       rows.push(await upsertLiveCommentCandidate({
         batchId,
         taskId: command.taskId,
@@ -42,13 +53,7 @@ export async function captureLiveCommentCandidates(command: {
         deviceId: command.deviceId,
         commentText: sourceText,
         normalizedValue: normalizeVocabularyValue(sourceText),
-        source: {
-          deviceId: command.deviceId,
-          roomKey: textValue(source.roomKey ?? comment.roomKey),
-          pageIndex: source.pageIndex ?? comment.pageIndex ?? null,
-          userName: textValue(source.userName ?? comment.userName),
-          commandId: command.id
-        }
+        source: sourceRecord
       }));
     }
   }
@@ -59,18 +64,37 @@ export async function getPendingLiveCommentCandidates(batchId: string) {
   return listLiveCommentCandidates(batchId);
 }
 
-export async function confirmLiveCommentCandidates(batchId: string, ids: string[]) {
+export async function confirmLiveCommentCandidates(batchId: string, ids: string[], options: { clean?: boolean } = {}) {
   const candidates = await findLiveCommentCandidatesByIds(ids, batchId);
   const pending = candidates.filter((candidate) => candidate.status !== "IMPORTED");
-  const entries = await upsertAccountWarmupVocabulary(pending.map((candidate) => ({
+  const clean = options.clean !== false;
+  if (!clean) {
+    return {
+      selectedCount: ids.length,
+      importedCount: 0,
+      filteredCount: 0,
+      duplicateCount: 0,
+      candidates: []
+    };
+  }
+  const cleaning = cleanLiveCommentCandidates(pending);
+  const acceptedIds = new Set(cleaning.accepted);
+  const accepted = pending.filter((candidate) => acceptedIds.has(candidate.id));
+  const entries = await upsertAccountWarmupVocabulary(accepted.map((candidate) => ({
     kind: "COMMENT" as const,
     value: candidate.commentText,
     normalizedValue: candidate.normalizedValue
   })));
-  const byKey = new Map(entries.map((entry) => [entry.value.normalize("NFKC").toLowerCase(), entry.id]));
+  const byKey = new Map(entries.map((entry) => [normalizeVocabularyValue(entry.value), entry.id]));
   const marked = await markLiveCommentCandidatesImported(
-    pending.map((candidate) => candidate.id),
-    new Map(pending.map((candidate) => [candidate.id, byKey.get(candidate.normalizedValue)]).filter((item): item is [string, string] => Boolean(item[1])))
+    accepted.map((candidate) => candidate.id),
+    new Map(accepted.map((candidate) => [candidate.id, byKey.get(normalizeVocabularyValue(candidate.normalizedValue || candidate.commentText))]).filter((item): item is [string, string] => Boolean(item[1])))
   );
-  return { selectedCount: ids.length, importedCount: marked.length, candidates: marked };
+  return {
+    selectedCount: ids.length,
+    importedCount: marked.length,
+    filteredCount: cleaning.rejected.length,
+    duplicateCount: cleaning.duplicates.length,
+    candidates: marked
+  };
 }

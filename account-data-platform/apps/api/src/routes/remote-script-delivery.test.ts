@@ -124,6 +124,22 @@ describe("remote script offline delivery", () => {
     const updated = await updateResponse.json();
     expect(updated.revision).toBe(2);
 
+    const firstPollResponse = await mobileRequest(`/api/v1/mobile/commands?deviceId=${deviceCode}&executorType=AGENT`);
+    const firstPollCommands = (await firstPollResponse.json()).data;
+    expect(firstPollResponse.status).toBe(200);
+    const bindDeliveryCommand = firstPollCommands.find((item: { payload: { revision?: number } }) => item.payload.revision === 1);
+    expect(bindDeliveryCommand).toMatchObject({
+      commandType: "SCRIPT_CONFIG_UPDATED",
+      payload: { revision: 1 }
+    });
+
+    const bindAck = await mobileRequest(`/api/v1/mobile/commands/${bindDeliveryCommand.id}/ack`, "POST", {
+      deviceId: deviceCode,
+      status: "DONE",
+      result: { applied: true, appliedRevision: 1, configHash: bindDeliveryCommand.payload.config_hash }
+    });
+    expect(bindAck.status).toBe(200);
+
     const commandsResponse = await mobileRequest(`/api/v1/mobile/commands?deviceId=${deviceCode}&executorType=AGENT`);
     const commands = (await commandsResponse.json()).data;
     expect(commandsResponse.status).toBe(200);

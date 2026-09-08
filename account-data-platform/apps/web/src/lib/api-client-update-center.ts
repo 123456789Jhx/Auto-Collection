@@ -3,6 +3,8 @@ import { mutate, request } from "./api-client";
 const bizScriptBuildTimeoutMs = 310_000;
 
 export type BizScriptReleaseStatus = "DRAFT" | "PUBLISHED" | "REVOKED";
+export type AgentReleaseStatus = BizScriptReleaseStatus;
+export type AgentReleaseChannel = "stable" | "gray" | "dev" | "biz-scripts";
 
 export type BizScriptRelease = {
   id: string;
@@ -57,6 +59,22 @@ export type DeviceUpdateSummary = {
 };
 
 export type BizScriptReleasePage = { data: BizScriptRelease[] };
+export type AgentRelease = {
+  id: string;
+  version: string;
+  channel: AgentReleaseChannel;
+  minSupportedVersion: string | null;
+  packageUrl: string | null;
+  sha256: string | null;
+  entryFile: string;
+  releaseNote: string | null;
+  forceUpdate: boolean;
+  status: AgentReleaseStatus;
+  publishedAt: string | null;
+  createdAt: string;
+};
+
+export type AgentReleasePage = { data: AgentRelease[] };
 
 export type DeviceUpdateStatusPage = {
   data: DeviceUpdateStatus[];
@@ -86,12 +104,23 @@ export function getBizScriptReleases() {
   });
 }
 
+export function getAgentReleases(channel: AgentReleaseChannel = "stable") {
+  return request<AgentReleasePage>("/admin/remote-scripts/releases", {
+    channel: channel,
+    limit: 100
+  });
+}
+
 export function getBizScriptFiles() {
   return request<BizScriptFileCatalog>("/admin/remote-scripts/files", { roots: "features,domain" });
 }
 
 export function getDeviceUpdateStatuses() {
+  return getAgentDeviceUpdateStatuses("biz-scripts");
+}
+
+export function getAgentDeviceUpdateStatuses(channel: AgentReleaseChannel = "stable") {
   return request<DeviceUpdateStatusPage>("/admin/remote-scripts/device-update-status", {
-    channel: "biz-scripts"
+    channel: channel
   });
 }

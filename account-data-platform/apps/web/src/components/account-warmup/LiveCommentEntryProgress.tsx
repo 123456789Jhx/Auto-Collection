@@ -1,5 +1,6 @@
-import { ReloadOutlined, StopOutlined } from "@ant-design/icons";
-import { Alert, Button, Col, Modal, Row, Space, Statistic, Table, Tag, Tooltip, Typography, type TableColumnsType } from "antd";
+import { CheckCircleFilled, ClockCircleOutlined, DownOutlined, ExclamationCircleFilled, EyeOutlined, MobileOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
+import { Alert, Button, Col, Empty, Modal, Row, Skeleton, Space, Statistic, Tooltip, Typography } from "antd";
+import { useState } from "react";
 import type { LiveCommentEntryMobileCommand } from "../../lib/api-client-live-comment-entry";
 import type { LiveCommentEntryDispatchFailure } from "../../lib/live-comment-entry-batch";
 import {
@@ -39,6 +40,95 @@ export function liveCommentEntryResultText(row: LiveCommentEntryRow) {
   return "-";
 }
 
+const displayStageLabels: Record<string, string> = {
+  SCREENING_VIEWER_COUNT: "筛选直播间人数",
+  OPENING_ANCHOR_SUMMARY: "打开主播资料",
+  OPENING_ANCHOR_PROFILE: "查看主播主页",
+  READING_ROOM_IDENTITY: "识别主播账号",
+  CLAIMING_LIVE_ROOM: "绑定当前直播间",
+  CLOSING_ANCHOR_PROFILE: "返回直播间",
+  ROOM_FILTER_PASSED: "直播间筛选通过",
+  SWITCHING_LIVE_ROOM: "切换直播间"
+};
+
+function displayStage(stage: string) {
+  return displayStageLabels[stage] || stage;
+}
+
+function DeviceStatusCard(props: {
+  row: LiveCommentEntryRow;
+  stopping: boolean;
+  onStop: (row: LiveCommentEntryRow) => void;
+  onViewDetails: (row: LiveCommentEntryRow) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const { row } = props;
+  const tone = row.viewState.color === "error" ? "error" : row.viewState.color === "success" ? "success"
+    : row.viewState.key === "stopping" ? "warning" : row.viewState.active ? "running" : "neutral";
+  const moving = tone === "running" && row.viewState.key !== "pending";
+  const stages = row.viewState.stageHistory;
+  const resultText = liveCommentEntryResultText(row);
+  const deviceLabel = row.deviceName || row.deviceCode || row.deviceId;
+  const updatedAt = row.updatedAt || row.acknowledgedAt || row.fetchedAt || row.issuedAt;
+  const detailId = `live-device-history-${row.id}`;
+
+  return (
+    <article className="live-device-card" data-tone={tone} data-moving={moving} aria-label={`${deviceLabel} 状态`}>
+      <header className="live-device-card-head">
+        <div className="live-device-identity">
+          <span className="live-device-icon"><MobileOutlined /></span>
+          <div className="live-device-name">
+            <Tooltip title={deviceLabel}><h3>{deviceLabel}</h3></Tooltip>
+            <Tooltip title={row.deviceCode || row.deviceId}><span className="live-device-code">{row.deviceCode || row.deviceId}</span></Tooltip>
+          </div>
+        </div>
+        <span className="live-device-status" role="status">
+          {tone === "error" ? <ExclamationCircleFilled /> : tone === "success" ? <CheckCircleFilled /> : <span className="live-device-status-dot" />}
+          {row.viewState.label}
+        </span>
+      </header>
+      <div className="live-device-phase">
+        <span className="live-device-label">当前阶段</span>
+        <strong key={row.viewState.stage} className="live-device-stage">{displayStage(row.viewState.stageLabel)}</strong>
+        <div className="live-device-activity" aria-hidden="true"><span /></div>
+      </div>
+      <div className="live-device-history-preview">
+        <span className="live-device-label">阶段记录 <span className="live-device-history-count">{stages.length}</span></span>
+        <ol>{stages.slice(-3).map((stage, index) => <li key={`${stage}-${index}`}>{displayStage(stage)}</li>)}</ol>
+        {!stages.length ? <span className="live-device-muted">等待阶段回执</span> : null}
+      </div>
+      {resultText !== "-" ? (
+        <div className="live-device-result" aria-label="结果 / 错误">
+          {tone === "error" ? <ExclamationCircleFilled /> : <CheckCircleFilled />}
+          <p>{resultText}</p>
+        </div>
+      ) : null}
+      <div className="live-device-expanded" data-expanded={expanded} aria-hidden={!expanded} id={detailId}>
+        <div className="live-device-expanded-inner">
+          <div className="live-device-expanded-content">
+            <span className="live-device-label">完整阶段记录</span>
+            <ol>{stages.map((stage, index) => <li key={`${stage}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span>{displayStage(stage)}</li>)}</ol>
+            {!stages.length ? <p className="live-device-muted">等待阶段回执</p> : null}
+            {resultText !== "-" ? <><span className="live-device-label">完整结果 / 错误</span><p className="live-device-full-result">{resultText}</p></> : null}
+          </div>
+        </div>
+      </div>
+      <footer className="live-device-footer">
+        <span className="live-device-updated"><ClockCircleOutlined /><span>最后更新 <time dateTime={updatedAt || undefined}>{formatDateTime(updatedAt)}</time></span></span>
+        <Space size={4} className="live-device-actions">
+          <Tooltip title={expanded ? "收起记录" : "展开完整记录"}>
+            <Button type="text" icon={<DownOutlined className="live-device-disclosure" data-expanded={expanded} />} aria-label={`${expanded ? "收起" : "展开"} ${deviceLabel} 记录`} aria-expanded={expanded} aria-controls={detailId} onClick={() => setExpanded(!expanded)} />
+          </Tooltip>
+          <Tooltip title="查看详情"><Button icon={<EyeOutlined />} aria-label={`查看 ${deviceLabel} 详情`} onClick={() => props.onViewDetails(row)} /></Tooltip>
+          {row.viewState.active ? (
+            <Tooltip title="停止该设备任务"><Button danger icon={<StopOutlined />} aria-label={`停止 ${deviceLabel}`} disabled={row.viewState.key === "stopping" || !row.deviceCode} loading={props.stopping} onClick={() => props.onStop(row)} /></Tooltip>
+          ) : null}
+        </Space>
+      </footer>
+    </article>
+  );
+}
+
 export function LiveCommentEntryProgress(props: {
   activeBatchId: string;
   rows: LiveCommentEntryRow[];
@@ -52,61 +142,14 @@ export function LiveCommentEntryProgress(props: {
   retryingDispatch: boolean;
   onRetryDispatch: () => void;
   onStop: (row: LiveCommentEntryRow) => void;
+  onViewDetails: (row: LiveCommentEntryRow) => void;
   onCloseWarning: () => void;
 }) {
   const summary = summarizeLiveCommentEntryStates(props.rows.map((row) => row.viewState));
   const capturedCount = props.rows.filter(isLiveCommentEntryCaptureCompleted).length;
-  const columns: TableColumnsType<LiveCommentEntryRow> = [
-    {
-      title: "设备",
-      key: "device",
-      render: (_, row) => (
-        <Space direction="vertical" size={0}>
-          <Typography.Text strong>{row.deviceName}</Typography.Text>
-          <Typography.Text type="secondary">{row.deviceCode || row.deviceId}</Typography.Text>
-        </Space>
-      )
-    },
-    { title: "状态", key: "status", width: 110, render: (_, row) => <Tag color={row.viewState.color}>{row.viewState.label}</Tag> },
-    { title: "当前阶段", key: "stage", width: 170, render: (_, row) => row.viewState.stageLabel },
-    {
-      title: "最后更新",
-      key: "updatedAt",
-      width: 180,
-      render: (_, row) => formatDateTime(row.updatedAt || row.acknowledgedAt || row.fetchedAt || row.issuedAt)
-    },
-    {
-      title: "阶段记录",
-      key: "stageHistory",
-      render: (_, row) => row.viewState.stageHistory.length ? (
-        <Space size={[4, 4]} wrap>
-          {row.viewState.stageHistory.map((stage, index) => <Tag key={`${row.id}-${index}`}>{stage}</Tag>)}
-        </Space>
-      ) : <Typography.Text type="secondary">等待阶段回执</Typography.Text>
-    },
-    { title: "结果 / 错误", key: "result", render: (_, row) => liveCommentEntryResultText(row) },
-    {
-      title: "操作",
-      key: "action",
-      width: 72,
-      render: (_, row) => row.viewState.active ? (
-        <Tooltip title="停止该设备任务">
-          <Button
-            danger
-            size="small"
-            icon={<StopOutlined />}
-            aria-label={`停止 ${row.deviceName}`}
-            disabled={row.viewState.key === "stopping" || !row.deviceCode}
-            loading={props.stoppingCommandIds.has(row.id)}
-            onClick={() => props.onStop(row)}
-          />
-        </Tooltip>
-      ) : null
-    }
-  ];
 
   return (
-    <section className="ops-panel">
+    <section className="ops-panel live-device-progress">
       <div className="ops-panel-head">
         <span>执行进度</span>
         <span className="ops-small">{props.activeBatchId ? `批次 ${props.activeBatchId.slice(0, 8)}` : "尚未开始"}</span>
@@ -154,16 +197,11 @@ export function LiveCommentEntryProgress(props: {
         ) : null}
       </div>
       {props.loadError ? <Alert type="error" showIcon message="执行进度加载失败" /> : null}
-      <Table<LiveCommentEntryRow>
-        size="small"
-        rowKey="id"
-        loading={props.loading}
-        columns={columns}
-        dataSource={props.rows}
-        pagination={false}
-        scroll={{ x: 1080 }}
-        locale={{ emptyText: props.activeBatchId ? "等待设备领取任务" : "尚未下发任务" }}
-      />
+      <div className="live-device-grid" aria-busy={props.loading}>
+        {props.rows.map((row) => <DeviceStatusCard key={row.id} row={row} stopping={props.stoppingCommandIds.has(row.id)} onStop={props.onStop} onViewDetails={props.onViewDetails} />)}
+        {props.loading && !props.rows.length ? <div className="live-device-skeleton"><Skeleton active paragraph={{ rows: 3 }} /></div> : null}
+      </div>
+      {!props.loading && !props.rows.length ? <Empty className="live-device-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description={props.activeBatchId ? "等待设备领取任务" : "尚未下发任务"} /> : null}
       <Modal
         open={Boolean(props.warningAlert)}
         title="任务异常警告"

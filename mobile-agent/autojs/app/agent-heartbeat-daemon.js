@@ -67,12 +67,56 @@ function createAgentHeartbeatDaemon(context, deps) {
     }
   }
 
+  function activeIsolatedCommentRun() {
+    var bridge = context.newCommentCommandBridge;
+    if (!bridge) {
+      return null;
+    }
+    try {
+      if (typeof bridge.getStatusSnapshot === "function") {
+        return bridge.getStatusSnapshot() || null;
+      }
+      if (typeof bridge.getActive === "function") {
+        var active = bridge.getActive() || null;
+        if (!active) {
+          return null;
+        }
+        var progress = active.latestProgress || {};
+        return {
+          status: active.stopRequested || active.terminal ? "stopped" : "running",
+          stopRequested: !!active.stopRequested,
+          runId: String(active.commandId || active.runId || ""),
+          batchId: String(active.batchId || ""),
+          featureKey: String(active.featureKey || "isolated_live_comment_entry"),
+          taskType: "live_comment",
+          stage: String(progress.stage || active.stage || ""),
+          lastMessage: String(active.lastMessage || "隔离评论任务执行中")
+        };
+      }
+      return null;
+    } catch (error) {
+      logWarn("读取隔离评论任务活动状态失败", { message: String(error) });
+      return null;
+    }
+  }
+
   function currentStatus() {
     var current = state();
-    var warmupRun = activeWarmupRun();
     if (current.stopRequested) {
       return "stopped";
     }
+    var isolatedRun = activeIsolatedCommentRun();
+    if (isolatedRun) {
+      var isolatedStatus = String(isolatedRun.status || "running").toLowerCase();
+      if (isolatedRun.stopRequested || isolatedStatus === "stopped") {
+        return "stopped";
+      }
+      if (isolatedStatus === "paused") {
+        return "paused";
+      }
+      return "running";
+    }
+    var warmupRun = activeWarmupRun();
     if (current.paused) {
       return "paused";
     }
@@ -86,6 +130,10 @@ function createAgentHeartbeatDaemon(context, deps) {
   }
 
   function currentMessage() {
+    var isolatedRun = activeIsolatedCommentRun();
+    if (isolatedRun && isolatedRun.lastMessage) {
+      return String(isolatedRun.lastMessage);
+    }
     return state().lastMessage || "Agent 心跳";
   }
 

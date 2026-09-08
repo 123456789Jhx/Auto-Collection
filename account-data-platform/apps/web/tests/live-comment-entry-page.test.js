@@ -55,12 +55,12 @@ test("shows inputs, multi-device control, progress and scoped stop actions", () 
   }
 });
 
-test("shows merged candidates with manual selection and explicit vocabulary upload", () => {
+test("retains candidate APIs without rendering the batch table on the main page", () => {
   const pageSource = fs.readFileSync(path.join(webRoot, "src/routes/LiveCommentEntryPage.tsx"), "utf8");
   const candidateSource = fs.readFileSync(path.join(webRoot, "src/components/live-comment-entry/LiveCommentCandidates.tsx"), "utf8");
   const clientSource = fs.readFileSync(path.join(webRoot, "src/lib/api-client-live-comment-entry.ts"), "utf8");
 
-  assert(pageSource.includes("components/live-comment-entry/LiveCommentCandidates"));
+  assert(!pageSource.includes("<LiveCommentCandidates"));
   assert(candidateSource.includes("getLiveCommentCandidates"));
   for (const text of [
     "本批候选评论",
@@ -109,4 +109,25 @@ test("does not keep a completed batch locked when device metadata is unavailable
 test("keeps base-online devices selectable when the inner Agent is offline", () => {
   const pageSource = fs.readFileSync(path.join(webRoot, "src/routes/LiveCommentEntryPage.tsx"), "utf8");
   assert(pageSource.includes('device.effectiveStatus !== "offline" || device.baseReachable === true'));
+});
+
+test("opens device details with persisted room profile controls", () => {
+  const pageSource = fs.readFileSync(path.join(webRoot, "src/routes/LiveCommentEntryPage.tsx"), "utf8");
+  const progressSource = fs.readFileSync(path.join(webRoot, "src/components/account-warmup/LiveCommentEntryProgress.tsx"), "utf8");
+  const drawerSource = fs.readFileSync(path.join(webRoot, "src/components/live-comment-entry/LiveCommentDeviceDrawer.tsx"), "utf8");
+  const profileSource = fs.readFileSync(path.join(webRoot, "src/components/live-comment-entry/LiveRoomProfilePanel.tsx"), "utf8");
+  const clientSource = fs.readFileSync(path.join(webRoot, "src/lib/api-client-live-comment-entry.ts"), "utf8");
+
+  assert(pageSource.includes("LiveCommentDeviceDrawer"));
+  assert(progressSource.includes("查看详情"));
+  assert(drawerSource.includes("deviceId"));
+  assert(drawerSource.includes("roomKey"));
+  assert(drawerSource.includes("batchId"));
+  assert(profileSource.includes("解析用户画像"));
+  assert(profileSource.includes("已解析"));
+  assert(profileSource.includes("导出 Markdown"));
+  assert(profileSource.includes("解析中"));
+  assert(clientSource.includes("/admin/live-room-captures"));
+  assert(clientSource.includes("/profile"));
+  assert(clientSource.includes("/markdown"));
 });

@@ -62,6 +62,27 @@ test("更新中心一键构建发布当前脚本并展示真实版本与设备�
   assert(!source.includes('label="强制更新"'));
 });
 
+test("更新中心区分业务脚本与 APK 基座两个独立更新通道", () => {
+  const pageSource = fs.readFileSync(pagePath, "utf8");
+  const apiSource = fs.readFileSync(apiPath, "utf8");
+
+  for (const text of ["业务脚本", "APK 基座", "基座版本", "业务脚本发布不会构建 APK"]) {
+    assert(pageSource.includes(text), `missing update channel text: ${text}`);
+  }
+  assert(pageSource.includes("Tabs"));
+  assert(pageSource.includes('useState("biz-scripts")'));
+  assert(pageSource.includes("activeKey={activeTab}"));
+  assert(pageSource.includes('key: "apk"'));
+  assert(pageSource.includes("getAgentReleases"));
+  assert(pageSource.includes("getAgentDeviceUpdateStatuses"));
+  assert(pageSource.includes('channel = "stable"'));
+  assert(pageSource.includes("agentVersionChannels"));
+  assert(apiSource.includes('request<AgentReleasePage>("/admin/remote-scripts/releases"'));
+  assert(apiSource.includes('request<DeviceUpdateStatusPage>("/admin/remote-scripts/device-update-status"'));
+  assert(apiSource.includes("channel: channel"));
+  assert(apiSource.includes('channel: "biz-scripts"'));
+});
+
 test("更新中心接入独立菜单与固定页面地址", () => {
   for (const filePath of [pagePath, apiPath]) {
     assert(fs.existsSync(filePath), `${path.basename(filePath)} should exist`);

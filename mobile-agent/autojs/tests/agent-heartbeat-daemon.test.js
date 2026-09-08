@@ -155,8 +155,42 @@ function testDaemonReportsRunningWhenWarmupBridgeIsActive() {
   assert.strictEqual(heartbeats[0].status, "running");
 }
 
+function testDaemonReportsRunningWhenIsolatedCommentBridgeIsActive() {
+  var heartbeats = [];
+  var context = {
+    config: { runtime: { agentHeartbeatDaemonSeconds: 1 } },
+    logger: createLogger(),
+    floatyControl: {
+      state: {
+        running: false, paused: false, stopRequested: false,
+        exitRequested: false, lastMessage: "等待控制循环"
+      }
+    },
+    newCommentCommandBridge: {
+      getStatusSnapshot: function () {
+        return { status: "running", stopRequested: false, lastMessage: "隔离评论任务执行中" };
+      }
+    },
+    heartbeatService: {
+      reportAgentHeartbeat: function (status, message) {
+        heartbeats.push({ status: status, message: message });
+      }
+    }
+  };
+  var daemon = createAgentHeartbeatDaemon(context, {
+    threadStart: function (fn) { fn(); return {}; },
+    sleep: function () { context.floatyControl.state.exitRequested = true; }
+  });
+
+  daemon.start();
+
+  assert.strictEqual(heartbeats[0].status, "running");
+  assert.strictEqual(heartbeats[0].message, "隔离评论任务执行中");
+}
+
 testDaemonKeepsReportingWhileMainTaskIsBusy();
 testDaemonStatusSnapshotUsesPausedAndStoppedStates();
 testDaemonReportsRunningWhenWarmupBridgeIsActive();
+testDaemonReportsRunningWhenIsolatedCommentBridgeIsActive();
 
 console.log("agent-heartbeat-daemon tests passed");

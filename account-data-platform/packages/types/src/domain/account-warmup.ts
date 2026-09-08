@@ -76,7 +76,9 @@ const accountWarmupLiveCommentEntryRunPayloadSchema = z.object({
 const accountWarmupIsolatedLiveCommentEntryRunPayloadSchema = z.object({
   featureKey: z.literal("isolated_live_comment_entry"),
   batchId: batchIdSchema,
-  config: accountWarmupLiveCommentEntryConfigSchema
+  config: accountWarmupLiveCommentEntryConfigSchema.extend({
+    captureDurationMinutes: z.coerce.number().int().min(1).max(60).default(5)
+  })
 }).strict();
 
 export const accountWarmupRunPayloadSchema = z.discriminatedUnion("featureKey", [

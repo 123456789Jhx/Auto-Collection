@@ -273,7 +273,7 @@ test("summarizes mixed device outcomes and persists refresh context", () => {
   writeActiveLiveCommentEntryBatchId(" 6f646271-82da-47d1-8ca5-6de3c7394348 ", storage);
   writeLastLiveCommentEntryInput({ targetKeyword: " 药材种植 ", minViewerCount: 500 }, storage);
   assert.equal(readActiveLiveCommentEntryBatchId(storage), "6f646271-82da-47d1-8ca5-6de3c7394348");
-  assert.deepEqual(readLastLiveCommentEntryInput(storage), { targetKeyword: "药材种植", minViewerCount: 500 });
+  assert.deepEqual(readLastLiveCommentEntryInput(storage), { targetKeyword: "药材种植", minViewerCount: 500, captureDurationMinutes: 5 });
 });
 
 test("does not count a failed capture merely because it returned an empty comments array", () => {

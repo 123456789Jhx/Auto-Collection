@@ -1,6 +1,6 @@
 import { CheckSquareOutlined, DatabaseOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Popconfirm, Space, Statistic, Table, Tag, Typography, type TableColumnsType } from "antd";
+import { Alert, Button, Modal, Space, Statistic, Table, Tag, Typography, type TableColumnsType } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import {
   confirmLiveCommentCandidates,
@@ -16,6 +16,7 @@ function sourceLabel(source: PendingLiveCommentCandidate["sourcesJson"][number])
 export function LiveCommentCandidates(props: { batchId: string; batchFinished: boolean }) {
   const queryClient = useQueryClient();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const candidatesQuery = useQuery({
     queryKey: ["liveCommentCandidates", props.batchId],
     queryFn: () => getLiveCommentCandidates(props.batchId),
@@ -26,8 +27,9 @@ export function LiveCommentCandidates(props: { batchId: string; batchFinished: b
   const selectableIds = useMemo(() => candidates.filter((item) => item.status === "PENDING").map((item) => item.id), [candidates]);
   useEffect(() => setSelectedIds((current) => current.filter((id) => candidates.some((item) => item.id === id))), [candidates]);
   const confirmMutation = useMutation({
-    mutationFn: () => confirmLiveCommentCandidates(props.batchId, selectedIds),
+    mutationFn: (clean: boolean) => confirmLiveCommentCandidates(props.batchId, selectedIds, clean),
     onSuccess: async () => {
+      setConfirmOpen(false);
       setSelectedIds([]);
       await queryClient.invalidateQueries({ queryKey: ["liveCommentCandidates", props.batchId] });
     }
@@ -49,10 +51,15 @@ export function LiveCommentCandidates(props: { batchId: string; batchFinished: b
       <Space size="large" style={{ marginTop: 16 }}><Statistic title="候选词" value={candidates.length} /><Statistic title="待入库" value={selectableIds.length} /><Statistic title="已入库" value={candidates.filter((item) => item.status === "IMPORTED").length} /></Space>
       <Space style={{ marginTop: 16, marginBottom: 12 }}>
         <Button icon={<CheckSquareOutlined />} disabled={!props.batchFinished || !selectableIds.length} onClick={() => setSelectedIds(selectableIds)}>全选待入库</Button>
-        <Popconfirm title="确认加入评论词库？" okText="确认入库" cancelText="取消" disabled={!props.batchFinished || !selectedIds.length} onConfirm={() => confirmMutation.mutate()}>
-          <Button type="primary" icon={<DatabaseOutlined />} loading={confirmMutation.isPending} disabled={!props.batchFinished || !selectedIds.length}>确认入库</Button>
-        </Popconfirm>
+        <Button type="primary" icon={<DatabaseOutlined />} loading={confirmMutation.isPending} disabled={!props.batchFinished || !selectedIds.length} onClick={() => setConfirmOpen(true)}>确认入库</Button>
       </Space>
+      <Modal open={confirmOpen} title="确认评论入库" onCancel={() => setConfirmOpen(false)} footer={[
+        <Button key="cancel" onClick={() => setConfirmOpen(false)}>取消</Button>,
+        <Button key="defer" disabled={confirmMutation.isPending} onClick={() => confirmMutation.mutate(false)}>暂不清洗（保留缓存）</Button>,
+        <Button key="clean" type="primary" loading={confirmMutation.isPending} onClick={() => confirmMutation.mutate(true)}>清洗后入库</Button>
+      ]}>
+        <Typography.Paragraph>是否先进行评论清洗？含特殊字符的整条评论和重复评论会被筛选，原始评论仍保留在候选缓存中。</Typography.Paragraph>
+      </Modal>
     </div>
     <Table<PendingLiveCommentCandidate> rowKey="id" size="small" columns={columns} dataSource={candidates} loading={candidatesQuery.isLoading} rowSelection={{ selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys.map(String)), getCheckboxProps: (row) => ({ disabled: row.status === "IMPORTED" || !props.batchFinished }) }} pagination={{ defaultPageSize: 20 }} scroll={{ x: 900 }} />
   </section>;

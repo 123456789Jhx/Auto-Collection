@@ -20,6 +20,12 @@ function runtimeFixture(overrides) {
     openFirstLive: function () { actions.push("openFirstLive"); return true; },
     isLiveRoom: function () { actions.push("isLiveRoom"); return true; },
     readViewerCount: function () { actions.push("readViewerCount"); return { count: 25, source: "ocr" }; },
+    openAnchorSummary: function () { actions.push("openAnchorSummary"); return true; },
+    openAnchorProfile: function () { actions.push("openAnchorProfile"); return true; },
+    readRoomIdentity: function () { actions.push("readRoomIdentity"); return { roomKey: "douyin:test-room", text: "抖音号：test-room" }; },
+    claimRoom: function () { actions.push("claimRoom"); return { acquired: true, roomKey: "douyin:test-room" }; },
+    closeAnchorProfile: function () { actions.push("closeAnchorProfile"); return true; },
+    releaseRoom: function () { actions.push("releaseRoom"); return { released: true }; },
     nextLive: function () { actions.push("nextLive"); return true; },
     waitRandom: function () { actions.push("waitRandom"); return true; }
   };
@@ -63,7 +69,7 @@ test("workflow filters a qualifying room then waits for stop", function () {
     readViewerCount: function () { runtime.actions.push("readViewerCount"); return { count: 350 }; },
     waitRandom: function () {
       waitCount += 1;
-      if (waitCount >= 5) {
+      if (waitCount >= 20) {
         entered = true;
         stopRequested = true;
       }
@@ -178,24 +184,25 @@ test("workflow stops immediately when the room switch receives a stop request", 
   assert.deepEqual(result, { status: "STOPPED" });
 });
 test("workflow extracts paged comments and returns backend-compatible sources", function () {
+  var clock = 0;
   var pages = ["甲：重复评论\n欢迎来到直播间", "乙：第二条\n甲：重复评论", "丙：第三条\n欢迎来到直播间", "丁：" + "超长".repeat(101)];
   var pageIndex = 0;
   var swipes = 0;
   var runtime = runtimeFixture({
     readViewerCount: function () { return { count: 500 }; },
     readComments: function () { return { text: pages[pageIndex++] || "" }; },
-    swipeComments: function () { swipes += 1; return true; },
+    swipeComments: function () { swipes += 1; if (swipes === 3) clock += 300000; return true; },
     waitRandom: function () { return true; }
   });
-  var result = feature("workflow").createIsolatedLiveCommentWorkflow({ runtime: runtime, deviceId: "device-1" }).run(
+  var result = feature("workflow").createIsolatedLiveCommentWorkflow({ runtime: runtime, deviceId: "device-1", now: function () { return clock; } }).run(
     { targetKeyword: "关键词", minViewerCount: 300, batchId: "batch-1", roomKey: "room-1", commentSwipeCount: 3 },
     { shouldStop: function () { return false; } }
   );
   assert.equal(result.captureStatus, "LIVE_COMMENT_ENTRY_CAPTURED");
   assert.equal(swipes, 3);
-  assert.deepEqual(result.comments.map(function (item) { return item.commentText; }), ["重复评论", "第二条", "第三条"]);
+  assert.deepEqual(result.comments.map(function (item) { return item.commentText; }), ["重复评论", "第二条", "重复评论", "第三条"]);
   assert.deepEqual(result.comments[0].sources[0], {
-    deviceId: "device-1", roomKey: "room-1", pageIndex: 0, userName: "甲", commentText: "重复评论"
+    deviceId: "device-1", roomKey: "douyin:test-room", pageIndex: 0, commentText: "重复评论"
   });
 });
 test("workflow returns partial comments when stopped during comment paging", function () {
@@ -247,6 +254,7 @@ test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnost
   var requestedRegions = [];
   var screenRecycled = 0;
   var clipRecycled = 0;
+  var filterRecycled = 0;
   var diagnosticRecycled = 0;
   var ocrText = ["甲：评论", "在线 88 人", ""];
   var size = { width: 100, height: 200 };
@@ -264,7 +272,8 @@ test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnost
         events.push("openLiveRoomFromCurrentScreen");
         liveEntryOptions = options;
         return true;
-      }
+      },
+      nextVideo: function () { events.push("nextVideo"); }
     },
     screenRecognizer: recognizer,
     ocrEngine: { recognize: function (clip) { return clip.text; } },
@@ -276,10 +285,14 @@ test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnost
     captureScreen: function () { return { image: {
       recycle: function () { screenRecycled += 1; }
     }, width: size.width, height: size.height }; },
-    images: { clip: function (image, x, y, w, h) {
-      requestedRegions.push({ x: x, y: y, w: w, h: h });
-      return { text: ocrText.shift(), recycle: function () { clipRecycled += 1; } };
-    } },
+    images: {
+      clip: function (image, x, y, w, h) {
+        requestedRegions.push({ x: x, y: y, w: w, h: h });
+        return { text: ocrText.shift(), recycle: function () { clipRecycled += 1; } };
+      },
+      cvtColor: function (image) { return { source: image, recycle: function () { filterRecycled += 1; } }; },
+      inRange: function (image) { return { text: image.source.text, recycle: function () { filterRecycled += 1; } }; }
+    },
     sleep: function () {},
     random: function (min) { return min; },
     findNode: function () { return { x: 10, y: 12 }; },
@@ -309,11 +322,13 @@ test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnost
   var viewer = layout.getRegion("viewerCount", size);
   assert.deepEqual(requestedRegions[1],
     { x: viewer.left, y: viewer.top, w: viewer.width, h: viewer.height });
-  assert.equal(screenRecycled, 2);
-  assert.equal(clipRecycled, 3);
+  assert.equal(requestedRegions.length, 2);
+  assert.equal(screenRecycled, 3);
+  assert.equal(clipRecycled, 2);
+  assert.equal(filterRecycled, 2);
   assert.equal(diagnosticRecycled, 1);
   assert.equal(events.indexOf("openLiveRoomFromCurrentScreen") >= 0, true);
-  assert.deepEqual(events.slice(-2), ["swipe", "swipe"]);
+  assert.deepEqual(events.slice(-2), ["swipe", "nextVideo"]);
   var failureRecycles = 0;
   var failureClips = 0;
   var parserFailureRuntime = feature("runtime").createIsolatedRuntime({
@@ -326,8 +341,174 @@ test("runtime wires atoms, OCR regions, recycling and bounded read-only diagnost
   var parserFailure;
   assert.doesNotThrow(function () { parserFailure = parserFailureRuntime.readViewerCount(); });
   assert.equal(parserFailure.success, false);
-  assert.equal(failureRecycles, 1);
-  assert.equal(failureClips, 2);
+  assert.equal(failureRecycles, 2);
+  assert.equal(failureClips, 1);
+});
+test("workflow identifies and claims a qualifying room before comment capture", function () {
+  var received = [];
+  var waits = [];
+  var runtime = runtimeFixture({
+    readViewerCount: function () { runtime.actions.push("readViewerCount"); return { count: 500, commerceCartVisible: false }; },
+    waitRandom: function (min, max) { waits.push([min, max]); runtime.actions.push("waitRandom"); return true; }
+  });
+  var output = runIsolated(runtime, { targetKeyword: "关键词", minViewerCount: 300 }, received);
+  assert.equal(output.result.status, "LIVE_COMMENT_ENTRY_ENTERED");
+  assert.deepEqual(runtime.actions.filter(function (action) {
+    return ["openAnchorSummary", "openAnchorProfile", "readRoomIdentity", "claimRoom", "closeAnchorProfile"].indexOf(action) >= 0;
+  }), ["openAnchorSummary", "openAnchorProfile", "readRoomIdentity", "claimRoom", "closeAnchorProfile"]);
+  assert.equal(waits.filter(function (range) { return range[0] === 5000 && range[1] === 7000; }).length, 4);
+  assert.equal(received[0].roomKey, "douyin:test-room");
+});
+test("workflow skips a room claimed by another device and retries the next room", function () {
+  var claims = 0;
+  var switches = 0;
+  var received = [];
+  var waits = [];
+  var runtime = runtimeFixture({
+    readViewerCount: function () { return { count: 500, commerceCartVisible: false }; },
+    claimRoom: function () {
+      claims += 1;
+      return claims === 1 ? { acquired: false, ownerDeviceId: "device-2" } : { acquired: true, roomKey: "douyin:next-room" };
+    },
+    readRoomIdentity: function () { return { roomKey: claims ? "douyin:next-room" : "douyin:busy-room" }; },
+    nextLive: function () { switches += 1; return true; },
+    waitRandom: function (min, max) { waits.push([min, max]); return true; }
+  });
+  var output = runIsolated(runtime, { targetKeyword: "关键词", minViewerCount: 300, maxRoomAttempts: 3 }, received);
+  assert.equal(output.result.status, "LIVE_COMMENT_ENTRY_ENTERED");
+  assert.equal(claims, 2);
+  assert.equal(switches, 1);
+  assert.equal(received[0].roomKey, "douyin:next-room");
+  assert.equal(waits.filter(function (range) { return range[0] === 5000 && range[1] === 7000; }).length, 9);
+});
+
+test("workflow continues to the next room after one comment capture", function () {
+  var stopRequested = false;
+  var captures = 0;
+  var runtime = runtimeFixture({
+    readViewerCount: function () { return { count: 500, commerceCartVisible: false }; },
+    nextLive: function () { runtime.actions.push("nextLive"); stopRequested = true; return true; },
+    waitRandom: function () { runtime.actions.push("waitRandom"); return true; }
+  });
+  var workflow = feature("workflow").createIsolatedLiveCommentWorkflow({
+    runtime: runtime,
+    continueAfterCapture: true,
+    commentRunner: { capture: function () {
+      captures += 1;
+      return { status: "LIVE_COMMENT_ENTRY_CAPTURED", comments: [{ commentText: "评论词" }] };
+    } }
+  });
+  var result = workflow.run({ targetKeyword: "关键词", minViewerCount: 300 }, {
+    shouldStop: function () { return stopRequested; }
+  });
+  assert.equal(captures, 1);
+  assert.equal(runtime.actions.filter(function (item) { return item === "nextLive"; }).length, 1);
+  assert.equal(result.status, "STOPPED");
+  assert.equal(result.comments.length, 1);
+});
+test("runtime passes the active stop control into the first live click action", function () {
+  var receivedControl = null;
+  var control = { shouldStop: function () { return false; } };
+  var runtime = feature("runtime").createIsolatedRuntime({
+    douyin: {
+      clickFirstLiveByRandomArea: function (activeControl) {
+        receivedControl = activeControl;
+        return true;
+      }
+    }
+  }, { control: control });
+
+  assert.equal(runtime.openFirstLive().success, true);
+  assert.strictEqual(receivedControl, control);
+});
+test("runtime uses the approved profile regions and derives the room key from OCR", function () {
+  var taps = [];
+  var clips = [];
+  var recycled = 0;
+  var runtime = feature("runtime").createIsolatedRuntime({}, {
+    control: { shouldStop: function () { return false; } },
+    screenSize: { width: 1080, height: 2248 },
+    random: function (min) { return min; },
+    sleep: function () {},
+    captureScreen: function () { return { recycle: function () { recycled += 1; } }; },
+    images: { clip: function (image, x, y, width, height) {
+      clips.push({ x: x, y: y, width: width, height: height });
+      return { level: clips.length, recycle: function () { recycled += 1; } };
+    } },
+    ocrEngine: { recognize: function () { return "花姐讲种植\n抖音号："; } },
+    accessibility: { createGestureDriver: function () { return {
+      tap: function (point) { taps.push(point); return { success: true }; }
+    }; } }
+  });
+  assert.equal(runtime.openAnchorSummary().success, true);
+  assert.equal(runtime.openAnchorProfile().success, true);
+  assert.equal(runtime.closeAnchorProfile().success, true);
+  var identity = runtime.readRoomIdentity();
+  assert.equal(identity.success, true);
+  assert.equal(identity.value.roomKey, "anchor:花姐讲种植");
+  assert.equal(identity.value.accountName, "花姐讲种植");
+  assert.equal(identity.value.accountId, "");
+  assert.deepEqual(taps.map(function (point) { return [point.x, point.y]; }), [[61, 119], [81, 1226], [54, 131]]);
+  assert.deepEqual(clips, [
+    { x: 12, y: 207, width: 1031, height: 819 },
+    { x: 346, y: 115, width: 658, height: 134 }
+  ]);
+  assert.equal(recycled, 3);
+});
+test("runtime logs the legacy viewer and commerce-cart scans with execution status", function () {
+  var logs = [];
+  var runtime = feature("runtime").createIsolatedRuntime({
+    logger: {
+      info: function (message, details) { logs.push({ level: "info", message: message, details: details }); },
+      warn: function (message, details) { logs.push({ level: "warn", message: message, details: details }); },
+      error: function (message, details) { logs.push({ level: "error", message: message, details: details }); }
+    },
+    ocrEngine: { recognize: function () { return "在线 88 人"; } },
+    viewerCountParser: { parseViewerBadgeCount: function () { return 88; } }
+  }, {
+    control: { shouldStop: function () { return false; } },
+    screenSize: function () { return { width: 1080, height: 2248 }; },
+    captureScreen: function () { return { recycle: function () {} }; },
+    images: { clip: function () { return { recycle: function () {} }; } }
+  });
+
+  var result = runtime.readViewerCount();
+  assert.equal(result.success, true);
+  assert.equal(logs.some(function (entry) {
+    return entry.message === "抓取评论词旧 OCR 人数扫描开始" &&
+      entry.details.viewerOcrExecuted === true;
+  }), true);
+  assert.equal(logs.some(function (entry) {
+    return entry.message === "抓取评论词旧 OCR 小黄车扫描完成" &&
+      entry.details.commerceCartScanExecuted === true;
+  }), true);
+});
+
+test("workflow logs each new profile step and wait range", function () {
+  var logs = [];
+  var runtime = runtimeFixture({
+    readViewerCount: function () { return { count: 500, commerceCartVisible: false }; }
+  });
+  var output = runIsolated(runtime, { targetKeyword: "关键词", minViewerCount: 300 }, [], {
+    logger: {
+      info: function (message, details) { logs.push({ message: message, details: details }); },
+      warn: function (message, details) { logs.push({ message: message, details: details }); },
+      error: function (message, details) { logs.push({ message: message, details: details }); }
+    }
+  });
+  assert.equal(output.result.status, "LIVE_COMMENT_ENTRY_ENTERED");
+  assert.equal(logs.some(function (entry) {
+    return entry.message === "抓取评论词新流程等待开始" &&
+      entry.details.minMs === 5000 && entry.details.maxMs === 7000 &&
+      entry.details.purpose === "点击主播信息前等待";
+  }), true);
+  assert.equal(logs.some(function (entry) {
+    return entry.message === "抓取评论词主播身份 OCR 读取结果" &&
+      entry.details.executed === true;
+  }), true);
+  assert.equal(logs.some(function (entry) {
+    return entry.message === "抓取评论词主播身份占用判断完成";
+  }), true);
 });
 test("public cleanup performs exact recents order and falls back safely", function () {
   var events = [];

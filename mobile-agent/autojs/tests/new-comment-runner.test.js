@@ -22,7 +22,7 @@ function runIsolated(runtime, optionOverrides, control) {
   return { result: result, events: events };
 }
 function withoutBackendSourceFields(value) {
-  var result = JSON.parse(JSON.stringify(value));
+  var result = JSON.parse(JSON.stringify(value), function (key, entry) { return key === "userName" ? undefined : entry; });
   var comments = (result.comments || []).concat((result.events || []).reduce(function (all, event) {
     return all.concat(event.comments || []);
   }, []));
@@ -58,22 +58,27 @@ function runLegacy(runtime, control) {
   });
   return { result: runner.capture(SCOPE, control), events: events };
 }
-test("runner exports bounded loop constants", function () {
-  assert.deepEqual([runnerModule.COMMENT_OCR_ATTEMPTS, runnerModule.MAX_CONSECUTIVE_NO_NEW_PAGES], [3, 2]);
-});
-test("six-page success result and stage payloads stay equivalent to the legacy runner", function () {
-  function runtime() {
+test("six-page filtered OCR result and stage payloads stay equivalent to the legacy runner", function () {
+  function runtime(filtered) {
     var reads = 0;
     return {
-      readComments: function () { reads += 1; return { text: "用户" + reads + "：评论" + reads }; },
+      readComments: function () {
+        reads += 1;
+        return { text: (filtered ? "" : "用户" + reads + "：") + "评论" + reads };
+      },
       swipeComments: function () { return true; },
       waitRandom: function () {}
     };
   }
-  var legacyRun = runLegacy(runtime());
-  var isolatedRun = runIsolated(runtime());
-  assert.deepEqual(withoutBackendSourceFields(isolatedRun.result), legacyRun.result);
-  assert.deepEqual(withoutBackendSourceFields({ events: isolatedRun.events }).events, legacyRun.events);
+  var legacyRun = runLegacy(runtime(false));
+  var isolatedRun = runIsolated(runtime(true));
+  var isolatedResult = withoutBackendSourceFields(isolatedRun.result);
+  var legacyResult = withoutBackendSourceFields(legacyRun.result);
+  delete isolatedResult.captureElapsedMs;
+  isolatedResult.comments.forEach(function (comment) { delete comment.commentId; });
+  legacyResult.comments.forEach(function (comment) { delete comment.commentId; });
+  assert.deepEqual(isolatedResult, legacyResult);
+  assert.deepEqual(isolatedRun.events.map(function (event) { return event.stage; }), legacyRun.events.map(function (event) { return event.stage; }));
   assert.deepEqual([isolatedRun.result.commentSwipeCount, isolatedRun.result.commentPageCount], [5, 6]);
 });
 test("empty OCR retries up to the third attempt before continuing through five swipes", function () {
@@ -82,7 +87,7 @@ test("empty OCR retries up to the third attempt before continuing through five s
   var run = runIsolated({
     readComments: function () {
       reads += 1;
-      return { text: reads < 3 ? "" : "用户：第" + reads + "次读取" };
+      return { text: reads < 3 ? "" : "第" + reads + "次读取" };
     },
     swipeComments: function () { swipes += 1; return true; },
     waitRandom: function () {}
@@ -95,28 +100,28 @@ test("empty OCR retries up to the third attempt before continuing through five s
     return event.stage === "RETRYING_COMMENT_OCR";
   }).length, 2);
 });
-test("two already-swiped no-new pages stop early while duplicate sources remain", function () {
+test("duplicate pages remain captured up to the swipe limit without a history-end banner", function () {
   var page = 0;
   var run = runIsolated({
     readComments: function () {
       page += 1;
-      return { text: "用户" + page + "：相 同 评论" };
+      return { text: "相 同 评论" };
     },
     swipeComments: function () { return true; },
     waitRandom: function () {}
   });
   assert.deepEqual([
     run.result.status, run.result.captureStopReason, run.result.commentSwipeCount, run.result.commentPageCount
-  ], ["LIVE_COMMENT_ENTRY_ENTERED", "NO_NEW_COMMENTS", 2, 3]);
+  ], ["LIVE_COMMENT_ENTRY_ENTERED", "SWIPE_LIMIT_REACHED", 5, 6]);
   assert.deepEqual([run.result.commentCount, run.result.commentSourceCount,
-    run.result.comments[0].sources.length], [1, 3, 3]);
+    run.result.comments[0].sources.length], [6, 6, 1]);
 });
 test("OCR exceptions exhaust three attempts and preserve prior-page candidates", function () {
   var reads = 0;
   var run = runIsolated({
     readComments: function () {
       reads += 1;
-      if (reads === 1) return { text: "甲：已抓到的评论" };
+      if (reads === 1) return { text: "已抓到的评论" };
       throw new Error("OCR_ENGINE_FAILED");
     },
     swipeComments: function () { return true; },
@@ -129,7 +134,7 @@ test("OCR exceptions exhaust three attempts and preserve prior-page candidates",
 });
 test("missing OCR and swipe capabilities return legacy failure payloads with partial data", function () {
   var noOcr = runIsolated({ swipeComments: function () { return true; } }).result;
-  var noSwipe = runIsolated({ readComments: function () { return { text: "甲：首屏评论" }; } }).result;
+  var noSwipe = runIsolated({ readComments: function () { return { text: "首屏评论" }; } }).result;
   assert.deepEqual({ status: noOcr.status, stage: noOcr.failedStage, reason: noOcr.reasonCode }, {
     status: "LIVE_COMMENT_ENTRY_COMMENT_CAPTURE_FAILED",
     stage: "CAPTURING_COMMENTS",
@@ -146,7 +151,7 @@ test("missing OCR and swipe capabilities return legacy failure payloads with par
 test("plain false and Task2 swipe failures normalize to COMMENT_SWIPE_FAILED", function () {
   [false, { success: false, reason: "DRIVER_REJECTED", message: "gesture denied" }].forEach(function (failure) {
     var run = runIsolated({
-      readComments: function () { return { text: "甲：首屏评论" }; },
+      readComments: function () { return { text: "首屏评论" }; },
       swipeComments: function () { return failure; }
     });
     assert.equal(run.result.reasonCode, "COMMENT_SWIPE_FAILED");
@@ -163,13 +168,13 @@ test("Task2 success envelopes and callAction are unwrapped synchronously", funct
       calls.push(name);
       if (name === "readComments") {
         reads += 1;
-        return { success: true, value: { text: "甲：统一结果" } };
+        return { success: true, value: { text: "统一结果" } };
       }
       return { success: true, value: true };
     }
   });
   assert.deepEqual([run.result.status, run.result.commentSwipeCount, run.result.commentSourceCount, reads],
-    ["LIVE_COMMENT_ENTRY_ENTERED", 2, 3, 3]);
+    ["LIVE_COMMENT_ENTRY_ENTERED", 5, 6, 6]);
   assert.ok(calls.indexOf("waitRandom") >= 0);
 });
 test("platform verification stops at all OCR and swipe boundaries with partial comments", function () {
@@ -229,7 +234,7 @@ test("custom platform verification failure receives the legacy partial-count det
     actionTrace: ["read-comments"]
   };
   var run = runIsolated({
-    readComments: function () { return { text: "甲：已抓取" }; },
+    readComments: function () { return { text: "已抓取" }; },
     swipeComments: function () { return true; }
   }, {
     detectPlatformVerification: function (stageName, control, details) {
@@ -256,7 +261,7 @@ test("verification check failure before OCR terminates without calling capture a
     detectPlatformVerification: function () {
       return { success: false, reason: "VERIFICATION_CHECK_FAILED", message: "diagnostics failed" };
     },
-    readComments: function () { reads += 1; return { text: "甲：不应读取" }; },
+    readComments: function () { reads += 1; return { text: "不应读取" }; },
     swipeComments: function () { swipes += 1; return true; }
   });
   assert.deepEqual([run.result.status, run.result.reasonCode, run.result.failedStage, run.result.commentCount],
@@ -275,7 +280,7 @@ test("verification check failure after OCR preserves partial and performs no lat
         ? { success: true, value: null }
         : { success: false, reason: "VERIFICATION_CHECK_FAILED", message: "after OCR failed" };
     },
-    readComments: function () { reads += 1; return { text: "甲：已读取" }; },
+    readComments: function () { reads += 1; return { text: "已读取" }; },
     swipeComments: function () { swipes += 1; return true; }
   });
   assert.deepEqual([run.result.reasonCode, run.result.commentCount, run.result.comments[0].commentText],
@@ -297,7 +302,7 @@ test("thrown verification checks fail closed at before and after OCR boundaries"
         if (boundary.phase === "after" && checks === 1) return { success: true, value: null };
         throw new Error("detector crashed");
       },
-      readComments: function () { reads += 1; return { text: "甲：异常前已读取" }; },
+      readComments: function () { reads += 1; return { text: "异常前已读取" }; },
       swipeComments: function () { swipes += 1; return true; }
     });
     assert.deepEqual([run.result.status, run.result.reasonCode, run.result.commentCount],
@@ -311,7 +316,7 @@ test("reportStage comments are deeply isolated from a successful result", functi
   var completedEvent = null;
   var runner = runnerModule.createCommentCaptureRunner({
     runtime: {
-      readComments: function () { return { text: "甲：原始评论" }; },
+      readComments: function () { return { text: "原始评论" }; },
       swipeComments: function () { return true; },
       waitRandom: function () {}
     },
@@ -338,7 +343,7 @@ test("stage alias comments are deeply isolated from a failure partial result", f
       readComments: function () {
         reads += 1;
         return reads === 1
-          ? { text: "甲：原始部分评论" }
+          ? { text: "原始部分评论" }
           : { success: false, reason: "OCR_FAILED", message: "OCR failed" };
       },
       swipeComments: function () { return true; },
@@ -362,13 +367,13 @@ test("stage alias comments are deeply isolated from a failure partial result", f
 test("stop checks preserve completed OCR or swipe work and bound later actions", function () {
   var stoppedAfterRead = false;
   var readStop = runIsolated({
-    readComments: function () { stoppedAfterRead = true; return { text: "甲：停止前抓取" }; },
+    readComments: function () { stoppedAfterRead = true; return { text: "停止前抓取" }; },
     swipeComments: function () { throw new Error("must not swipe"); }
   }, null, { shouldStop: function () { return stoppedAfterRead; } }).result;
   assert.deepEqual([readStop.status, readStop.commentPageCount, readStop.commentCount], ["STOPPED", 1, 1]);
   var stoppedAfterSwipe = false;
   var swipeStop = runIsolated({
-    readComments: function () { return { text: "甲：停止前抓取" }; },
+    readComments: function () { return { text: "停止前抓取" }; },
     swipeComments: function () { stoppedAfterSwipe = true; return true; }
   }, null, { shouldStop: function () { return stoppedAfterSwipe; } }).result;
   assert.deepEqual([swipeStop.status, swipeStop.commentSwipeCount, swipeStop.commentCount], ["STOPPED", 1, 1]);

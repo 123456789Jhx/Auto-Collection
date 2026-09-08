@@ -6,6 +6,7 @@ const launcher = fs.readFileSync(path.join(__dirname, "../launcher.js"), "utf8")
 const watchdog = fs.readFileSync(path.join(__dirname, "../watchdog.js"), "utf8");
 const project = JSON.parse(fs.readFileSync(path.join(__dirname, "../project.json"), "utf8"));
 const packager = fs.readFileSync(path.join(__dirname, "../../../scripts/package-autojs-apk.ps1"), "utf8");
+const main = fs.readFileSync(path.join(__dirname, "../main.js"), "utf8");
 
 const managedRuntimeCalls = launcher.match(/ensureManagedRuntime\(\);/g) || [];
 assert.equal(managedRuntimeCalls.length, 1, "only the one-tap button may start the inner Agent");
@@ -15,5 +16,9 @@ assert.match(packager, /runOnBoot\s*=\s*\$false/);
 assert.match(launcher, /storages\.create\("AgriVideoCollectorWatchdog"\)\.remove\("lastBeat"\)/);
 assert.equal(project.launchConfig.runOnBoot, false);
 assert.doesNotMatch(watchdog, /recordStage\("SYSTEM_BOOTED"/);
+assert.match(main, /core\/agent-process-lock\.js/);
+assert.match(watchdog, /core\/agent-process-lock\.js/);
+assert.match(launcher, /core\/agent-process-lock\.js/);
+assert.doesNotMatch(launcher, /startScript\(MAIN_PATH/);
 
 console.log("base-only boot tests passed");

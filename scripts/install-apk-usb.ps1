@@ -2,6 +2,9 @@ param(
   [string]$ApkPath = "",
   [string]$PackageName = "com.agri.video.collector",
   [string]$AdbPath = "",
+  [ValidateRange(0, 65535)]
+  [int]$AdbServerPort = 0,
+  [switch]$CheckOnly,
   [switch]$SkipUninstall,
   [switch]$PrepareMiuiDeveloperInstall,
   [bool]$LaunchInstallerOnRestricted = $true
@@ -56,7 +59,39 @@ function Resolve-ApkPath([string]$PreferredPath) {
 }
 
 $script:ResolvedAdbPath = Resolve-AdbPath $AdbPath
-$resolvedApkPath = Resolve-ApkPath $ApkPath
+if (-not $CheckOnly) {
+  $resolvedApkPath = Resolve-ApkPath $ApkPath
+}
+
+$autoSelectAdbServer = $false
+if ($AdbServerPort -gt 0) {
+  $script:AdbServerSocket = "tcp:127.0.0.1:$AdbServerPort"
+} else {
+  $configuredSocket = $env:ADB_SERVER_SOCKET
+  $configuredPort = $env:ANDROID_ADB_SERVER_PORT
+  if ([string]::IsNullOrWhiteSpace($configuredSocket) -and [string]::IsNullOrWhiteSpace($configuredPort)) {
+    # Existing terminals may predate the saved user ADB configuration.
+    $userEnvironment = Get-ItemProperty -LiteralPath "HKCU:\Environment" -ErrorAction SilentlyContinue
+    if ($null -ne $userEnvironment) {
+      $socketProperty = $userEnvironment.PSObject.Properties["ADB_SERVER_SOCKET"]
+      $portProperty = $userEnvironment.PSObject.Properties["ANDROID_ADB_SERVER_PORT"]
+      if ($null -ne $socketProperty) { $configuredSocket = [string]$socketProperty.Value }
+      if ($null -ne $portProperty) { $configuredPort = [string]$portProperty.Value }
+    }
+  }
+  if (-not [string]::IsNullOrWhiteSpace($configuredSocket)) {
+    $script:AdbServerSocket = $configuredSocket.Trim()
+  } elseif (-not [string]::IsNullOrWhiteSpace($configuredPort)) {
+    $parsedPort = 0
+    if (-not [int]::TryParse($configuredPort, [ref]$parsedPort) -or $parsedPort -lt 1 -or $parsedPort -gt 65535) {
+      throw "ANDROID_ADB_SERVER_PORT must be between 1 and 65535."
+    }
+    $script:AdbServerSocket = "tcp:127.0.0.1:$parsedPort"
+  } else {
+    $script:AdbServerSocket = "tcp:127.0.0.1:5037"
+    $autoSelectAdbServer = $true
+  }
+}
 
 function Invoke-Adb([string[]]$Arguments, [switch]$IgnoreError) {
   Write-Host "adb $($Arguments -join ' ')"
@@ -64,7 +99,9 @@ function Invoke-Adb([string[]]$Arguments, [switch]$IgnoreError) {
   $nativePreference = Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
   $hasNativePreference = $null -ne $nativePreference
   $previousNativePreference = if ($hasNativePreference) { [bool]$nativePreference.Value } else { $false }
+  $previousAdbServerSocket = $env:ADB_SERVER_SOCKET
   try {
+    $env:ADB_SERVER_SOCKET = $script:AdbServerSocket
     $ErrorActionPreference = "Continue"
     if ($hasNativePreference) {
       $PSNativeCommandUseErrorActionPreference = $false
@@ -72,6 +109,7 @@ function Invoke-Adb([string[]]$Arguments, [switch]$IgnoreError) {
     $output = & $script:ResolvedAdbPath @Arguments 2>&1
     $exitCode = $LASTEXITCODE
   } finally {
+    $env:ADB_SERVER_SOCKET = $previousAdbServerSocket
     $ErrorActionPreference = $previousErrorActionPreference
     if ($hasNativePreference) {
       $PSNativeCommandUseErrorActionPreference = $previousNativePreference
@@ -91,19 +129,40 @@ function Invoke-Adb([string[]]$Arguments, [switch]$IgnoreError) {
 }
 
 Write-Host "Using adb: $script:ResolvedAdbPath"
-Write-Host "Using APK: $resolvedApkPath"
+Write-Host "Using ADB server: $script:AdbServerSocket"
+if (-not $CheckOnly) {
+  Write-Host "Using APK: $resolvedApkPath"
+}
 Write-Host "Running adb devices"
 $devicesResult = Invoke-Adb -Arguments @("devices")
-$devices = @()
-foreach ($line in ($devicesResult.Output -split "`n")) {
-  $trimmed = $line.Trim()
-  if ($trimmed -match "^([^\s]+)\s+device$") {
-    $devices += $Matches[1]
+
+function Get-AuthorizedAdbDevices([string]$Output) {
+  foreach ($line in ($Output -split "`n")) {
+    if ($line.Trim() -match "^([^\s]+)\s+device$") {
+      $Matches[1]
+    }
+  }
+}
+
+$devices = @(Get-AuthorizedAdbDevices $devicesResult.Output)
+if ($devices.Count -eq 0 -and $autoSelectAdbServer) {
+  $fallbackListeners = @(Get-NetTCPConnection -State Listen -LocalPort 5038 -ErrorAction SilentlyContinue |
+    Where-Object { $_.LocalAddress -in @("127.0.0.1", "0.0.0.0", "::1", "::") })
+  if ($fallbackListeners.Count -gt 0) {
+    $script:AdbServerSocket = "tcp:127.0.0.1:5038"
+    Write-Host "Trying existing ADB server: $script:AdbServerSocket"
+    $devicesResult = Invoke-Adb -Arguments @("devices")
+    $devices = @(Get-AuthorizedAdbDevices $devicesResult.Output)
   }
 }
 
 if ($devices.Count -eq 0) {
   throw "No authorized USB devices were found by adb devices."
+}
+
+if ($CheckOnly) {
+  Write-Host "ADB connection check passed for $($devices.Count) device(s) on $script:AdbServerSocket."
+  return
 }
 
 function Invoke-MiuiPreparation([string]$Serial) {

@@ -46,6 +46,23 @@ function getScriptDir() {
   return "/storage/emulated/0/燎原星火";
 }
 var SCRIPT_DIR = getScriptDir();
+var createAgentProcessLock = require(files.join(SCRIPT_DIR, "core/agent-process-lock.js")).createAgentProcessLock;
+var mainProcessLock = createAgentProcessLock({
+  path: files.join(SCRIPT_DIR, ".agent-main.lock"),
+  logger: {
+    info: function (message) { try { log(message); } catch (error) {} },
+    warn: function (message) { try { log(message); } catch (error) {} },
+    error: function (message) { try { log(message); } catch (error) {} }
+  }
+});
+if (!mainProcessLock.acquire()) {
+  try { toast("Agent主脚本已在运行"); } catch (error) {}
+  exit();
+}
+try {
+  events.on("exit", function () { mainProcessLock.release(); });
+} catch (error) {
+}
 var agentEngineIdentity = require(files.join(SCRIPT_DIR, "core/agent-engine-identity.js"));
 
 function hasOtherMainEngine() {

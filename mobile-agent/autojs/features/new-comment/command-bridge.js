@@ -136,7 +136,7 @@ function createNewCommentCommandBridge(context) {
   function preserveProgress(runState, result) {
     var output = withContract(runState, result || {});
     var progress = runState.latestProgress || {};
-    ["comments", "commentCount", "commentSourceCount"].forEach(function (key) {
+    ["comments", "commentCount", "commentSourceCount", "roomProfiles"].forEach(function (key) {
       if (output[key] === undefined && progress[key] !== undefined) output[key] = progress[key];
     });
     output.stageHistory = runState.stageHistory.slice();
@@ -225,7 +225,7 @@ function createNewCommentCommandBridge(context) {
     if (terminalCache[command.id]) { retryCached(command, terminalCache[command.id]); return; }
     var oldActive = context.accountWarmupCommandBridge &&
       typeof context.accountWarmupCommandBridge.getActive === "function" && context.accountWarmupCommandBridge.getActive();
-    if (active || oldActive) { busy(command); return; }
+    if (active || oldActive || (context.floatyControl && context.floatyControl.state && context.floatyControl.state.running && !context.floatyControl.state.stopRequested)) { busy(command); return; }
     var payload = payloadOf(command);
     var runState = {
       command: command, commandId: String(command.id || ""), featureKey: FEATURE_KEY,
@@ -280,7 +280,6 @@ function createNewCommentCommandBridge(context) {
   function stoppedKey(targetCommandId, batchId) {
     return String(targetCommandId || "") + "\n" + String(batchId || "");
   }
-
   function stoppedResult(runState, status) {
     var result = preserveProgress(runState, {
       status: status || "LIVE_COMMENT_ENTRY_STOPPED", stage: "STOPPED",
@@ -290,17 +289,14 @@ function createNewCommentCommandBridge(context) {
     result.captureCompleted = false;
     return result;
   }
-
   function ackStop(command, result, runState) {
     reliableAck("stop:" + command.id, command, "DONE", result, runState,
       "隔离评论停止回执失败", null, { critical: true });
   }
-
   function alreadyCompletedResult(targetCommandId, terminal) {
     return { status: "ALREADY_COMPLETED", targetCommandId: targetCommandId,
       targetStatus: String(terminal && terminal.result && terminal.result.status || "") };
   }
-
   function stopCommand(command) {
     var payload = payloadOf(command);
     var key = stoppedKey(payload.targetCommandId, payload.batchId);
@@ -334,14 +330,12 @@ function createNewCommentCommandBridge(context) {
     finish(runState, "DONE", result);
     return true;
   }
-
   function copyArrayProperties(source, target) {
     Object.keys(source || {}).forEach(function (key) {
       if (!/^\d+$/.test(key)) target[key] = source[key];
     });
     return target;
   }
-
   function intercept(commands) {
     commands = Array.isArray(commands) ? commands : [];
     var passthrough = [];
@@ -363,7 +357,15 @@ function createNewCommentCommandBridge(context) {
     }
     return copyArrayProperties(commands, passthrough);
   }
-
+  function getStatusSnapshot() {
+    if (!active) return null;
+    var progress = active.latestProgress || {}, stage = String(progress.stage || "");
+    return { status: active.stopRequested || active.terminal ? "stopped" : "running",
+      stopRequested: !!active.stopRequested, runId: String(active.commandId || ""),
+      batchId: String(active.batchId || ""), featureKey: String(active.featureKey || FEATURE_KEY),
+      taskType: "live_comment", stage: stage,
+      lastMessage: stage ? "隔离评论任务：" + stage : "隔离评论任务执行中" };
+  }
   function install() {
     if (installed) return false;
     loadEntry();
@@ -379,7 +381,6 @@ function createNewCommentCommandBridge(context) {
     installed = true;
     return true;
   }
-
   function installPollMetadataPreserver() {
     if (!installed || metadataPreserverInstalled) return false;
     var wrappedPoll = uploader.pollCommands;
@@ -391,9 +392,8 @@ function createNewCommentCommandBridge(context) {
     metadataPreserverInstalled = true;
     return true;
   }
-
   return { install: install, installPollMetadataPreserver: installPollMetadataPreserver,
-    intercept: intercept, getActive: function () { return active; } };
+    intercept: intercept, getActive: function () { return active; }, getStatusSnapshot: getStatusSnapshot };
 }
 
 module.exports = { createNewCommentCommandBridge: createNewCommentCommandBridge };

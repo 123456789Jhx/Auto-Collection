@@ -49,7 +49,11 @@ export function resolveConfig(env: EnvMap = process.env) {
     mobileRegistrationSecret,
     mobileRequestSigningRequired,
     legacyBusinessFrozen,
-    mobileRequestTimestampSkewSeconds: Number(env.MOBILE_REQUEST_TIMESTAMP_SKEW_SECONDS ?? 300)
+    mobileRequestTimestampSkewSeconds: Number(env.MOBILE_REQUEST_TIMESTAMP_SKEW_SECONDS ?? 300),
+    aiProvider: env.AI_DEFAULT_PROVIDER ?? env.OPENAI_PROVIDER ?? "OpenAI",
+    aiModel: env.AI_DEFAULT_MODEL ?? env.OPENAI_MODEL ?? "gpt-5.5",
+    aiBaseUrl: env.OPENAI_BASE_URL ?? env.AI_BASE_URL ?? "https://api.openai.com/v1",
+    aiApiKey: env.OPENAI_API_KEY ?? env.AI_API_KEY ?? ""
   };
 }
 

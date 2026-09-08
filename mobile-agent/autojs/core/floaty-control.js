@@ -21,31 +21,11 @@ function createFloatyControl(config, logger) {
   var window = null;
 
   function renderStatus() {
-    if (!window) {
-      return;
-    }
-    ui.run(function () {
-      var text = "\u540e\u53f0\u63a7\u5236";
-      if (state.running && !state.paused) {
-        text = "\u8fd0\u884c\u4e2d";
-      } else if (state.paused) {
-        text = "\u5df2\u6682\u505c";
-      } else if (state.stopRequested || state.exitRequested) {
-        text = "\u5df2\u505c\u6b62";
-      }
-      window.status.setText(text);
-    });
+    // 状态只保存在 state 中并通过心跳上报，手机端不显示状态文字。
   }
 
   function create() {
-    window = floaty.window(
-      <horizontal bg="#AA222222" padding="6">
-        <text id="status" text="后台控制" w="96" h="36" gravity="center" textColor="#ffffff" textSize="13sp" />
-      </horizontal>
-    );
-
-    moveToDefaultPosition();
-    renderStatus();
+    window = null;
   }
 
   function update(patch) {

@@ -46,6 +46,8 @@ import { guardLegacyMobileCommand, guardLegacyTaskAssignment } from "../services
 import { deleteAccountWarmupVocabulary, getAccountWarmupVocabulary, saveAccountWarmupVocabulary } from "../services/account-warmup-vocabulary.service";
 import { deviceRecoveryRoutes } from "../features/device-recovery/device-recovery.runtime";
 import { confirmLiveCommentCandidates, getPendingLiveCommentCandidates } from "../services/live-comment-candidate.service";
+import { findLiveRoomCapture, findLiveRoomProfile, listLiveRoomCaptures } from "../repositories/live-room-capture.repository";
+import { startLiveRoomProfileGeneration } from "../services/live-room-profile.service";
 
 const adminLoginSchema = z.object({
   username: z.string().trim().min(1),
@@ -62,7 +64,8 @@ const liveTargetDeviceBindingsSchema = z.object({
 
 const liveCommentCandidateConfirmSchema = z.object({
   batchId: z.string().uuid(),
-  candidateIds: z.array(z.string().uuid()).max(200)
+  candidateIds: z.array(z.string().uuid()).max(200),
+  clean: z.boolean().default(true)
 }).strict();
 
 function liveTargetMutationError(c: Context<{ Variables: AdminVariables }>, error: unknown) {
@@ -94,6 +97,42 @@ function assignmentRuntimeErrorResponse(c: Context<{ Variables: AdminVariables }
       details: error.details
     }
   }, notFound ? 404 : 409);
+}
+
+function profileMarkdown(capture: NonNullable<Awaited<ReturnType<typeof findLiveRoomCapture>>>, profile: NonNullable<Awaited<ReturnType<typeof findLiveRoomProfile>>>) {
+  const list = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [];
+  const evidence = Array.isArray(profile.evidenceComments) ? profile.evidenceComments : [];
+  return [
+    `# ${capture.accountName || capture.roomKey} 用户画像`,
+    "",
+    `- 直播间键：${capture.roomKey}`,
+    `- 批次：${capture.batchId}`,
+    `- 设备：${capture.deviceId}`,
+    `- 模型：${profile.model || "gpt-5.5"}`,
+    `- 置信度：${profile.confidence || "未提供"}`,
+    "",
+    "## 画像摘要",
+    profile.summary || "暂无摘要",
+    "",
+    "## 主要人群特征",
+    ...list(profile.audienceFeatures).map((item) => `- ${item}`),
+    "",
+    "## 兴趣 / 需求倾向",
+    ...list(profile.interestNeeds).map((item) => `- ${item}`),
+    "",
+    "## 消费 / 互动特征",
+    ...list(profile.interactionTraits).map((item) => `- ${item}`),
+    "",
+    "## 证据评论样本",
+    ...evidence.map((item) => {
+      const row = item as Record<string, unknown>;
+      return `- “${String(row.text || "") }”${row.reason ? `：${String(row.reason)}` : ""}${row.confidence !== undefined ? `（置信度：${String(row.confidence)}）` : ""}`;
+    }),
+    "",
+    "## 置信度说明",
+    profile.confidenceExplanation || "暂无说明",
+    ""
+  ].join("\n");
 }
 
 export const adminRoutes = new Hono<{ Variables: AdminVariables }>();
@@ -139,7 +178,41 @@ adminRoutes.get("/live-comment-candidates", async (c) => {
 adminRoutes.post("/live-comment-candidates/confirm", async (c) => {
   const parsed = liveCommentCandidateConfirmSchema.safeParse(await c.req.json());
   if (!parsed.success) return validationError(c, parsed.error);
-  return c.json(await confirmLiveCommentCandidates(parsed.data.batchId, parsed.data.candidateIds));
+  return c.json(await confirmLiveCommentCandidates(parsed.data.batchId, parsed.data.candidateIds, { clean: parsed.data.clean }));
+});
+adminRoutes.get("/live-room-captures", async (c) => {
+  const parsed = z.object({ batchId: z.string().uuid(), deviceId: z.string().uuid() }).safeParse(c.req.query());
+  if (!parsed.success) return validationError(c, parsed.error);
+  return c.json(await listLiveRoomCaptures(parsed.data.batchId, parsed.data.deviceId));
+});
+adminRoutes.get("/live-room-captures/:captureId/profile", async (c) => {
+  const captureId = z.string().uuid().safeParse(c.req.param("captureId"));
+  if (!captureId.success) return validationError(c, captureId.error);
+  return c.json(await findLiveRoomProfile(captureId.data));
+});
+adminRoutes.post("/live-room-captures/:captureId/profile", async (c) => {
+  const captureId = z.string().uuid().safeParse(c.req.param("captureId"));
+  if (!captureId.success) return validationError(c, captureId.error);
+  const capture = await findLiveRoomCapture(captureId.data);
+  if (!capture) return c.json({ error: { code: "LIVE_ROOM_CAPTURE_NOT_FOUND", message: "直播间抓取记录不存在", details: {} } }, 404);
+  if (!capture.captureCompleted) return c.json({ error: { code: "LIVE_ROOM_CAPTURE_NOT_COMPLETED", message: "抓取尚未完成，暂不能解析画像", details: {} } }, 409);
+  const profile = await startLiveRoomProfileGeneration(capture);
+  return c.json(profile);
+});
+adminRoutes.get("/live-room-captures/:captureId/profile/markdown", async (c) => {
+  const captureId = z.string().uuid().safeParse(c.req.param("captureId"));
+  if (!captureId.success) return validationError(c, captureId.error);
+  const capture = await findLiveRoomCapture(captureId.data);
+  const profile = await findLiveRoomProfile(captureId.data);
+  if (!capture || !profile) return c.json({ error: { code: "LIVE_ROOM_PROFILE_NOT_FOUND", message: "用户画像不存在", details: {} } }, 404);
+  if (profile.status !== "SUCCEEDED") return c.json({ error: { code: "LIVE_ROOM_PROFILE_NOT_READY", message: "用户画像尚未解析完成", details: {} } }, 409);
+  const markdown = profileMarkdown(capture, profile);
+  return new Response(markdown, {
+    headers: {
+      "Content-Type": "text/markdown; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${encodeURIComponent(capture.roomKey)}-用户画像.md"`
+    }
+  });
 });
 adminRoutes.post("/account-warmup/vocabulary", async (c) => {
   let body: unknown;

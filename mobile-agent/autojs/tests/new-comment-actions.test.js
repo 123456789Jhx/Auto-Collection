@@ -4,6 +4,7 @@ var test = require("node:test");
 var assert = require("node:assert/strict");
 var contract = require("../core/action-contract.js");
 var layout = require("../features/new-comment/douyin-layout.js");
+var runtimeModule = require("../features/new-comment/runtime.js");
 var createGestureActions = require("../core/gesture-actions.js").createGestureActions;
 var createScreenActions = require("../core/screen-actions.js").createScreenActions;
 
@@ -72,21 +73,21 @@ test("layout regions and computed gestures stay inside different screens", funct
     });
   });
   assert.deepEqual(layout.REGION_RATIOS.comment, {
-    left: 0.055,
-    top: 0.622,
-    width: 0.855,
-    height: 0.247
+    left: 0.03,
+    top: 0.635,
+    width: 0.70,
+    height: 0.245
   });
 });
 
 test("layout keeps the required comment and live-room swipe ratios", function () {
-  var size = { width: 1080, height: 2400 };
+  var size = { width: 1080, height: 2248 };
   var commentRegion = layout.getRegion("comment", size);
   var commentSwipe = layout.getCommentSwipe(size);
   var liveRoomSwipe = layout.getLiveRoomSwitchSwipe(size);
 
-  assert.equal(commentSwipe.startY, commentRegion.top + Math.round(commentRegion.height * 0.82));
-  assert.equal(commentSwipe.endY, commentRegion.top + Math.round(commentRegion.height * 0.18));
+  assert.equal(commentSwipe.startY, commentRegion.top + Math.round(commentRegion.height * layout.SWIPE_OPTIONS.commentStartY));
+  assert.equal(commentSwipe.endY, commentRegion.top + Math.round(commentRegion.height * layout.SWIPE_OPTIONS.commentEndY));
   assert.equal(commentSwipe.durationMs, 520);
   assert.equal(liveRoomSwipe.startY, Math.round(size.height * 0.78));
   assert.equal(liveRoomSwipe.endY, Math.round(size.height * 0.22));
@@ -114,6 +115,25 @@ test("live-room swipe uses its own layout ratios and explicit overrides", functi
   assert.equal(configured.endY, Math.round(size.height * 0.36));
   assert.equal(overridden.startY, Math.round(size.height * 0.7));
   assert.equal(overridden.endY, Math.round(size.height * 0.3));
+});
+
+test("new-comment room switch delegates to the existing Douyin next-video action", function () {
+  var platformCalls = 0;
+  var localSwipeCalls = 0;
+  var runtime = runtimeModule.createIsolatedRuntime({
+    douyin: {
+      nextVideo: function () { platformCalls += 1; }
+    }
+  }, {
+    control: { shouldStop: function () { return false; } },
+    gestureDriver: {
+      swipe: function () { localSwipeCalls += 1; return { success: true }; }
+    }
+  });
+
+  assert.equal(runtime.nextLive().success, true);
+  assert.equal(platformCalls, 1);
+  assert.equal(localSwipeCalls, 0);
 });
 
 test("click jitter stays inside node bounds and the screen", function () {

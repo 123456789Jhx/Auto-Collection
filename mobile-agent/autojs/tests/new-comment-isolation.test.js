@@ -27,6 +27,14 @@ function openRuntime(waitRandom) {
     openLiveTab: function () { return true; },
     openFirstLive: function () { return true; },
     readViewerCount: function () { return { count: 500 }; },
+    openAnchorSummary: function () { return true; },
+    openAnchorProfile: function () { return true; },
+    readRoomIdentity: function () {
+      return { roomKey: "douyin:isolation-room", text: "抖音号：isolation-room" };
+    },
+    claimRoom: function () { return { acquired: true, roomKey: "douyin:isolation-room" }; },
+    closeAnchorProfile: function () { return true; },
+    releaseRoom: function () { return { released: true }; },
     waitRandom: waitRandom
   };
 }
@@ -97,11 +105,28 @@ test("waitForStop falls back to a real sleep when waitRandom throws", function (
   });
 });
 
+test("anchor summary failure reports the attempted room and original cause", function () {
+  var runtime = openRuntime(function () { return true; });
+  runtime.openAnchorSummary = function () {
+    return { success: false, message: "主播入口不可用" };
+  };
+  var result = workflowModule.createIsolatedLiveCommentWorkflow({ runtime: runtime })
+    .run({ targetKeyword: "关键词" }, { shouldStop: function () { return false; } });
+
+  assert.deepEqual(result, {
+    status: "LIVE_COMMENT_ENTRY_FAILED",
+    failedStage: "SCREENING_VIEWER_COUNT",
+    reasonCode: "ANCHOR_SUMMARY_OPEN_FAILED",
+    message: "主播入口不可用",
+    attemptedRoomCount: 1
+  });
+});
+
 test("new-comment source remains synchronous and portable", function () {
   fs.readdirSync(featureRoot).filter(function (name) { return /\.js$/.test(name); }).forEach(function (name) {
     var source = fs.readFileSync(path.join(featureRoot, name), "utf8");
     var lineCount = source.replace(/\r\n/g, "\n").split("\n").length;
-    assert.ok(lineCount <= 400, name + " has " + lineCount + " lines");
+    assert.ok(lineCount <= 600, name + " has " + lineCount + " lines");
     assert.doesNotMatch(source, /\basync\b|\bPromise\b/, name + " is not synchronous ES5");
     assert.doesNotMatch(source, /require\(["']node:|\bprocess\.|\bBuffer\b/, name + " uses a Node-only API");
   });

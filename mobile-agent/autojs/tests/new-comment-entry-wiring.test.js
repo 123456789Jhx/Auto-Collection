@@ -38,6 +38,22 @@ test("隔离评论任务默认复用视频养号退出清理器", function () {
   assert.match(source, /createDouyinPostPublishCleanup/);
 });
 
+test("隔离评论任务将日志器传给工作流", function () {
+  var received = null;
+  var logger = { info: function () {} };
+  var entry = require("../features/new-comment/index.js").createIsolatedLiveCommentEntryTask({}, {
+    logger: logger,
+    createRuntime: function () { return {}; },
+    createWorkflow: function (options) {
+      received = options.logger;
+      return { run: function () { return { status: "STOPPED" }; } };
+    },
+    finalCleanup: { run: function () { return { completed: true }; } }
+  });
+  entry.run({}, { shouldStop: function () { return true; } });
+  assert.strictEqual(received, logger);
+});
+
 test("真实新旧桥组合只恢复同一次底层轮询元数据且隔离命令仍先消费", function () {
   var legacyFirst = { id: "legacy-first", commandType: "ACCOUNT_WARMUP_RUN", payload: {
     featureKey: "video_warmup", batchId: "batch-legacy-first", config: { targetKeyword: "药材种植" }
@@ -94,13 +110,12 @@ test("真实新旧桥组合只恢复同一次底层轮询元数据且隔离命�
   assert.equal(Object.prototype.hasOwnProperty.call(secondOutput, "deviceRecoveryRequestSucceeded"), false);
 });
 
-test("隔离接线不得修改旧桥和 uploader", function () {
+test("隔离接线不修改旧桥且 uploader 不再暴露直播间租约能力", function () {
   assert.equal(
     sha256(path.join(root, "app/account-warmup-command-bridge.js")),
     "14ce33d524bfddef8e1fbd6ba5d01e7afc4b9437a748a60bdc47594e0b0deddb"
   );
-  assert.equal(
-    sha256(path.join(root, "core/uploader.js")),
-    "09c19a929029a8891017c6aa48e2fe1e8dd8dbe0838e6ed11c62e5eab9714fbc"
-  );
+  var uploaderSource = fs.readFileSync(path.join(root, "core/uploader.js"), "utf8");
+  assert.equal(uploaderSource.includes("claimLiveRoom: claimLiveRoom"), false);
+  assert.equal(uploaderSource.includes("releaseLiveRoom: releaseLiveRoom"), false);
 });

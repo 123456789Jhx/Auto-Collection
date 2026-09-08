@@ -1,3 +1,5 @@
+import { normalizeCaptureDuration } from "./live-comment-entry-form";
+
 export type LiveCommentEntryBatchDevice = {
   deviceCode: string;
   deviceId: string;
@@ -12,6 +14,7 @@ export type LiveCommentEntryBatchPlan = {
   batchId: string;
   targetKeyword: string;
   minViewerCount: number;
+  captureDurationMinutes: number;
   devices: LiveCommentEntryBatchDevice[];
   dispatchErrors: Array<{ deviceCode: string; message: string }>;
 };
@@ -27,7 +30,7 @@ type DispatchCommand = {
   payload: {
     featureKey: "isolated_live_comment_entry";
     batchId: string;
-    config: { targetKeyword: string; minViewerCount: number };
+    config: { targetKeyword: string; minViewerCount: number; captureDurationMinutes: number };
   };
 };
 
@@ -61,6 +64,7 @@ export function createLiveCommentEntryBatchPlan(input: {
   batchId: string;
   targetKeyword: string;
   minViewerCount: number;
+  captureDurationMinutes?: number;
   devices: LiveCommentEntryBatchDevice[];
 }): LiveCommentEntryBatchPlan {
   const devices = new Map<string, LiveCommentEntryBatchDevice>();
@@ -72,6 +76,7 @@ export function createLiveCommentEntryBatchPlan(input: {
     batchId: input.batchId.trim(),
     targetKeyword: input.targetKeyword.trim(),
     minViewerCount: input.minViewerCount,
+    captureDurationMinutes: normalizeCaptureDuration(input.captureDurationMinutes),
     devices: [...devices.values()],
     dispatchErrors: []
   };
@@ -133,6 +138,7 @@ export function readLiveCommentEntryBatchPlan(
         batchId: expectedBatchId,
         targetKeyword,
         minViewerCount,
+        captureDurationMinutes: normalizeCaptureDuration(parsed.captureDurationMinutes),
         devices
       }),
       rawErrors.map((value) => {
@@ -166,7 +172,8 @@ export async function dispatchLiveCommentEntryDevices(input: {
       batchId: input.batch.batchId,
       config: {
         targetKeyword: input.batch.targetKeyword,
-        minViewerCount: input.batch.minViewerCount
+        minViewerCount: input.batch.minViewerCount,
+        captureDurationMinutes: normalizeCaptureDuration(input.batch.captureDurationMinutes)
       }
     }
   }));

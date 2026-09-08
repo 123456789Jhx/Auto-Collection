@@ -135,6 +135,37 @@ function testHeartbeatReadsRunIdentityFromBridgeWhenContextMirrorMissing() {
   assert.strictEqual(fixture.uploadedHeartbeats[0].batchId, "batch-bridge");
 }
 
+function testHeartbeatReportsIsolatedCommentRunAsActive() {
+  var fixture = createContext();
+  fixture.context.accountWarmupRunIdentity = null;
+  fixture.context.taskScheduler.getActiveTaskType = function () { return ""; };
+  fixture.context.newCommentCommandBridge = {
+    getActive: function () {
+      return {
+        commandId: "comment-command-1",
+        batchId: "comment-batch-1",
+        featureKey: "isolated_live_comment_entry",
+        stopRequested: false,
+        latestProgress: { stage: "SCREENING_VIEWER_COUNT" }
+      };
+    }
+  };
+  var service = createHeartbeatService(fixture.context);
+
+  service.reportAgentHeartbeat("idle", "未执行任务", true);
+
+  var payload = fixture.uploadedHeartbeats[0];
+  assert.strictEqual(payload.status, "running");
+  assert.strictEqual(payload.sceneType, "live");
+  assert.strictEqual(payload.paused, false);
+  assert.strictEqual(payload.stopRequested, false);
+  assert.strictEqual(payload.currentTaskType, "live_comment");
+  assert.strictEqual(payload.runId, "comment-command-1");
+  assert.strictEqual(payload.batchId, "comment-batch-1");
+  assert.strictEqual(payload.featureKey, "isolated_live_comment_entry");
+  assert.strictEqual(payload.stage, "SCREENING_VIEWER_COUNT");
+}
+
 function testBizScriptUpdatesOnlyWhileIdle() {
   var fixture = createContext();
   var service = createHeartbeatService(fixture.context);
@@ -154,6 +185,7 @@ testHeartbeatAutoUploadsCurrentLogWithThrottle();
 testCommerceCardImmediateHeartbeatUsesLiveSceneType();
 testHeartbeatIncludesWarmupRunIdentityInRawPayload();
 testHeartbeatReadsRunIdentityFromBridgeWhenContextMirrorMissing();
+testHeartbeatReportsIsolatedCommentRunAsActive();
 testBizScriptUpdatesOnlyWhileIdle();
 
 console.log("heartbeat-log-sync tests passed");

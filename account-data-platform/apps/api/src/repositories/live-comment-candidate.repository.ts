@@ -31,7 +31,7 @@ export async function upsertLiveCommentCandidate(input: {
     .onConflictDoUpdate({
       target: [liveCommentCandidates.tenantId, liveCommentCandidates.batchId, liveCommentCandidates.normalizedValue],
       set: {
-        sourcesJson: sql`coalesce(${liveCommentCandidates.sourcesJson}, '[]'::jsonb) || ${JSON.stringify([input.source])}::jsonb`,
+        sourcesJson: sql`case when coalesce(${liveCommentCandidates.sourcesJson}, '[]'::jsonb) @> ${JSON.stringify([input.source])}::jsonb then coalesce(${liveCommentCandidates.sourcesJson}, '[]'::jsonb) else coalesce(${liveCommentCandidates.sourcesJson}, '[]'::jsonb) || ${JSON.stringify([input.source])}::jsonb end`,
         updatedAt: new Date(),
         updatedBy: "mobile_agent"
       }

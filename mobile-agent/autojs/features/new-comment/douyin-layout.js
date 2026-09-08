@@ -24,13 +24,13 @@ var SELECTOR_DESCRIPTIONS = {
 };
 var SWIPE_OPTIONS = {
   durationMs: 520,
-  commentStartY: 0.82,
-  commentEndY: 0.18,
+  commentStartY: 0.1795,
+  commentEndY: 0.8205,
   liveRoomStartY: 0.78,
   liveRoomEndY: 0.22,
 };
 var REGION_RATIOS = {
-  comment: { left: 0.055, top: 0.622, width: 0.855, height: 0.247 },
+  comment: { left: 0.03, top: 0.635, width: 0.70, height: 0.245 },
   liveEnded: {
     left: 0.32,
     top: 0.06,
@@ -39,15 +39,58 @@ var REGION_RATIOS = {
     independentSize: true,
   },
   viewerCount: {
-    left: 0.595,
+    left: 0.75,
     top: 0.06,
-    width: 0.32,
-    height: 0.057,
+    width: 0.1575,
+    height: 0.027,
+    independentSize: true,
+  },
+  commerceCart: {
+    left: 680 / 1080,
+    top: 1965 / 2248,
+    width: 110 / 1080,
+    height: 90 / 2248,
+    independentSize: true,
+  },
+  anchorHeaderTap: {
+    left: 33 / 1080,
+    top: 112 / 2248,
+    width: 280 / 1080,
+    height: 99 / 2248,
+    independentSize: true,
+  },
+  anchorSummaryProfileTap: {
+    left: 39 / 1080,
+    top: 1461 / 2248,
+    width: 204 / 1080,
+    height: 204 / 2248,
+    independentSize: true,
+  },
+  anchorProfileBackTap: {
+    left: 44 / 1080,
+    top: 116 / 2248,
+    width: 88 / 1080,
+    height: 88 / 2248,
     independentSize: true,
   },
   platformVerification: { left: 0.08, top: 0.18, width: 0.84, height: 0.64 },
 };
 function getRegion(name, screenSize) {
+  if (name === "anchorProfileCapture" || name === "anchorIdentity") {
+    var profileSize = geometry.normalizeScreenSize(screenSize);
+    var left = name === "anchorIdentity" ? Math.round(360 * profileSize.width / 1080) : 0;
+    var top = name === "anchorIdentity" ? Math.round(271 * profileSize.height / 2248) : 0;
+    var right = name === "anchorIdentity" ? Math.round(1003 * profileSize.width / 1080) : profileSize.width;
+    var bottom = name === "anchorIdentity" ? Math.round(540 * profileSize.height / 2248) : profileSize.height;
+    return geometry.clampRegion({ name: name, left: left, top: top,
+      width: right - left, height: bottom - top }, profileSize);
+  }
+  if (name === "commentHistoryEnd") {
+    var size = geometry.normalizeScreenSize(screenSize);
+    return geometry.clampRegion({ name: name, left: Math.round(39 * size.width / 1080),
+      top: Math.round(1483 * size.height / 2248), width: Math.round(346 * size.width / 1080),
+      height: Math.round(71 * size.height / 2248) }, size);
+  }
   return REGION_RATIOS[name]
     ? geometry.regionFromRatio(REGION_RATIOS[name], screenSize, name)
     : null;

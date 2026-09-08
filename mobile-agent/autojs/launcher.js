@@ -115,8 +115,24 @@ function getScriptDir() {
 }
 var SCRIPT_DIR = getScriptDir();
 var WATCHDOG_PATH = files.join(SCRIPT_DIR, "watchdog.js");
-var MAIN_PATH = files.join(SCRIPT_DIR, "main.js");
 var CONFIG_PATH = files.join(SCRIPT_DIR, "config.js");
+var createAgentProcessLock = require(files.join(SCRIPT_DIR, "core/agent-process-lock.js")).createAgentProcessLock;
+var launcherProcessLock = createAgentProcessLock({
+  path: files.join(SCRIPT_DIR, ".agent-launcher.lock"),
+  logger: {
+    info: function (message) { try { console.log(message); } catch (error) {} },
+    warn: function (message) { try { console.warn(message); } catch (error) {} },
+    error: function (message) { try { console.error(message); } catch (error) {} }
+  }
+});
+if (!launcherProcessLock.acquire()) {
+  toast("启动器已在运行");
+  exit();
+}
+try {
+  events.on("exit", function () { launcherProcessLock.release(); });
+} catch (error) {
+}
 var accessibility = require(files.join(SCRIPT_DIR, "core/accessibility.js"));
 var agentEngineIdentity = require(files.join(SCRIPT_DIR, "core/agent-engine-identity.js"));
 if (accessibility.setContext) {
@@ -513,14 +529,6 @@ function ensureManagedRuntime() {
   }
   if (!isRunning("watchdog.js")) {
     startScript(WATCHDOG_PATH, TEXT.watchdog);
-  }
-  if (!isRunning("main.js")) {
-    threads.start(function () {
-      sleep(1200);
-      if (!isRunning("main.js")) {
-        startScript(MAIN_PATH, TEXT.agentProgram);
-      }
-    });
   }
   setMessage(TEXT.managedStart);
 }

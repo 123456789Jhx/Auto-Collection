@@ -1,5 +1,6 @@
 import type { AccountWarmupStopPayload } from "@pkg/types";
 import { mutate, request } from "./api-client";
+import { download } from "./api-download";
 import type { AccountWarmupMobileCommand, AccountWarmupVocabularyEntry } from "./api-client-account-warmup";
 import type { LiveCommentEntryCommandInput } from "./live-comment-entry-form";
 
@@ -58,9 +59,62 @@ export function getLiveCommentCandidates(batchId: string) {
   return request<PendingLiveCommentCandidate[]>("/admin/live-comment-candidates", { batchId });
 }
 
-export function confirmLiveCommentCandidates(batchId: string, candidateIds: string[]) {
-  return mutate<{ selectedCount: number; importedCount: number }>("/admin/live-comment-candidates/confirm", {
+export function confirmLiveCommentCandidates(batchId: string, candidateIds: string[], clean: boolean) {
+  return mutate<{ selectedCount: number; importedCount: number; filteredCount: number; duplicateCount: number }>("/admin/live-comment-candidates/confirm", {
     batchId,
-    candidateIds
+    candidateIds,
+    clean
   });
+}
+
+export type LiveRoomCapture = {
+  id: string;
+  batchId: string;
+  deviceId: string;
+  roomKey: string;
+  accountId?: string | null;
+  accountName?: string | null;
+  roomName?: string | null;
+  viewerCount?: number | null;
+  captureStatus?: string | null;
+  captureCompleted?: boolean;
+  capturedAt?: string | null;
+  completedAt?: string | null;
+  rawOcrText?: string | null;
+  rawOcrPages?: Array<{ pageIndex?: number; text?: string }>;
+  rawComments?: Array<{ userName?: string; commentText?: string; pageIndex?: number | null }>;
+};
+
+export type LiveRoomProfile = {
+  id: string;
+  captureId: string;
+  status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | string;
+  summary?: string | null;
+  audienceFeatures?: string[];
+  interestNeeds?: string[];
+  interactionTraits?: string[];
+  evidenceComments?: Array<{ text?: string; reason?: string; confidence?: string | number }>;
+  confidence?: string | number | null;
+  confidenceExplanation?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  errorMessage?: string | null;
+  completedAt?: string | null;
+  markdownAvailable?: boolean;
+};
+
+export function getLiveRoomCaptures(input: { batchId: string; deviceId: string }) {
+  return request<LiveRoomCapture[]>("/admin/live-room-captures", input);
+}
+
+export function getLiveRoomProfile(captureId: string) {
+  return request<LiveRoomProfile | null>(`/admin/live-room-captures/${encodeURIComponent(captureId)}/profile`);
+}
+
+export function startLiveRoomProfile(captureId: string) {
+  return mutate<LiveRoomProfile>(`/admin/live-room-captures/${encodeURIComponent(captureId)}/profile`, {});
+}
+
+export async function downloadLiveRoomProfileMarkdown(captureId: string) {
+  return download(`/admin/live-room-captures/${encodeURIComponent(captureId)}/profile/markdown`);
 }

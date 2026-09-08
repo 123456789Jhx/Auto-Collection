@@ -47,6 +47,23 @@ function getScriptDir() {
 }
 var SCRIPT_DIR = getScriptDir();
 var MAIN_PATH = files.join(SCRIPT_DIR, "main.js");
+var createAgentProcessLock = require(files.join(SCRIPT_DIR, "core/agent-process-lock.js")).createAgentProcessLock;
+var watchdogProcessLock = createAgentProcessLock({
+  path: files.join(SCRIPT_DIR, ".agent-watchdog.lock"),
+  logger: {
+    info: function (message) { try { log(message); } catch (error) {} },
+    warn: function (message) { try { log(message); } catch (error) {} },
+    error: function (message) { try { log(message); } catch (error) {} }
+  }
+});
+if (!watchdogProcessLock.acquire()) {
+  log("Agri watchdog already running, skip duplicate start.");
+  exit();
+}
+try {
+  events.on("exit", function () { watchdogProcessLock.release(); });
+} catch (error) {
+}
 var agentEngineIdentity = require(files.join(SCRIPT_DIR, "core/agent-engine-identity.js"));
 var CHECK_INTERVAL_MS = 10 * 1000;
 var UPDATE_CHECK_INTERVAL_MS = 2 * 60000;

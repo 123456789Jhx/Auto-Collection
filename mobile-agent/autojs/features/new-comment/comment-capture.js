@@ -1,9 +1,19 @@
 "use strict";
 
 var layout = require("./douyin-layout.js");
+var contract = require("../../core/action-contract.js");
 
 var COMMENT_SWIPE_COUNT = 5;
-var COMMENT_SEPARATOR_PATTERN = /[:：]/;
+var COMMENT_SEPARATOR_PATTERN = /[:：;；]/;
+var COMMENT_FALLBACK_SEPARATOR_PATTERN = /[,，.。!！?？、…—~～\-()（）\[\]【】《》〈〉"'“”‘’·]/;
+var COMMENT_SPECIAL_SYMBOL_PATTERN = /[|｜\\／/_＿@＠#＃$＄%％^＾&＆*＊+＋=＝<＜>＞{｛}｝`｀©®™￥¥€£]/;
+var COMMENT_SWIPE_BASE_SCREEN = { width: 1080, height: 2248 };
+var COMMENT_SWIPE_BASE_COORDINATES = {
+  startX: 220,
+  startY: 1587,
+  endX: 220,
+  endY: 1962
+};
 
 function screenDimensions(input) {
   input = input || {};
@@ -24,14 +34,13 @@ function commentOcrRegions(size) {
 }
 
 function commentSwipeCoordinates(size) {
-  var region = commentOcrRegion(size);
+  var screen = screenDimensions(size);
   var options = layout.SWIPE_OPTIONS;
-  var centerRatio = layout.SWIPE_RATIOS.up.startX;
   return {
-    startX: Math.floor(region.x + region.w * centerRatio),
-    startY: Math.floor(region.y + region.h * options.commentStartY),
-    endX: Math.floor(region.x + region.w * centerRatio),
-    endY: Math.floor(region.y + region.h * options.commentEndY),
+    startX: Math.floor(COMMENT_SWIPE_BASE_COORDINATES.startX * screen.width / COMMENT_SWIPE_BASE_SCREEN.width),
+    startY: Math.floor(COMMENT_SWIPE_BASE_COORDINATES.startY * screen.height / COMMENT_SWIPE_BASE_SCREEN.height),
+    endX: Math.floor(COMMENT_SWIPE_BASE_COORDINATES.endX * screen.width / COMMENT_SWIPE_BASE_SCREEN.width),
+    endY: Math.floor(COMMENT_SWIPE_BASE_COORDINATES.endY * screen.height / COMMENT_SWIPE_BASE_SCREEN.height),
     durationMs: options.durationMs
   };
 }
@@ -49,55 +58,59 @@ function liveRoomSwipeCoordinates(size) {
   };
 }
 
-function compactText(value) {
-  return String(value || "")
-    .replace(/[\u00a0\t ]+/g, "")
-    .replace(/^[-*·•]+/, "")
-    .trim();
+function commentSeparatorIndex(line) {
+  var primary = line.search(COMMENT_SEPARATOR_PATTERN);
+  return primary >= 0 ? primary : line.search(COMMENT_FALLBACK_SEPARATOR_PATTERN);
 }
 
-function isNoiseLine(value) {
-  return /^(说点什么|发条评论|欢迎来到直播间|直播已结束|全部评论|查看更多|分享|点赞|关注|礼物|连麦)$/.test(value) ||
-    /(?:来了|进入直播间|加入直播间|送出|赠送礼物)$/.test(value);
+function containsSpecialSymbol(value) {
+  if (COMMENT_SPECIAL_SYMBOL_PATTERN.test(value)) return true;
+  for (var index = 0; index < value.length; index += 1) {
+    var code = value.charCodeAt(index);
+    if (code < 32 || code === 127 ||
+        code >= 0xD800 && code <= 0xDFFF ||
+        code >= 0x20A0 && code <= 0x20CF ||
+        code >= 0x2100 && code <= 0x214F ||
+        code >= 0x2190 && code <= 0x2BFF ||
+        code >= 0xFE00 && code <= 0xFE0F) return true;
+  }
+  return false;
 }
 
 function parseCommentLines(rawText) {
   var lines = String(rawText || "").split(/\r?\n/);
   var comments = [];
-  var current = null;
-
-  function flush() {
-    if (!current || !current.userName || !current.commentText) {
-      current = null;
-      return;
-    }
-    comments.push({
-      userName: current.userName.slice(0, 80),
-      commentText: current.commentText.slice(0, 200)
-    });
-    current = null;
-  }
-
+  var awaitingBody = false;
   for (var index = 0; index < lines.length; index += 1) {
-    var line = compactText(lines[index]);
-    if (!line) continue;
-    var separator = line.search(COMMENT_SEPARATOR_PATTERN);
-    if (separator > 0) {
-      flush();
-      var userName = compactText(line.slice(0, separator));
-      var commentText = compactText(line.slice(separator + 1));
-      if (userName && commentText) {
-        current = { userName: userName, commentText: commentText };
+    var line = lines[index];
+    if (awaitingBody) {
+      if (!line.trim()) continue;
+      awaitingBody = false;
+      var leadingSeparator = commentSeparatorIndex(line);
+      var continuedText = (leadingSeparator === 0 ? line.slice(1) : line).trim();
+      if (continuedText && !containsSpecialSymbol(continuedText)) {
+        comments.push({ commentText: continuedText });
       }
       continue;
     }
-    if (isNoiseLine(line)) continue;
-    if (current && line.length <= 120 && !/^[0-9]+$/.test(line)) {
-      current.commentText += line;
+    var separator = commentSeparatorIndex(line);
+    if (separator < 0) continue;
+    var commentText = line.slice(separator + 1).trim();
+    if (!commentText) {
+      awaitingBody = true;
+      continue;
     }
+    if (commentText && !containsSpecialSymbol(commentText)) comments.push({ commentText: commentText });
   }
-  flush();
   return comments;
+}
+
+function parseFilteredCommentLines(rawText) {
+  return String(rawText || "").split(/\r?\n/).map(function (line) {
+    return line.trim();
+  }).filter(Boolean).map(function (commentText) {
+    return { commentText: commentText };
+  });
 }
 
 function flattenPages(pages) {
@@ -106,7 +119,6 @@ function flattenPages(pages) {
     (page.comments || []).forEach(function (comment) {
       comments.push({
         pageIndex: page.pageIndex,
-        userName: comment.userName,
         commentText: comment.commentText
       });
     });
@@ -116,6 +128,52 @@ function flattenPages(pages) {
 
 function normalizedCommentKey(value) {
   return String(value || "").replace(/\s+/g, "").toLowerCase();
+}
+
+function swipeAndCheckEnd(deps) {
+  var driver = deps.driver, region = layout.getRegion("commentHistoryEnd", deps.screenSize);
+  if (!driver || typeof driver.swipeAndHold !== "function") {
+    return contract.failure("COMMENT_HOLD_UNAVAILABLE", "continuous accessibility gesture unavailable");
+  }
+  if (!deps.captureScreen || !deps.images || !deps.images.clip || !deps.ocrEngine || !deps.ocrEngine.recognize) {
+    return contract.failure("COMMENT_END_OCR_UNAVAILABLE", "history-end OCR dependency missing");
+  }
+  var coordinates = commentSwipeCoordinates(deps.screenSize), attempts = 0, lastText = "";
+  return driver.swipeAndHold({ points: [{ x: coordinates.startX, y: coordinates.startY },
+    { x: coordinates.endX, y: coordinates.endY }], durationMs: coordinates.durationMs,
+    holdMs: 2000, shouldStop: deps.shouldStop }, function (isHeld) {
+    while (isHeld() && attempts < 20) {
+      if (deps.shouldStop()) return contract.stopped();
+      if (deps.sleep(100) === false) return contract.failure("COMMENT_HOLD_WAIT_FAILED", "hold wait failed");
+      if (!isHeld()) break;
+      var snapshot = null, image = null, clip = null;
+      try {
+        snapshot = deps.captureScreen();
+        image = snapshot && snapshot.image ? snapshot.image : snapshot;
+        if (!image) return contract.failure("COMMENT_END_OCR_FAILED", "empty screenshot");
+        if (!isHeld()) {
+          if (attempts) break;
+          return contract.failure("COMMENT_END_CAPTURE_LATE", "screenshot arrived after release");
+        }
+        if (deps.shouldStop()) return contract.stopped();
+        clip = deps.images.clip(image, region.left, region.top, region.width, region.height);
+        if (!clip) return contract.failure("COMMENT_END_OCR_FAILED", "empty banner crop");
+        lastText = String(deps.ocrEngine.recognize(clip) || "");
+        attempts += 1;
+        if (deps.shouldStop()) return contract.stopped();
+        if (lastText.replace(/\s+/g, "").indexOf("没有更多信息了") >= 0) {
+          return contract.success({ endDetected: true, text: lastText, attempts: attempts, region: region });
+        }
+      } catch (error) {
+        return contract.failure("COMMENT_END_OCR_FAILED", String(error && error.message || error));
+      } finally {
+        try { if (clip && clip !== image && clip.recycle) clip.recycle(); }
+        finally { if (image && image.recycle) image.recycle(); }
+      }
+    }
+    return attempts ? contract.success({ endDetected: false, text: lastText, attempts: attempts, region: region })
+      : contract.failure("COMMENT_END_CAPTURE_LATE", "no screenshot within hold window");
+  });
 }
 
 function stableHash(value) {
@@ -141,34 +199,28 @@ function commentIdentity(scope, comment) {
 function buildCandidates(pages, scope) {
   scope = scope || {};
   var candidates = [];
-  var byText = {};
-  flattenPages(pages).forEach(function (comment) {
+  flattenPages(pages).forEach(function (comment, occurrenceIndex) {
     var normalized = normalizedCommentKey(comment.commentText);
-    if (!normalized || normalized.length > 100) return;
-    var key = "comment:" + normalized;
+    if (!normalized) return;
     var source = {
       deviceId: String(scope.deviceId || ""),
       roomKey: String(scope.roomKey || ""),
       pageIndex: comment.pageIndex,
-      userName: comment.userName,
       commentText: comment.commentText
     };
-    var existing = byText[key];
-    if (existing) {
-      existing.sources.push(source);
-      return;
-    }
+    if (scope.accountName) source.accountName = String(scope.accountName);
+    if (scope.accountId) source.accountId = String(scope.accountId);
     var candidate = {
       batchId: String(scope.batchId || ""),
       deviceId: String(scope.deviceId || ""),
       roomKey: String(scope.roomKey || ""),
       pageIndex: comment.pageIndex,
-      userName: comment.userName,
       commentText: comment.commentText,
       sources: [source]
     };
-    candidate.commentId = commentIdentity(scope, candidate);
-    byText[key] = candidate;
+    if (scope.accountName) candidate.accountName = String(scope.accountName);
+    if (scope.accountId) candidate.accountId = String(scope.accountId);
+    candidate.commentId = commentIdentity(scope, candidate) + "_" + occurrenceIndex;
     candidates.push(candidate);
   });
   return candidates;
@@ -179,7 +231,7 @@ function attachScope(comments, scope) {
   (comments || []).forEach(function (comment, index) {
     pages.push({
       pageIndex: comment.pageIndex === undefined ? index : comment.pageIndex,
-      comments: [{ userName: comment.userName, commentText: comment.commentText }]
+      comments: [{ commentText: comment.commentText }]
     });
   });
   return buildCandidates(pages, scope);
@@ -193,8 +245,10 @@ module.exports = {
   commentSwipeCoordinates: commentSwipeCoordinates,
   liveRoomSwipeCoordinates: liveRoomSwipeCoordinates,
   parseCommentLines: parseCommentLines,
+  parseFilteredCommentLines: parseFilteredCommentLines,
   flattenPages: flattenPages,
   normalizedCommentKey: normalizedCommentKey,
+  swipeAndCheckEnd: swipeAndCheckEnd,
   commentIdentity: commentIdentity,
   attachScope: attachScope,
   buildCandidates: buildCandidates

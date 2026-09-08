@@ -25,10 +25,20 @@ function createStartupIdleStatePatch(options) {
   };
 }
 
-function resolveCollectorAgentStatus(state, warmupActive) {
+function resolveCollectorAgentStatus(state, warmupActive, isolatedRun) {
   state = state || {};
   if (state.stopRequested) {
     return "stopped";
+  }
+  if (isolatedRun) {
+    var isolatedStatus = String(isolatedRun.status || "running").toLowerCase();
+    if (isolatedRun.stopRequested || isolatedStatus === "stopped") {
+      return "stopped";
+    }
+    if (isolatedStatus === "paused") {
+      return "paused";
+    }
+    return "running";
   }
   if (state.paused) {
     return "paused";
@@ -232,12 +242,64 @@ function createCollectorApp(context) {
   }
 
   function currentAgentStatus() {
-    var warmupActive = !!(
-      context.accountWarmupCommandBridge &&
-      context.accountWarmupCommandBridge.getActive &&
-      context.accountWarmupCommandBridge.getActive()
-    );
-    return resolveCollectorAgentStatus(floatyControl.state, warmupActive);
+    var warmupActive = false;
+    try {
+      warmupActive = !!(
+        context.accountWarmupCommandBridge &&
+        context.accountWarmupCommandBridge.getActive &&
+        context.accountWarmupCommandBridge.getActive()
+      );
+    } catch (error) {
+      logger.warn("读取养号任务活动状态失败", { message: String(error) });
+    }
+    return resolveCollectorAgentStatus(floatyControl.state, warmupActive, activeIsolatedCommentRun());
+  }
+
+  function activeIsolatedCommentRun() {
+    var bridge = context.newCommentCommandBridge;
+    if (!bridge) {
+      return null;
+    }
+    try {
+      if (typeof bridge.getStatusSnapshot === "function") {
+        return bridge.getStatusSnapshot() || null;
+      }
+      if (typeof bridge.getActive === "function") {
+        var active = bridge.getActive() || null;
+        if (!active) {
+          return null;
+        }
+        var progress = active.latestProgress || {};
+        return {
+          status: active.stopRequested || active.terminal ? "stopped" : "running",
+          stopRequested: !!active.stopRequested,
+          runId: String(active.commandId || active.runId || ""),
+          batchId: String(active.batchId || ""),
+          featureKey: String(active.featureKey || "isolated_live_comment_entry"),
+          taskType: "live_comment",
+          stage: String(progress.stage || active.stage || ""),
+          lastMessage: String(active.lastMessage || "隔离评论任务执行中")
+        };
+      }
+      return null;
+    } catch (error) {
+      logger.warn("读取隔离评论任务活动状态失败", { message: String(error) });
+      return null;
+    }
+  }
+
+  function hasActiveIsolatedCommentRun() {
+    var isolatedRun = activeIsolatedCommentRun();
+    var status = isolatedRun && String(isolatedRun.status || "running").toLowerCase();
+    return !!(isolatedRun && status !== "stopped" && !isolatedRun.stopRequested);
+  }
+
+  function currentAgentMessage(fallback) {
+    var isolatedRun = activeIsolatedCommentRun();
+    if (isolatedRun && isolatedRun.lastMessage) {
+      return String(isolatedRun.lastMessage);
+    }
+    return floatyControl.state.lastMessage || fallback || "未执行任务";
   }
 
   function checkBizScriptVersion(force) {
@@ -884,6 +946,10 @@ function createCollectorApp(context) {
   }
 
   function runOneTask() {
+    if (hasActiveIsolatedCommentRun()) {
+      logger.info("隔离评论任务执行中，跳过通用任务启动");
+      return;
+    }
     resetRunCounters();
     var requestedTaskType = resolveRequestedTaskType();
     restoreCheckpoint(requestedTaskType);
@@ -1276,10 +1342,11 @@ function createCollectorApp(context) {
     while (!floatyControl.state.exitRequested) {
       try {
         controlLoop.pollControlCommandsAsync(false);
-        if (floatyControl.state.running && !floatyControl.state.paused && !floatyControl.state.stopRequested) {
+        var isolatedCommentActive = hasActiveIsolatedCommentRun();
+        if (!isolatedCommentActive && floatyControl.state.running && !floatyControl.state.paused && !floatyControl.state.stopRequested) {
           runOneTask();
         } else {
-          if (floatyControl.state.stopRequested) {
+          if (!isolatedCommentActive && floatyControl.state.stopRequested) {
             floatyControl.update({
               running: false,
               paused: true,
@@ -1295,7 +1362,7 @@ function createCollectorApp(context) {
           }
           checkAgentVersion(false);
           maybeUploadDailyLogs();
-          heartbeatService.reportAgentHeartbeat(currentAgentStatus(), floatyControl.state.lastMessage || "未执行任务", false);
+          heartbeatService.reportAgentHeartbeat(currentAgentStatus(), currentAgentMessage("未执行任务"), false);
           sleep(Math.min(config.runtime.agentIdleLoopMs || 1000, 300));
         }
       } catch (error) {

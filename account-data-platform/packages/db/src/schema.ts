@@ -695,6 +695,60 @@ export const liveCommentCandidates = pgTable(
   ]
 );
 
+export const liveRoomCaptures = pgTable(
+  "live_room_captures",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    batchId: uuid("batch_id").notNull(),
+    deviceId: uuid("device_id").notNull().references(() => collectorDevices.id),
+    commandId: uuid("command_id").notNull().references(() => mobileCommands.id),
+    roomKey: varchar("room_key", { length: 200 }).notNull(),
+    accountId: varchar("account_id", { length: 100 }),
+    accountName: varchar("account_name", { length: 200 }),
+    roomName: varchar("room_name", { length: 200 }),
+    viewerCount: integer("viewer_count"),
+    captureStatus: varchar("capture_status", { length: 64 }).notNull().default("CAPTURED"),
+    captureCompleted: boolean("capture_completed").notNull().default(true),
+    capturedAt: timestamp("captured_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    rawOcrText: text("raw_ocr_text"),
+    rawOcrPages: jsonb("raw_ocr_pages").$type<Record<string, unknown>[]>(),
+    rawComments: jsonb("raw_comments").$type<Record<string, unknown>[]>().notNull().default([]),
+    ...auditColumns
+  },
+  (table) => [
+    uniqueIndex("uniq_live_room_captures_tenant_batch_device_room")
+      .on(table.tenantId, table.batchId, table.deviceId, table.roomKey),
+    index("idx_live_room_captures_tenant_batch_device").on(table.tenantId, table.batchId, table.deviceId),
+    index("idx_live_room_captures_tenant_room").on(table.tenantId, table.roomKey)
+  ]
+);
+
+export const liveRoomProfiles = pgTable(
+  "live_room_profiles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    captureId: uuid("capture_id").notNull().references(() => liveRoomCaptures.id),
+    status: varchar("status", { length: 16 }).notNull().default("PENDING"),
+    provider: varchar("provider", { length: 64 }),
+    model: varchar("model", { length: 100 }),
+    summary: text("summary"),
+    audienceFeatures: jsonb("audience_features").$type<string[]>().notNull().default([]),
+    interestNeeds: jsonb("interest_needs").$type<string[]>().notNull().default([]),
+    interactionTraits: jsonb("interaction_traits").$type<string[]>().notNull().default([]),
+    evidenceComments: jsonb("evidence_comments").$type<Record<string, unknown>[]>().notNull().default([]),
+    confidence: varchar("confidence", { length: 32 }),
+    confidenceExplanation: text("confidence_explanation"),
+    errorMessage: text("error_message"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ...auditColumns
+  },
+  (table) => [
+    uniqueIndex("uniq_live_room_profiles_tenant_capture").on(table.tenantId, table.captureId),
+    index("idx_live_room_profiles_tenant_status").on(table.tenantId, table.status)
+  ]
+);
+
 export const collectorDevicesRelations = relations(collectorDevices, ({ many }) => ({
   records: many(collectionRecords),
   heartbeats: many(deviceHeartbeats),
@@ -707,7 +761,8 @@ export const collectorDevicesRelations = relations(collectorDevices, ({ many }) 
   taskConfigs: many(deviceTaskConfigs),
   liveTargetBindings: many(liveTargetDeviceBindings),
   featureRolloutAllowlist: many(featureRolloutDeviceAllowlist),
-  liveCommentCandidates: many(liveCommentCandidates)
+  liveCommentCandidates: many(liveCommentCandidates),
+  liveRoomCaptures: many(liveRoomCaptures)
 }));
 
 export const collectionTasksRelations = relations(collectionTasks, ({ many }) => ({
@@ -719,7 +774,8 @@ export const collectionTasksRelations = relations(collectionTasks, ({ many }) =>
   taskAssignments: many(deviceTaskAssignments),
   liveCommentActions: many(liveCommentActions),
   deviceConfigs: many(deviceTaskConfigs),
-  liveCommentCandidates: many(liveCommentCandidates)
+  liveCommentCandidates: many(liveCommentCandidates),
+  liveRoomCaptures: many(liveRoomCaptures)
 }));
 
 export const agentVersionsRelations = relations(agentVersions, ({ many }) => ({

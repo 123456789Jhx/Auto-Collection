@@ -29,9 +29,11 @@ function createIsolatedLiveCommentEntryTask(context, options) {
     ["commentRunner", "commentRunnerModule", "commentCapture", "reportStage", "deviceId"].forEach(function (key) {
       if (Object.prototype.hasOwnProperty.call(options, key)) workflowOptions[key] = options[key];
     });
+    workflowOptions.logger = options.logger || context.logger || {};
     workflowOptions.context = context;
     workflowOptions.runtime = runtime;
     workflowOptions.finalCleanup = finalCleanup;
+    workflowOptions.continueAfterCapture = true;
     return createWorkflow(workflowOptions).run(payload || {}, control);
   }
 

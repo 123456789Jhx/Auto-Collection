@@ -1,6 +1,7 @@
 function createPermissionManager(config, logger, deps) {
   deps = deps || {};
   var captureGranted = false;
+  var captureRequestInFlight = false;
   var filesApi = deps.files || files;
   var appApi = deps.app || app;
   var sleepFn = deps.sleep || sleep;
@@ -119,16 +120,27 @@ function createPermissionManager(config, logger, deps) {
     if (captureGranted) {
       return true;
     }
-    logger.info("请求截图权限");
-    var granted = requestScreenCaptureFn(false);
-    if (!granted) {
-      logger.error("截图权限请求失败");
-      toastFn("截图权限失败，任务停止");
+    if (captureRequestInFlight) {
+      if (logger && logger.warn) {
+        logger.warn("截图权限请求进行中，拒绝重复请求");
+      }
       return false;
     }
-    captureGranted = true;
-    logger.info("截图权限已获得");
-    return true;
+    captureRequestInFlight = true;
+    logger.info("请求截图权限");
+    try {
+      var granted = requestScreenCaptureFn(false);
+      if (!granted) {
+        logger.error("截图权限请求失败");
+        toastFn("截图权限失败，任务停止");
+        return false;
+      }
+      captureGranted = true;
+      logger.info("截图权限已获得");
+      return true;
+    } finally {
+      captureRequestInFlight = false;
+    }
   }
 
   function ensureOutputDirs() {

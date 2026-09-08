@@ -12,7 +12,7 @@ import {
   Typography
 } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LiveCommentCandidates } from "../components/live-comment-entry/LiveCommentCandidates";
+import { LiveCommentDeviceDrawer } from "../components/live-comment-entry/LiveCommentDeviceDrawer";
 import {
   LiveCommentEntryProgress,
   liveCommentEntryResultText,
@@ -68,9 +68,11 @@ export function LiveCommentEntryPage() {
   const [batchPlan, setBatchPlan] = useState<LiveCommentEntryBatchPlan | null>(initialBatchPlan.current);
   const [targetKeyword, setTargetKeyword] = useState(initialInput.current.targetKeyword);
   const [minViewerCount, setMinViewerCount] = useState(initialInput.current.minViewerCount);
+  const [captureDurationMinutes, setCaptureDurationMinutes] = useState(initialInput.current.captureDurationMinutes);
   const [selectedDeviceCodes, setSelectedDeviceCodes] = useState<string[]>([]);
   const [stoppingCommandIds, setStoppingCommandIds] = useState<Set<string>>(() => new Set());
   const [warningAlert, setWarningAlert] = useState<{ id: string; deviceName: string; message: string } | null>(null);
+  const [detailRow, setDetailRow] = useState<LiveCommentEntryRow | null>(null);
   const acknowledgedWarningIds = useRef(new Set<string>());
   const restoredBatchId = useRef("");
   const agentNoticeKeys = useRef(new Set<string>());
@@ -295,6 +297,7 @@ export function LiveCommentEntryPage() {
       batchId: crypto.randomUUID(),
       targetKeyword,
       minViewerCount,
+      captureDurationMinutes,
       devices: selectedDeviceCodes.map((deviceCode) => {
         const device = deviceByCode.get(deviceCode);
         return {
@@ -314,7 +317,7 @@ export function LiveCommentEntryPage() {
         <div className="ops-panel-head"><span>直播间入口设置</span></div>
         <div className="ops-panel-body">
           <Row gutter={[16, 16]} align="bottom">
-            <Col xs={24} lg={8}>
+            <Col xs={24} lg={6}>
               <Space direction="vertical" size={6} style={{ width: "100%" }}>
                 <Typography.Text strong>目标直播间关键词</Typography.Text>
                 <Input
@@ -341,7 +344,15 @@ export function LiveCommentEntryPage() {
                 />
               </Space>
             </Col>
-            <Col xs={24} lg={11}>
+            <Col xs={24} sm={12} lg={5}>
+              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                <Typography.Text strong>每个直播间抓取时长（分钟）</Typography.Text>
+                <InputNumber aria-label="每个直播间抓取时长（分钟）" min={1} max={60} precision={0}
+                  value={captureDurationMinutes} disabled={locked} style={{ width: "100%" }}
+                  onChange={(value) => setCaptureDurationMinutes(value ?? 5)} />
+              </Space>
+            </Col>
+            <Col xs={24} lg={8}>
               <Space direction="vertical" size={6} style={{ width: "100%" }}>
                 <Typography.Text strong>选择执行设备</Typography.Text>
                 <Select
@@ -397,12 +408,14 @@ export function LiveCommentEntryPage() {
           retry: true
         })}
         onStop={(row) => stopMutation.mutate([row])}
+        onViewDetails={setDetailRow}
         onCloseWarning={() => setWarningAlert(null)}
       />
-      <LiveCommentCandidates
-        key={activeBatchId || "no-batch"}
+      <LiveCommentDeviceDrawer
+        open={Boolean(detailRow)}
+        row={detailRow}
         batchId={activeBatchId}
-        batchFinished={batchFinished}
+        onClose={() => setDetailRow(null)}
       />
     </div>
   );

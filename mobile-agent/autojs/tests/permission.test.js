@@ -112,7 +112,45 @@ function testUnknownAccessibilityStateDoesNotOpenAccessibilitySettings() {
   }), true, "diagnostic log should explain the unknown accessibility state");
 }
 
+function testCapturePermissionRejectsReentrantRequest() {
+  var logs = [];
+  var requestCount = 0;
+  var nestedResult = null;
+  var manager;
+  manager = createPermissionManager({
+    runtime: { scriptDir: "." },
+    output: { baseDir: "/tmp/base", cacheDir: "/tmp/cache" },
+    task: {}
+  }, createLogger(logs), {
+    accessibility: {
+      setContext: function () {},
+      detectAccessibility: function () { return { enabled: true, source: "test" }; }
+    },
+    files: {
+      exists: function () { return true; },
+      createWithDirs: function () {},
+      remove: function () {}
+    },
+    app: { startActivity: function () {} },
+    requestScreenCapture: function () {
+      requestCount += 1;
+      nestedResult = manager.ensureCapturePermission();
+      return true;
+    },
+    toast: function () {},
+    sleep: function () {}
+  });
+
+  assert.strictEqual(manager.ensureCapturePermission(), true);
+  assert.strictEqual(requestCount, 1, "重入期间不得再次调用 requestScreenCapture");
+  assert.strictEqual(nestedResult, false, "重入调用应直接拒绝并等待外层请求完成");
+  assert.strictEqual(logs.some(function (item) {
+    return item.message.indexOf("截图权限请求进行中") >= 0;
+  }), true, "重入应留下明确诊断日志");
+}
+
 testSettingsEnabledServiceDoesNotOpenAccessibilitySettings();
 testUnknownAccessibilityStateDoesNotOpenAccessibilitySettings();
+testCapturePermissionRejectsReentrantRequest();
 
 console.log("permission tests passed");

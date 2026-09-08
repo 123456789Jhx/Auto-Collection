@@ -91,11 +91,111 @@ function createHeartbeatService(context) {
   heartbeat.douyinAccountNameLastAt = heartbeat.douyinAccountNameLastAt || 0;
   heartbeat.douyinAccountNameRefreshing = false;
 
-  function currentTaskType() {
-    return context.taskScheduler && context.taskScheduler.getActiveTaskType ? context.taskScheduler.getActiveTaskType() : "";
+  function currentTaskType(isolated) {
+    if (isolated === undefined) {
+      isolated = isolatedCommentSnapshot();
+    }
+    if (isolated && isolated.taskType) {
+      return isolated.taskType;
+    }
+    var scheduledTaskType = context.taskScheduler && context.taskScheduler.getActiveTaskType
+      ? context.taskScheduler.getActiveTaskType() : "";
+    if (scheduledTaskType) {
+      return scheduledTaskType;
+    }
+    return "";
   }
 
-  function currentWarmupRunIdentity() {
+  function isolatedCommentSnapshot() {
+    var bridge = context.newCommentCommandBridge;
+    if (!bridge) {
+      return null;
+    }
+    var snapshot = null;
+    try {
+      if (typeof bridge.getStatusSnapshot === "function") {
+        snapshot = bridge.getStatusSnapshot();
+      }
+      if (!snapshot && typeof bridge.getActive === "function") {
+        var active = bridge.getActive();
+        if (active) {
+          var progress = active.latestProgress || {};
+          snapshot = {
+            status: active.stopRequested || active.terminal ? "stopped" : "running",
+            stopRequested: !!active.stopRequested,
+            runId: active.runId || active.commandId,
+            batchId: active.batchId,
+            featureKey: active.featureKey,
+            taskType: "live_comment",
+            stage: progress.stage || active.stage || "",
+            lastMessage: progress.stage ? "隔离评论任务：" + progress.stage : "隔离评论任务执行中"
+          };
+        }
+      }
+    } catch (error) {
+      logger.warn("读取隔离评论任务状态失败", { message: String(error) });
+      return null;
+    }
+    if (!snapshot || typeof snapshot !== "object") {
+      return null;
+    }
+    var status = String(snapshot.status || "running").toLowerCase();
+    if (status !== "running" && status !== "paused" && status !== "stopped") {
+      return null;
+    }
+    return {
+      status: status,
+      stopRequested: !!snapshot.stopRequested,
+      runId: String(snapshot.runId || snapshot.commandId || ""),
+      batchId: String(snapshot.batchId || ""),
+      featureKey: String(snapshot.featureKey || "isolated_live_comment_entry"),
+      taskType: String(snapshot.taskType || "live_comment"),
+      stage: String(snapshot.stage || ""),
+      lastMessage: String(snapshot.lastMessage || "隔离评论任务执行中")
+    };
+  }
+
+  function isolatedCommentIsActive(snapshot) {
+    return !!(snapshot && (snapshot.status === "running" || snapshot.status === "paused" ||
+      snapshot.status === "stopped"));
+  }
+
+  function effectiveHeartbeatStatus(requestedStatus, snapshot) {
+    var status = String(requestedStatus || "");
+    if (snapshot) {
+      if (snapshot.status === "stopped" && status !== "error") {
+        return "stopped";
+      }
+      if (snapshot.status === "running" && status !== "stopped" && status !== "error") {
+        return "running";
+      }
+      if (snapshot.status === "paused" && status !== "stopped" && status !== "error") {
+        return "paused";
+      }
+    }
+    return status || "idle";
+  }
+
+  function effectiveHeartbeatMessage(message, snapshot) {
+    var text = String(message || "");
+    if (snapshot && isolatedCommentIsActive(snapshot) &&
+        (!text || text === "未执行任务" || text === "等待控制循环")) {
+      return snapshot.lastMessage;
+    }
+    return text || floatyControl.state.lastMessage;
+  }
+
+  function currentWarmupRunIdentity(isolated) {
+    if (isolated === undefined) {
+      isolated = isolatedCommentSnapshot();
+    }
+    if (isolatedCommentIsActive(isolated)) {
+      return {
+        runId: isolated.runId,
+        batchId: isolated.batchId,
+        featureKey: isolated.featureKey
+      };
+    }
     var identity = context.accountWarmupRunIdentity;
     if (!identity && context.accountWarmupCommandBridge && context.accountWarmupCommandBridge.getActive) {
       var active = context.accountWarmupCommandBridge.getActive();
@@ -120,16 +220,23 @@ function createHeartbeatService(context) {
     };
   }
 
-  function assignmentPayload() {
-    var taskType = currentTaskType();
-    var assignment = context.taskScheduler && context.taskScheduler.getAssignmentContext
+  function assignmentPayload(isolated) {
+    if (isolated === undefined) {
+      isolated = isolatedCommentSnapshot();
+    }
+    var taskType = currentTaskType(isolated);
+    var assignment = !isolated && context.taskScheduler && context.taskScheduler.getAssignmentContext
       ? context.taskScheduler.getAssignmentContext(taskType)
       : null;
     var checkpoint = assignment && assignment.checkpoint || {};
+    var stage = checkpoint.stage || checkpoint.currentStage || "";
+    if (!stage && isolated) {
+      stage = isolated.stage;
+    }
     return {
       assignmentId: assignment && assignment.assignmentId || "",
       assignmentStateVersion: assignment && assignment.stateVersion || 0,
-      stage: checkpoint.stage || checkpoint.currentStage || ""
+      stage: stage
     };
   }
 
@@ -251,7 +358,11 @@ function createHeartbeatService(context) {
       return;
     }
     heartbeat.lastAt = now;
+    var isolated = isolatedCommentSnapshot();
     var uploadSceneType = normalizeHeartbeatSceneType(sceneType);
+    if (isolated && isolated.status === "running") {
+      uploadSceneType = "live";
+    }
     var elapsedMinutes = Math.round((now - startMs) / 60000);
     var remainingMinutes = Math.max(0, Math.round((endAt - now) / 60000));
     if (uploadSceneType === "video") {
@@ -262,8 +373,11 @@ function createHeartbeatService(context) {
       counters.liveElapsedMinutes = elapsedMinutes;
       counters.liveRemainingMinutes = remainingMinutes;
     }
-    var assignment = assignmentPayload();
-    var runIdentity = currentWarmupRunIdentity();
+    var heartbeatStatus = effectiveHeartbeatStatus(
+      floatyControl.state.paused ? "paused" : "running", isolated
+    );
+    var assignment = assignmentPayload(isolated);
+    var runIdentity = currentWarmupRunIdentity(isolated);
     var payload = {
       sceneType: uploadSceneType,
       elapsedMinutes: elapsedMinutes,
@@ -281,9 +395,9 @@ function createHeartbeatService(context) {
       liveCandidateCount: counters.liveCandidateCount,
       liveRejectedCount: counters.liveRejectedCount,
       capturedCount: counters.capturedCount,
-      paused: floatyControl.state.paused,
-      stopRequested: floatyControl.state.stopRequested,
-      status: floatyControl.state.paused ? "paused" : "running",
+      paused: isolated ? isolated.status === "paused" : floatyControl.state.paused,
+      stopRequested: floatyControl.state.stopRequested || !!(isolated && isolated.stopRequested),
+      status: heartbeatStatus,
       agentLifecycleState: lifecyclePayload().agentLifecycleState,
       pollingEnabled: lifecyclePayload().pollingEnabled,
       agentStateReason: lifecyclePayload().agentStateReason,
@@ -292,12 +406,12 @@ function createHeartbeatService(context) {
       runId: runIdentity.runId,
       batchId: runIdentity.batchId,
       featureKey: runIdentity.featureKey,
-      currentTaskType: currentTaskType(),
+      currentTaskType: currentTaskType(isolated),
       assignmentId: assignment.assignmentId,
       assignmentStateVersion: assignment.assignmentStateVersion,
       stage: assignment.stage,
       capabilities: agentCapabilities(),
-      lastMessage: floatyControl.state.lastMessage,
+      lastMessage: effectiveHeartbeatMessage(floatyControl.state.lastMessage, isolated),
       douyinAccountName: heartbeat.douyinAccountName || "",
       douyinAccountNameUpdatedAt: heartbeat.douyinAccountNameLastAt ? new Date(heartbeat.douyinAccountNameLastAt).toISOString() : "",
       bizScriptsVersion: config.runtime.bizScriptsVersion || "0.0.0",
@@ -313,13 +427,19 @@ function createHeartbeatService(context) {
   }
 
   function reportImmediateHeartbeat(sceneType, status, message) {
-    var heartbeatStatus = status || (floatyControl.state.paused ? "paused" : "running");
+    var isolated = isolatedCommentSnapshot();
+    var heartbeatStatus = effectiveHeartbeatStatus(
+      status || (floatyControl.state.paused ? "paused" : "running"), isolated
+    );
     checkBizScripts(heartbeatStatus);
     var isActiveTask = heartbeatStatus === "running";
     var startedAt = isActiveTask && counters.phaseStartedAt ? new Date(counters.phaseStartedAt).getTime() : 0;
     var activeSceneType = isActiveTask ? normalizeHeartbeatSceneType(sceneType || counters.currentPhase || "") : "";
-    var assignment = assignmentPayload();
-    var runIdentity = currentWarmupRunIdentity();
+    if (isActiveTask && isolated) {
+      activeSceneType = "live";
+    }
+    var assignment = assignmentPayload(isolated);
+    var runIdentity = currentWarmupRunIdentity(isolated);
     var payload = {
       sceneType: activeSceneType,
       elapsedMinutes: isActiveTask && startedAt && !isNaN(startedAt) ? Math.max(0, Math.round((Date.now() - startedAt) / 60000)) : 0,
@@ -337,8 +457,8 @@ function createHeartbeatService(context) {
       liveCandidateCount: isActiveTask ? counters.liveCandidateCount : 0,
       liveRejectedCount: isActiveTask ? counters.liveRejectedCount : 0,
       capturedCount: isActiveTask ? counters.capturedCount : 0,
-      paused: floatyControl.state.paused,
-      stopRequested: floatyControl.state.stopRequested,
+      paused: isolated ? isolated.status === "paused" : floatyControl.state.paused,
+      stopRequested: floatyControl.state.stopRequested || !!(isolated && isolated.stopRequested),
       status: heartbeatStatus,
       agentLifecycleState: lifecyclePayload().agentLifecycleState,
       pollingEnabled: lifecyclePayload().pollingEnabled,
@@ -348,12 +468,12 @@ function createHeartbeatService(context) {
       runId: runIdentity.runId,
       batchId: runIdentity.batchId,
       featureKey: runIdentity.featureKey,
-      currentTaskType: currentTaskType(),
+      currentTaskType: currentTaskType(isolated),
       assignmentId: assignment.assignmentId,
       assignmentStateVersion: assignment.assignmentStateVersion,
       stage: assignment.stage,
       capabilities: agentCapabilities(),
-      lastMessage: message || floatyControl.state.lastMessage,
+      lastMessage: effectiveHeartbeatMessage(message, isolated),
       douyinAccountName: heartbeat.douyinAccountName || "",
       douyinAccountNameUpdatedAt: heartbeat.douyinAccountNameLastAt ? new Date(heartbeat.douyinAccountNameLastAt).toISOString() : "",
       bizScriptsVersion: config.runtime.bizScriptsVersion || "0.0.0",

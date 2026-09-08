@@ -54,6 +54,13 @@ const lastInputStorageKey = "live-comment-entry-last-input";
 
 export const LIVE_COMMENT_ENTRY_DEFAULT_MIN_VIEWERS = 300;
 
+export function normalizeCaptureDuration(value: unknown) {
+  if (value === undefined || value === null || value === "") return 5;
+  const minutes = Number(value);
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 60) throw new Error("抓取时长必须为 1 至 60 分钟的整数");
+  return minutes;
+}
+
 const stageLabels: Record<string, string> = {
   OPENING_DOUYIN: "打开抖音",
   OPENING_SEARCH: "打开搜索",
@@ -95,6 +102,7 @@ export function buildLiveCommentEntryCommands(input: {
   batchId: string;
   targetKeyword: string;
   minViewerCount?: number | null;
+  captureDurationMinutes?: number | null;
   deviceCodes: string[];
 }): LiveCommentEntryCommandInput[] {
   const batchId = input.batchId.trim();
@@ -110,7 +118,7 @@ export function buildLiveCommentEntryCommands(input: {
     payload: {
       featureKey: "isolated_live_comment_entry",
       batchId,
-      config: { targetKeyword, minViewerCount }
+      config: { targetKeyword, minViewerCount, captureDurationMinutes: normalizeCaptureDuration(input.captureDurationMinutes) }
     },
     expiresInSeconds: 3600
   }));
@@ -323,25 +331,26 @@ export function writeActiveLiveCommentEntryBatchId(batchId: string, storage = br
 }
 
 export function readLastLiveCommentEntryInput(storage = browserStorage()) {
-  const fallback = { targetKeyword: "", minViewerCount: LIVE_COMMENT_ENTRY_DEFAULT_MIN_VIEWERS };
+  const fallback = { targetKeyword: "", minViewerCount: LIVE_COMMENT_ENTRY_DEFAULT_MIN_VIEWERS, captureDurationMinutes: 5 };
   if (!storage) return fallback;
   try {
     const parsed = JSON.parse(storage.getItem(lastInputStorageKey) ?? "null") as Record<string, unknown> | null;
     if (!parsed) return fallback;
     const targetKeyword = stringValue(parsed.targetKeyword).slice(0, 100);
-    return { targetKeyword, minViewerCount: normalizedViewerFloor(parsed.minViewerCount) };
+    return { targetKeyword, minViewerCount: normalizedViewerFloor(parsed.minViewerCount), captureDurationMinutes: normalizeCaptureDuration(parsed.captureDurationMinutes) };
   } catch {
     return fallback;
   }
 }
 
 export function writeLastLiveCommentEntryInput(
-  input: { targetKeyword: string; minViewerCount?: number | null },
+  input: { targetKeyword: string; minViewerCount?: number | null; captureDurationMinutes?: number | null },
   storage = browserStorage()
 ) {
   if (!storage) return;
   storage.setItem(lastInputStorageKey, JSON.stringify({
     targetKeyword: input.targetKeyword.trim().slice(0, 100),
-    minViewerCount: normalizedViewerFloor(input.minViewerCount)
+    minViewerCount: normalizedViewerFloor(input.minViewerCount),
+    captureDurationMinutes: normalizeCaptureDuration(input.captureDurationMinutes)
   }));
 }
