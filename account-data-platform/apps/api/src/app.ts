@@ -7,6 +7,7 @@ import { healthRoutes } from "./routes/health";
 import { mobileRoutes } from "./routes/mobile";
 import { mobileRemoteScriptRoutes } from "./routes/mobile-remote-scripts";
 import { mobilePublishTaskRoutes } from "./routes/mobile-publish-tasks";
+import { commentActionTimingRoutes } from "./routes/comment-action-timing";
 
 export const app = new Hono();
 
@@ -18,6 +19,7 @@ app.route("/downloads", downloadRoutes);
 app.route("/api/v1/mobile/remote-scripts", mobileRemoteScriptRoutes);
 app.route("/api/v1/mobile/publish-tasks", mobilePublishTaskRoutes);
 app.route("/api/v1/mobile", mobileRoutes);
+app.route("/api/v1/admin", commentActionTimingRoutes);
 app.route("/api/v1/admin", adminRoutes);
 
 app.notFound((c) => c.json({ error: { code: "NOT_FOUND", message: "接口不存在", details: {} } }, 404));

@@ -79,13 +79,13 @@ function testStopsWhileFastSearchIsWaiting() {
   assert.strictEqual(result.attempts, 0);
 }
 
-function testWaitsFixedSevenSecondsBeforeOpeningSearch() {
+function testWaitsRandomFiveToSevenSecondsBeforeOpeningSearch() {
   var runtime = createRuntime([{ accessibilityText: "", ocrText: "当归" }]);
   var result = createTargetLiveEntryTask({ runtime: runtime }).run(payload(), { shouldStop: function () { return false; } });
   assert.strictEqual(result.status, "TARGET_LIVE_ENTERED");
   assert.deepStrictEqual(runtime.events.slice(0, 3), [
     "open_douyin",
-    "wait:7000-7000",
+    "wait:5000-7000",
     "search:药材种植"
   ]);
 }
@@ -96,7 +96,7 @@ function testClicksFirstLiveAfterFixedThreeSecondTabWait() {
   assert.strictEqual(result.status, "TARGET_LIVE_ENTERED");
   assert.deepStrictEqual(runtime.events.slice(0, 6), [
     "open_douyin",
-    "wait:7000-7000",
+    "wait:5000-7000",
     "search:药材种植",
     "live_tab",
     "wait:3000-3000",
@@ -182,7 +182,7 @@ testTargetKeywordAloneDoesNotReplaceRelatedTerms();
 testRetriesThreeRoundsOfFourCandidates();
 testStopsAtActionBoundary();
 testStopsWhileFastSearchIsWaiting();
-testWaitsFixedSevenSecondsBeforeOpeningSearch();
+testWaitsRandomFiveToSevenSecondsBeforeOpeningSearch();
 testClicksFirstLiveAfterFixedThreeSecondTabWait();
 testFirstLiveCardUsesStableFirstResultPoint();
 testCommerceCartOverridesRelatedTermAndMovesToNextLive();

@@ -72,11 +72,8 @@ test("layout regions and computed gestures stay inside different screens", funct
       });
     });
   });
-  assert.deepEqual(layout.REGION_RATIOS.comment, {
-    left: 0.03,
-    top: 0.635,
-    width: 0.70,
-    height: 0.245
+  assert.deepEqual(layout.getRegion("comment", { width: 1080, height: 2248 }), {
+    name: "comment", left: 12, top: 1556, width: 763, height: 327
   });
 });
 

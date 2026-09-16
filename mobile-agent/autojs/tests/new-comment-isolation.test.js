@@ -118,7 +118,8 @@ test("anchor summary failure reports the attempted room and original cause", fun
     failedStage: "SCREENING_VIEWER_COUNT",
     reasonCode: "ANCHOR_SUMMARY_OPEN_FAILED",
     message: "主播入口不可用",
-    attemptedRoomCount: 1
+    attemptedRoomCount: 1,
+    roomProfiles: []
   });
 });
 

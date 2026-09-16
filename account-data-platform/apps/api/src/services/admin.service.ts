@@ -487,6 +487,7 @@ export async function getDeviceTaskConfig(deviceCode: string, platform = "douyin
     followedAliases: source.followedAliases,
     liveCommentConfig: source.liveCommentConfig ?? null,
     p3ExtensionsConfig: source.p3ExtensionsConfig ?? null,
+    deviceProfile: source.deviceProfile ?? null,
     heartbeatMinutes: source.heartbeatMinutes
   };
 }

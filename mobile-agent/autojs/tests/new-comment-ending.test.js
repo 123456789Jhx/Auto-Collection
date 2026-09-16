@@ -70,6 +70,7 @@ function heldRuntime(text, overrides) {
   var held = false, now = 0, clips = [], recycled = [], samples = 0;
   var options = {
     screenSize: { width: 1080, height: 2248 }, sleep: function (ms) { now += ms; },
+    random: function (min) { return min; },
     captureScreen: function () {
       assert.equal(held, true, "capture must occur before native release");
       samples += 1;
@@ -81,7 +82,10 @@ function heldRuntime(text, overrides) {
     } },
     ocrEngine: { recognize: function () { return text; } },
     gestureDriver: { swipeAndHold: function (input, inspect) {
-      assert.deepEqual(input.points, [{ x: 220, y: 1587 }, { x: 220, y: 1962 }]);
+      assert.deepEqual(input.points, [{ x: 279, y: 1607 }, { x: 245, y: 1880 }]);
+      assert.deepEqual(input.controlPoint, { x: 282, y: 1690 });
+      assert.equal(input.startHoldMs, 120);
+      assert.equal(input.durationMs, 520);
       assert.equal(input.holdMs, 2000);
       held = true;
       try { return inspect(function () { return now < 2000; }); }
@@ -99,6 +103,45 @@ test("held runtime recognizes only the specified crop and recycles every image",
   assert.equal(run.result.value.endDetected, true);
   assert.deepEqual(run.clips, [[39, 1483, 346, 71]]);
   assert.deepEqual(run.recycled.sort(), ["clip", "screen"]);
+});
+
+test("each swipe logs the same random curve passed to the driver", function () {
+  var geometryDraws = 0, timingDraws = 0, sizeReads = 0, dispatched = [], logged = [];
+  var runtime = createRuntime({ logger: { info: function (message, data) {
+    if (data.coordinates) logged.push(JSON.parse(JSON.stringify(data.coordinates)));
+  } } }, {
+    screenSize: function () { sizeReads += 1; return { width: 1080, height: 2248 }; },
+    random: function (min, max) {
+      if (min === 2500 && max === 4500) {
+        timingDraws += 1;
+        return min;
+      }
+      geometryDraws += 1;
+      return geometryDraws <= 3 ? min : max;
+    },
+    captureScreen: function () {}, images: { clip: function () {} }, ocrEngine: { recognize: function () {} },
+    gestureDriver: { swipeAndHold: function (input) {
+      dispatched.push(input);
+      return { success: true, value: { endDetected: false } };
+    } }
+  });
+  runtime.swipeComments();
+  runtime.swipeComments();
+  assert.equal(geometryDraws, 6);
+  assert.equal(timingDraws, 2);
+  assert.equal(sizeReads, 2);
+  assert.equal(logged.length, 2);
+  assert.equal(logged[0].endX, 245);
+  assert.equal(logged[1].endX, 338);
+  logged.forEach(function (coordinates, index) {
+    assert.deepEqual(dispatched[index].points, [
+      { x: coordinates.startX, y: coordinates.startY }, { x: coordinates.endX, y: coordinates.endY }
+    ]);
+    assert.deepEqual(dispatched[index].controlPoint, coordinates.controlPoint);
+    assert.equal(dispatched[index].startHoldMs, 120);
+    assert.equal(dispatched[index].startHoldMs, coordinates.startHoldMs);
+    assert.equal(dispatched[index].holdMs, 2000);
+  });
 });
 
 test("new-message badges do not match the marker and inspection remains bounded", function () {

@@ -13,6 +13,7 @@ function candidate(
     slotExecutionId: `slot-${accountName}`,
     bindingId: `binding-${accountName}`,
     accountName,
+    externalAccountKey: `external-${accountName}`,
     priority: 1,
     attemptCount: 0,
     stableOrder: accountName.charCodeAt(0),

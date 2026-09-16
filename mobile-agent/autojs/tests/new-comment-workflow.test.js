@@ -181,7 +181,8 @@ test("workflow stops immediately when the room switch receives a stop request", 
     { targetKeyword: "关键词", minViewerCount: 300 },
     { shouldStop: function () { return stopped; } }
   );
-  assert.deepEqual(result, { status: "STOPPED" });
+  // roomProfiles 是后续新增的直播间画像回传字段，即使没有进过房间也会返回空数组。
+  assert.deepEqual(result, { status: "STOPPED", roomProfiles: [] });
 });
 test("workflow extracts paged comments and returns backend-compatible sources", function () {
   var clock = 0;

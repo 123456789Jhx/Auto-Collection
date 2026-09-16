@@ -50,8 +50,6 @@ test("douyin publish chain uses only baseline modules", () => {
         return { start() { return { timedOut() { return false; }, complete() {} }; } };
       }
     },
-    "domain/topic-validator.js": { validateDescriptionTopics() { return { valid: true }; } },
-    "domain/topic-resume.js": { createTopicContinuation() { return { waitForResolvedDescription() { return "#a #b #c #d #e"; } }; } },
     "domain/action-timing-gates.js": {
       createActionTimeGate() { return { waitForNext(name, check) { assert.equal(check(), true, name); return {}; } }; }
     },
@@ -113,8 +111,6 @@ test("cached publish handler handles a command without runtime module loads", ()
         return { start() { return { timedOut() { return false; }, complete() {} }; } };
       }
     },
-    "domain/topic-validator.js": { validateDescriptionTopics() { return { valid: true }; } },
-    "domain/topic-resume.js": { createTopicContinuation() { return { waitForResolvedDescription() { return "#a #b #c #d #e"; } }; } },
     "domain/action-timing-gates.js": {
       createActionTimeGate() { return { waitForNext(name, check) { assert.equal(check(), true, name); return {}; } }; }
     },
@@ -163,7 +159,6 @@ test("wechat publish dependencies use only baseline modules", () => {
   const overlayPaths = [];
   const modules = {
     "domain/material-inspector.js": {},
-    "domain/topic-validator.js": {},
     "features/publish-video/channels-verify-popup.js": {},
     "features/publish-video/channels-publish-ui.js": { createWechatChannelsPublishUi() { return {}; } }
   };

@@ -415,6 +415,8 @@ function createHeartbeatService(context) {
       douyinAccountName: heartbeat.douyinAccountName || "",
       douyinAccountNameUpdatedAt: heartbeat.douyinAccountNameLastAt ? new Date(heartbeat.douyinAccountNameLastAt).toISOString() : "",
       bizScriptsVersion: config.runtime.bizScriptsVersion || "0.0.0",
+      bizScriptRuntime: config.runtime.bizScriptRuntimeState || null,
+      pendingBizScriptsVersion: config.runtime.pendingBizScriptsVersion || null,
       reportedAt: new Date(now).toISOString()
     };
     logger.info("采集心跳", payload);
@@ -477,6 +479,8 @@ function createHeartbeatService(context) {
       douyinAccountName: heartbeat.douyinAccountName || "",
       douyinAccountNameUpdatedAt: heartbeat.douyinAccountNameLastAt ? new Date(heartbeat.douyinAccountNameLastAt).toISOString() : "",
       bizScriptsVersion: config.runtime.bizScriptsVersion || "0.0.0",
+      bizScriptRuntime: config.runtime.bizScriptRuntimeState || null,
+      pendingBizScriptsVersion: config.runtime.pendingBizScriptsVersion || null,
       reportedAt: new Date().toISOString()
     };
     logger.info("即时状态心跳", payload);

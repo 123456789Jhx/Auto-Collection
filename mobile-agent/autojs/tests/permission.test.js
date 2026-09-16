@@ -149,8 +149,130 @@ function testCapturePermissionRejectsReentrantRequest() {
   }), true, "重入应留下明确诊断日志");
 }
 
+// 真机主线程同步调用 requestScreenCapture 会冻结事件分发，导致系统授权弹窗
+// 点不动。这里锁定「子线程发起 + 主线程轮询等待」的行为。
+function testCapturePermissionRunsInWorkerThread() {
+  var grantedValues = [true, false];
+  grantedValues.forEach(function (grantedValue) {
+    var logs = [];
+    var requestCount = 0;
+    var manager = createPermissionManager({
+      runtime: { scriptDir: "." },
+      output: { baseDir: "/tmp/base", cacheDir: "/tmp/cache" },
+      task: {}
+    }, createLogger(logs), {
+      accessibility: {
+        setContext: function () {},
+        detectAccessibility: function () { return { enabled: true, source: "test" }; }
+      },
+      files: {
+        exists: function () { return true; },
+        createWithDirs: function () {},
+        remove: function () {}
+      },
+      app: { startActivity: function () {} },
+      // 模拟 AutoJS threads.start：同步跑完函数体，代表子线程已执行。
+      threads: {
+        start: function (runner) {
+          runner();
+          return { interrupt: function () {} };
+        }
+      },
+      requestScreenCapture: function () {
+        requestCount += 1;
+        return grantedValue;
+      },
+      toast: function () {},
+      sleep: function () {}
+    });
+
+    assert.strictEqual(manager.ensureCapturePermission(), grantedValue,
+      "应透传子线程里的授权结果");
+    assert.strictEqual(requestCount, 1, "只能发起一次截图权限请求");
+    assert(logs.some(function (item) {
+      return item.message.indexOf("等待用户在系统弹窗确认") >= 0;
+    }), "应留下等待用户确认的诊断日志");
+  });
+}
+
+function testCapturePermissionTimeoutDoesNotHang() {
+  var logs = [];
+  var interruptCount = 0;
+  var manager = createPermissionManager({
+    runtime: { scriptDir: "." },
+    output: { baseDir: "/tmp/base", cacheDir: "/tmp/cache" },
+    task: {}
+  }, createLogger(logs), {
+    accessibility: {
+      setContext: function () {},
+      detectAccessibility: function () { return { enabled: true, source: "test" }; }
+    },
+    files: {
+      exists: function () { return true; },
+      createWithDirs: function () {},
+      remove: function () {}
+    },
+    app: { startActivity: function () {} },
+    // 子线程永不返回，模拟用户始终没点系统弹窗。
+    threads: {
+      start: function () {
+        return {
+          interrupt: function () { interruptCount += 1; }
+        };
+      }
+    },
+    requestScreenCapture: function () { return true; },
+    toast: function () {},
+    sleep: function () {}
+  });
+
+  assert.strictEqual(manager.ensureCapturePermission(), false, "用户未处理弹窗时应失败而不是一直卡住");
+  assert(logs.some(function (item) {
+    return item.message.indexOf("用户未处理系统授权弹窗") >= 0;
+  }), "超时应留下明确诊断日志");
+}
+
+// MIUI 会拦截「后台弹出界面」，导致后台发起的授权弹窗能显示但点不动。
+// 锁定申请截图权限前先把自身 App 拉回前台的行为。
+function testCapturePermissionBringsSelfToForeground() {
+  var logs = [];
+  var launched = [];
+  var manager = createPermissionManager({
+    runtime: { scriptDir: "." },
+    output: { baseDir: "/tmp/base", cacheDir: "/tmp/cache" },
+    task: {}
+  }, createLogger(logs), {
+    accessibility: {
+      setContext: function () {},
+      detectAccessibility: function () { return { enabled: true, source: "test" }; }
+    },
+    files: {
+      exists: function () { return true; },
+      createWithDirs: function () {},
+      remove: function () {}
+    },
+    app: {
+      startActivity: function () {},
+      launchPackage: function (packageName) { launched.push(packageName); }
+    },
+    requestScreenCapture: function () { return true; },
+    toast: function () {},
+    sleep: function () {}
+  });
+
+  assert.strictEqual(manager.ensureCapturePermission(), true, "授权成功应返回 true");
+  assert.deepStrictEqual(launched, ["com.agri.video.collector"],
+    "申请截图权限前应先把自身 App 拉回前台");
+  assert(logs.some(function (item) {
+    return item.message.indexOf("已拉起自身前台后再申请截图权限") >= 0;
+  }), "切前台应留下诊断日志");
+}
+
 testSettingsEnabledServiceDoesNotOpenAccessibilitySettings();
 testUnknownAccessibilityStateDoesNotOpenAccessibilitySettings();
 testCapturePermissionRejectsReentrantRequest();
+testCapturePermissionRunsInWorkerThread();
+testCapturePermissionTimeoutDoesNotHang();
+testCapturePermissionBringsSelfToForeground();
 
 console.log("permission tests passed");

@@ -139,6 +139,9 @@ export const deviceTaskConfigs = pgTable(
     liveCommentBotConfig: jsonb("live_comment_bot_config").$type<Record<string, unknown>>(),
     liveCommentConfig: jsonb("live_comment_config").$type<Record<string, unknown>>(),
     p3ExtensionsConfig: jsonb("p3_extensions_config").$type<Record<string, unknown>>(),
+    // 设备画像覆盖：按机型调整手机端运行时行为（截图授权流程、输出目录候选、
+    // 打开抖音后的等待区间等）。手机端会把服务端取值合并到 APK 内置画像之上。
+    deviceProfile: jsonb("device_profile").$type<Record<string, unknown>>(),
     heartbeatMinutes: integer("heartbeat_minutes").notNull().default(1),
     ...auditColumns
   },

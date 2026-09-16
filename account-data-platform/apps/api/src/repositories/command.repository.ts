@@ -126,6 +126,49 @@ export async function finalizePendingVideoWarmupRun(deviceId: string, batchId: s
   });
 }
 
+/**
+ * 终结“孤儿”视频养号运行记录：命令仍处于活动状态，但设备实际上已经不在执行它
+ * （agent 掉线、被系统重启，或已自行停止）。
+ * 不清理的话 `findActiveVideoWarmupRun` 会让设备被永久判定为忙碌，
+ * 之后任何下发都会失败。
+ */
+export async function finalizeAbandonedVideoWarmupRun(filter: {
+  commandId?: string;
+  deviceId?: string;
+  batchId?: string;
+  reason: string;
+}) {
+  const conditions = [
+    eq(mobileCommands.tenantId, config.tenantId),
+    eq(mobileCommands.commandType, "ACCOUNT_WARMUP_RUN"),
+    inArray(mobileCommands.status, ["PENDING", "FETCHED", "CLAIMED", "RUNNING"]),
+    sql`${mobileCommands.payloadJson} ->> 'featureKey' = 'video_warmup'`,
+    isNull(mobileCommands.deletedAt)
+  ];
+  if (filter.commandId) {
+    conditions.push(eq(mobileCommands.id, filter.commandId));
+  }
+  if (filter.deviceId) {
+    conditions.push(eq(mobileCommands.deviceId, filter.deviceId));
+  }
+  if (filter.batchId) {
+    conditions.push(sql`${mobileCommands.payloadJson} ->> 'batchId' = ${filter.batchId}`);
+  }
+  const now = new Date();
+  const rows = await db
+    .update(mobileCommands)
+    .set({
+      status: "TIMED_OUT",
+      acknowledgedAt: now,
+      resultJson: { status: "STOPPED", reason: filter.reason },
+      updatedAt: now,
+      updatedBy: "orphan_run_recovery"
+    })
+    .where(and(...conditions))
+    .returning();
+  return rows[0] ?? null;
+}
+
 export async function findMobileCommandByIdempotencyKey(idempotencyKey: string) {
   const [command] = await db
     .select()
@@ -146,6 +189,9 @@ export async function findActiveVideoWarmupRun(deviceId: string, batchId?: strin
     eq(mobileCommands.commandType, "ACCOUNT_WARMUP_RUN"),
     inArray(mobileCommands.status, ["PENDING", "FETCHED", "CLAIMED", "RUNNING"]),
     sql`${mobileCommands.payloadJson} ->> 'featureKey' = 'video_warmup'`,
+    // 与 createExitAgentAppCommandAtomic 保持一致：命令过期后不再视为"进行中"。
+    // 否则 agent 中途掉线时 RUNNING 会永久残留，设备永远被判忙。
+    or(isNull(mobileCommands.expiresAt), gt(mobileCommands.expiresAt, new Date())),
     isNull(mobileCommands.deletedAt)
   ];
   if (batchId) conditions.push(sql`${mobileCommands.payloadJson} ->> 'batchId' = ${batchId}`);

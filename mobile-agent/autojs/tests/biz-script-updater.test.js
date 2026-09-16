@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
+const crypto = require("node:crypto");
 const {
   compareBizVersions,
   createBizScriptUpdater,
@@ -7,7 +8,18 @@ const {
   validateManifest
 } = require("../app/biz-script-updater.js");
 
-const PACKAGE_SHA = "d".repeat(64);
+const sha = (value) => crypto.createHash("sha256").update(value).digest("hex");
+const inventoryText = (files) => files.map((file) => `${file.path}:${file.sha256}`).sort().join("\n");
+const BASE_FILES = [{ path: "core/example.js", sha256: sha("base-core") }];
+const BASE_COMPATIBILITY_ID = sha("autojs-biz-v2\n" + inventoryText(BASE_FILES));
+const PACKAGE_SHA = sha("zip-bytes");
+
+function manifest(version, files) {
+  return {
+    schemaVersion: 2, channel: "biz-scripts", version, files,
+    baseCompatibilityId: BASE_COMPATIBILITY_ID, sourceSha256: sha(inventoryText(files))
+  };
+}
 
 test("force-stops the complete AutoJS engine before using exit fallback", () => {
   let forceStopCount = 0;
@@ -32,9 +44,17 @@ test("uses exit only when complete-engine stop is unavailable", () => {
 });
 
 function createMockDeps() {
+  const baseline = Object.assign(manifest("0.9.0", [
+    { path: "features/example.js", sha256: sha("baseline-feature") }
+  ]), { baseFiles: BASE_FILES });
   const files = new Map([
+    ["/runtime/features/example.js", "baseline-feature"],
+    ["/runtime/core/example.js", "base-core"],
+    ["/runtime/biz-script-baseline.json", JSON.stringify(baseline)],
     ["/runtime/biz-scripts/current/features/example.js", "old-feature"],
-    ["/runtime/biz-scripts/current/version.json", JSON.stringify({ version: "1.0.0" })]
+    ["/runtime/biz-scripts/current/version.json", JSON.stringify(manifest("1.0.0", [
+      { path: "features/example.js", sha256: sha("old-feature") }
+    ]))]
   ]);
   const dirs = new Set([
     "/runtime/biz-scripts/current",
@@ -86,9 +106,9 @@ function createMockDeps() {
       files.set(path, value);
     },
     sha256File(path) {
-      if (path.endsWith("package.zip")) return PACKAGE_SHA;
-      return files.get(path) === "new-feature" ? "b".repeat(64) : "c".repeat(64);
+      return sha(files.get(path));
     },
+    sha256Text: sha,
     download(_url, target) {
       files.set(target, "zip-bytes");
       return 9;
@@ -97,12 +117,9 @@ function createMockDeps() {
       dirs.add(target);
       dirs.add(`${target}/features`);
       files.set(`${target}/features/example.js`, "new-feature");
-      files.set(`${target}/biz-script-manifest.json`, JSON.stringify({
-        version: "1.1.0",
-        channel: "biz-scripts",
-        entryFile: "biz-script-manifest.json",
-        files: [{ path: "features/example.js", sha256: "a".repeat(64) }]
-      }));
+      files.set(`${target}/biz-script-manifest.json`, JSON.stringify(manifest("1.1.0", [
+        { path: "features/example.js", sha256: "a".repeat(64) }
+      ])));
     },
     now() {
       return 123456;
@@ -190,7 +207,7 @@ test("uses the APK baseline version when no overlay exists", () => {
     runtime: { scriptDir: "/runtime", bizScriptRoot: "/runtime/biz-scripts" },
     upload: {}
   }, { info() {}, warn() {} }, { uploadAgentUpdateEvent() {} }, deps);
-  assert.equal(updater.currentVersion(), "0.0.0");
+  assert.equal(updater.currentVersion(), "0.9.0");
 });
 
 test("queries biz-scripts without changing the APK version channel", () => {
@@ -277,6 +294,7 @@ test("keeps the current overlay and reports rollback when file verification fail
 
   assert.equal(result.applied, false);
   assert.equal(result.rolledBack, false);
+  assert.match(result.message, /file sha256 mismatch/);
   assert.equal(deps.files.get("/runtime/biz-scripts/current/features/example.js"), "old-feature");
   assert.equal(deps.restarted, false);
   assert.equal(deps.removed.includes("/runtime/biz-scripts/current"), false);
@@ -289,11 +307,9 @@ test("installs only files declared by the verified manifest", () => {
   deps.unzip = (zip, target) => {
     originalUnzip(zip, target);
     deps.files.set(`${target}/features/unlisted.js`, "unverified-code");
-    deps.files.set(`${target}/biz-script-manifest.json`, JSON.stringify({
-      version: "1.1.0",
-      channel: "biz-scripts",
-      files: [{ path: "features/example.js", sha256: "b".repeat(64) }]
-    }));
+    deps.files.set(`${target}/biz-script-manifest.json`, JSON.stringify(manifest("1.1.0", [
+      { path: "features/example.js", sha256: sha("new-feature") }
+    ])));
   };
   const updater = createBizScriptUpdater({
     runtime: { scriptDir: "/runtime", bizScriptRoot: "/runtime/biz-scripts" },
@@ -352,11 +368,9 @@ test("restores the previous overlay when atomic activation fails", () => {
   const originalRename = deps.renameDir;
   deps.unzip = (zip, target) => {
     originalUnzip(zip, target);
-    deps.files.set(`${target}/biz-script-manifest.json`, JSON.stringify({
-      version: "1.1.0",
-      channel: "biz-scripts",
-      files: [{ path: "features/example.js", sha256: "b".repeat(64) }]
-    }));
+    deps.files.set(`${target}/biz-script-manifest.json`, JSON.stringify(manifest("1.1.0", [
+      { path: "features/example.js", sha256: sha("new-feature") }
+    ])));
   };
   deps.renameDir = function (source, target) {
     if (/\/next$/.test(source) && /\/current$/.test(target)) throw new Error("activation failed");

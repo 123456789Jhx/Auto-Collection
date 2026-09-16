@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { createMobileCommandSchema } from "../api/admin";
 import {
+  accountWarmupFeatureKeySchema,
   accountWarmupRunPayloadSchema,
   accountWarmupStopPayloadSchema,
   accountWarmupTargetLiveConfigSchema,
@@ -90,12 +92,19 @@ describe("account warmup command contracts", () => {
     });
   });
 
-  test("accepts a live comment entry payload with a nonnegative viewer floor", () => {
-    expect(accountWarmupRunPayloadSchema.parse({
+  test("rejects the retired live comment entry feature at command boundaries", () => {
+    const payload = {
       featureKey: "live_comment_entry",
-      batchId: crypto.randomUUID(),
+      batchId,
       config: { targetKeyword: "药材种植", minViewerCount: 300 }
-    })).toMatchObject({ config: { minViewerCount: 300 } });
+    };
+    expect(accountWarmupFeatureKeySchema.safeParse(payload.featureKey).success).toBe(false);
+    expect(accountWarmupRunPayloadSchema.safeParse(payload).success).toBe(false);
+    expect(createMobileCommandSchema.safeParse({
+      deviceId: "retired-feature-device",
+      commandType: "ACCOUNT_WARMUP_RUN",
+      payload
+    }).success).toBe(false);
   });
 
   test("accepts an isolated live comment entry payload", () => {
@@ -112,17 +121,17 @@ describe("account warmup command contracts", () => {
 
   test("defaults the live comment entry viewer floor to 300 and rejects negatives", () => {
     expect(accountWarmupRunPayloadSchema.parse({
-      featureKey: "live_comment_entry",
+      featureKey: "isolated_live_comment_entry",
       batchId: crypto.randomUUID(),
       config: { targetKeyword: "测试" }
     })).toMatchObject({ config: { minViewerCount: 300 } });
     expect(accountWarmupRunPayloadSchema.parse({
-      featureKey: "live_comment_entry",
+      featureKey: "isolated_live_comment_entry",
       batchId: crypto.randomUUID(),
       config: { targetKeyword: "测试", minViewerCount: 0 }
     })).toMatchObject({ config: { minViewerCount: 0 } });
     expect(accountWarmupRunPayloadSchema.safeParse({
-      featureKey: "live_comment_entry",
+      featureKey: "isolated_live_comment_entry",
       batchId: crypto.randomUUID(),
       config: { targetKeyword: "测试", minViewerCount: -1 }
     }).success).toBe(false);
@@ -130,13 +139,13 @@ describe("account warmup command contracts", () => {
 
   test("trims the live comment entry keyword and rejects unknown config fields", () => {
     const parsed = accountWarmupRunPayloadSchema.parse({
-      featureKey: "live_comment_entry",
+      featureKey: "isolated_live_comment_entry",
       batchId: crypto.randomUUID(),
       config: { targetKeyword: "  药材种植  " }
     });
     expect(parsed.config.targetKeyword).toBe("药材种植");
     expect(accountWarmupRunPayloadSchema.safeParse({
-      featureKey: "live_comment_entry",
+      featureKey: "isolated_live_comment_entry",
       batchId: crypto.randomUUID(),
       config: { targetKeyword: "测试", unknown: true }
     }).success).toBe(false);

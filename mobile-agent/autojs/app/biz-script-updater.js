@@ -1,16 +1,6 @@
-function compareBizVersions(left, right) {
-  var leftParts = String(left || "0").split(".").map(function (item) { return Number(item) || 0; });
-  var rightParts = String(right || "0").split(".").map(function (item) { return Number(item) || 0; });
-  var length = Math.max(leftParts.length, rightParts.length);
-  for (var i = 0; i < length; i++) {
-    var diff = (leftParts[i] || 0) - (rightParts[i] || 0);
-    if (diff !== 0) return diff > 0 ? 1 : -1;
-  }
-  return 0;
-}
-function isValidBizVersion(value) {
-  return /^[0-9]+(?:\.[0-9]+)*$/.test(String(value || ""));
-}
+var policy = require("./biz-script-policy.js");
+var compareBizVersions = policy.compareVersions;
+var isValidBizVersion = policy.validVersion;
 function getBizScriptCheckIntervalMs(upload) {
   upload = upload || {};
   if (upload.bizScriptHotReloadEnabled === true) {
@@ -26,8 +16,7 @@ function joinPath() {
   return Array.prototype.slice.call(arguments).filter(Boolean).join("/").replace(/\/+/g, "/");
 }
 function decodeManifestPath(value) {
-  var decoded = decodeURIComponent(String(value || "")).replace(/\\/g, "/").replace(/^\/+/, "");
-  if (!decoded || decoded.indexOf("..") >= 0) throw new Error("unsafe manifest path: " + decoded);
+  var decoded = policy.safePath(value);
   if (decoded === "config.js" || !(decoded.indexOf("features/") === 0 || decoded.indexOf("domain/") === 0)) {
     throw new Error("manifest path outside business layers: " + decoded);
   }
@@ -66,10 +55,26 @@ function restartCurrentEngine(engineManager, exitFallback) {
 }
 function createDefaultDeps(config) {
   function ensureDir(path) {
-    if (!files.exists(path)) {
-      files.createWithDirs(joinPath(path, ".keep"));
-      files.remove(joinPath(path, ".keep"));
+    if (!path) {
+      console.log("[WARN] ensureDir 跳过：目录路径为空");
+      return false;
     }
+    try {
+      if (files.exists(path)) {
+        return true;
+      }
+      // createWithDirs 失败时可能返回 false，也可能抛异常，两者都必须兜住，
+      // 否则未捕获异常会中断整个脚本引擎。
+      if (files.createWithDirs(joinPath(path, ".keep")) === false) {
+        console.log("[WARN] ensureDir 失败：" + path);
+        return false;
+      }
+      files.remove(joinPath(path, ".keep"));
+    } catch (error) {
+      console.log("[WARN] ensureDir 失败：" + path + " -> " + error);
+      return false;
+    }
+    return true;
   }
 
   function remove(path) {
@@ -92,7 +97,10 @@ function createDefaultDeps(config) {
     } finally {
       input.close();
     }
-    var bytes = digest.digest();
+    return digestHex(digest.digest());
+  }
+
+  function digestHex(bytes) {
     var hex = "";
     for (var i = 0; i < bytes.length; i++) {
       var value = bytes[i] < 0 ? bytes[i] + 256 : bytes[i];
@@ -154,6 +162,10 @@ function createDefaultDeps(config) {
     readText: function (path) { return files.read(path); },
     writeText: function (path, value) { files.write(path, value); },
     sha256File: sha256File,
+    sha256Text: function (text) {
+      var digest = java.security.MessageDigest.getInstance("SHA-256");
+      return digestHex(digest.digest(new java.lang.String(String(text)).getBytes("UTF-8")));
+    },
     download: function (url, target) {
       var response = http.get(url, { timeout: Math.max(15000, Number(config.upload.timeoutMs || 5000) * 4) });
       if (response.statusCode < 200 || response.statusCode >= 300) throw new Error("biz scripts download failed: " + response.statusCode);
@@ -179,6 +191,10 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
   var workRoot = joinPath(root, "work");
   var nextCheckAt = 0;
   var checking = false;
+  var baseline = null;
+  try { baseline = policy.readBaseline(deps, config.runtime.scriptDir); } catch (baselineError) {
+    logger.warn("APK业务脚本基线不可用，已禁用热更新", { message: String(baselineError) });
+  }
 
   function report(eventType, fromVersion, toVersion, message, payload) {
     return uploader.uploadAgentUpdateEvent({
@@ -198,12 +214,11 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
   }
 
   function currentVersion() {
-    var versionPath = joinPath(currentDir, "version.json");
-    if (!deps.exists(versionPath)) return "0.0.0";
     try {
-      var version = String(JSON.parse(deps.readText(versionPath)).version || "");
-      return isValidBizVersion(version) ? version : "0.0.0";
-    } catch (error) { return "0.0.0"; }
+      var metadata = policy.validateOverlay(deps, currentDir, baseline);
+      if (policy.isRejected(metadata, policy.readRejection(deps, root))) throw new Error("previously failed package");
+      return metadata.version;
+    } catch (error) { return baseline ? baseline.version : "0.0.0"; }
   }
 
   function isDeviceRegistrationReady() {
@@ -225,6 +240,7 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
   }
 
   function applyVersion(versionResult) {
+    if (!baseline) return { applied: false, disabled: true, message: "APK business baseline unavailable" };
     var latest = versionResult && versionResult.latestVersion;
     var fromVersion = currentVersion();
     if (!latest || latest.channel !== "biz-scripts" || !latest.packageUrl || !latest.version) {
@@ -232,6 +248,10 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
     }
     if (!isValidBizVersion(latest.version)) {
       return { applied: false, rolledBack: false, message: "invalid biz-scripts version" };
+    }
+    var rejected = policy.readRejection(deps, root);
+    if (rejected && rejected.baseCompatibilityId === baseline.baseCompatibilityId && rejected.version === latest.version) {
+      return { applied: false, rolledBack: false, message: "biz scripts package previously failed to load" };
     }
     if (compareBizVersions(latest.version, fromVersion) <= 0) {
       return { applied: false, rolledBack: false, message: "biz-scripts version is not newer" };
@@ -261,6 +281,7 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
       var manifestPath = joinPath(extractDir, manifestEntry);
       var manifest = JSON.parse(deps.readText(manifestPath));
       var manifestFiles = validateManifest(manifest, latest.version);
+      policy.assertCompatible(manifest, baseline, deps);
       var partial = manifest.mode === "partial";
       if (manifest.mode && manifest.mode !== "partial" && manifest.mode !== "full") {
         throw new Error("invalid biz scripts manifest mode");
@@ -279,6 +300,7 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
         if (deltaPaths.some(function (path) { return mergedPaths.indexOf(path) < 0; })) {
           throw new Error("partial biz scripts delta file is absent from merged manifest");
         }
+        policy.validateOverlay(deps, currentDir, baseline);
         partialHelpers.assertPartialBase(partialHelpers.validateCurrentState(deps, currentDir, validateManifest), manifest, deltaFiles);
       }
       for (var i = 0; i < manifestFiles.length; i++) {
@@ -301,11 +323,15 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
         deps.copyFile(joinPath(extractDir, filesToApply[j].path), joinPath(nextDir, filesToApply[j].path));
       }
       deps.writeText(joinPath(nextDir, "version.json"), JSON.stringify({
+        schemaVersion: 2,
+        baseCompatibilityId: manifest.baseCompatibilityId,
+        sourceSha256: manifest.sourceSha256,
         version: latest.version,
         channel: "biz-scripts",
         mode: partial ? "partial" : "full",
         files: manifestFiles
       }));
+      policy.validateOverlay(deps, nextDir, baseline);
       if (deps.exists(currentDir)) {
         deps.remove(backupDir);
         deps.renameDir(currentDir, backupDir);
@@ -323,7 +349,6 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
           logger.warn("业务脚本回滚失败", { message: String(rollbackError), backupDir: backupDir });
         }
       }
-      config.runtime.bizScriptsVersion = currentVersion();
       deps.remove(workDir);
       safeReport("FAILED", fromVersion, latest.version, String(error), {});
       if (rolledBack) safeReport("ROLLBACK", latest.version, fromVersion, "biz scripts rollback completed", {});
@@ -332,21 +357,28 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
     }
 
     deps.remove(workDir);
-    config.runtime.bizScriptsVersion = latest.version;
+    config.runtime.pendingBizScriptsVersion = latest.version;
     var appliedFiles = manifest.mode === "partial" ? manifest.deltaFiles : manifest.files;
     safeReport("APPLIED", fromVersion, latest.version, "biz scripts applied", {
+      restartPending: true, runningVersion: config.runtime.bizScriptsVersion,
       mode: manifest.mode === "partial" ? "partial" : "full",
       fileCount: appliedFiles.length,
       files: appliedFiles.map(function (file) { return file.path; })
     });
-    logger.info("业务脚本热更新完成", {
+    logger.info("业务脚本已暂存，等待引擎重启加载", {
       fromVersion: fromVersion, toVersion: latest.version,
       mode: manifest.mode === "partial" ? "partial" : "full",
       fileCount: appliedFiles.length,
       files: appliedFiles.map(function (file) { return file.path; })
     });
-    try { deps.restart(); } catch (restartError) {
-      logger.warn("业务脚本已生效但自动重启失败", { message: String(restartError) });
+    try {
+      var restartResult = deps.restart();
+      if (restartResult === "unavailable" || restartResult === false) throw new Error("engine restart unavailable");
+    } catch (restartError) {
+      safeReport("FAILED", config.runtime.bizScriptsVersion, latest.version, String(restartError), {
+        phase: "restart", restartPending: true, runningVersion: config.runtime.bizScriptsVersion
+      });
+      logger.warn("业务脚本尚未加载新版本，自动重启失败", { message: String(restartError), pendingVersion: latest.version });
       return { applied: true, rolledBack: false, version: latest.version, restartFailed: true };
     }
     return { applied: true, rolledBack: false, version: latest.version };
@@ -354,6 +386,7 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
 
   function check(force) {
     if (config.upload.bizScriptVersionCheckEnabled === false) return { checked: false, disabled: true };
+    if (!baseline) return { checked: false, disabled: true, reason: "apk_baseline_unavailable" };
     if (!isDeviceRegistrationReady()) {
       return { checked: false, deferred: true, reason: "device_not_registered" };
     }
@@ -364,7 +397,6 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
     nextCheckAt = now + interval;
     checking = true;
     var version = currentVersion();
-    config.runtime.bizScriptsVersion = version;
     try {
       var result = queryBizScriptVersion(version);
       if (!result) {
@@ -388,13 +420,15 @@ function createBizScriptUpdater(config, logger, uploader, dependencies) {
     }
   }
 
-  config.runtime.bizScriptsVersion = currentVersion();
+  config.runtime.bizScriptsVersion = config.runtime.bizScriptRuntimeState ?
+    config.runtime.bizScriptRuntimeState.version : currentVersion();
   return { check: check, applyVersion: applyVersion, currentVersion: currentVersion };
 }
 
 module.exports = {
   compareBizVersions: compareBizVersions,
   createBizScriptUpdater: createBizScriptUpdater,
+  createDefaultDeps: createDefaultDeps,
   restartCurrentEngine: restartCurrentEngine,
   validateManifest: validateManifest
 };

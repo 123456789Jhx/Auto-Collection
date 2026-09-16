@@ -21,9 +21,10 @@ test("视频发布模块移除高级调试和日志排障入口", () => {
   assert(fs.existsSync(modulePath), "PublishVideoModulePage.tsx should exist");
   const source = fs.readFileSync(modulePath, "utf8");
 
-  for (const label of ["任务看板", "粘贴发布", "接口定时", "发布设置", "设备账号"]) {
+  for (const label of ["任务看板", "粘贴发布", "接口定时", "发布设置"]) {
     assert(source.includes(`label: "${label}"`), `missing ${label} tab`);
   }
+  assert(!source.includes('label: "设备账号"'));
   for (const label of ["日志排障", "高级调试", "养号"]) {
     assert(!source.includes(`label: "${label}"`), `${label} tab should be removed`);
   }
@@ -32,7 +33,7 @@ test("视频发布模块移除高级调试和日志排障入口", () => {
   assert(!source.includes("AccountWarmupPage"));
   assert(source.includes("PublishSchedulesPage"));
   assert(source.includes("PublishExecutionSettingsPage"));
-  assert(source.includes("DeviceBindingList"));
+  assert(!source.includes("DeviceBindingList"));
   assert(!source.includes("PublishVideoLogTroubleshootingContent"));
   assert(!source.includes("PublishTaskOperations"));
   assert(!source.includes('key: "log-troubleshooting"'));

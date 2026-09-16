@@ -3,10 +3,9 @@ var assert = require("node:assert/strict");
 var fs = require("node:fs");
 var path = require("node:path");
 var test = require("node:test");
-var capture = require("../features/new-comment/comment-capture.js");
 var runnerModule = require("../features/new-comment/comment-runner.js");
-var legacyCapture = require("../domain/live-comment-capture.js");
-var legacyRunnerModule = require("../features/account-warmup/live-comment-entry-comment-runner.js");
+var createTiming = require("../features/new-comment/action-timing.js").createActionTiming;
+var createTimedRuntime = require("../features/new-comment/timed-runtime-actions.js").createTimedRuntimeActions;
 var SCOPE = { batchId: "batch-1", deviceId: "device-1", roomKey: "room-1" };
 function copy(target, source) {
   Object.keys(source || {}).forEach(function (key) { target[key] = source[key]; });
@@ -21,65 +20,40 @@ function runIsolated(runtime, optionOverrides, control) {
   var result = runnerModule.createCommentCaptureRunner(options).capture(SCOPE, control);
   return { result: result, events: events };
 }
-function withoutBackendSourceFields(value) {
-  var result = JSON.parse(JSON.stringify(value), function (key, entry) { return key === "userName" ? undefined : entry; });
-  var comments = (result.comments || []).concat((result.events || []).reduce(function (all, event) {
-    return all.concat(event.comments || []);
-  }, []));
-  comments.forEach(function (comment) { (comment.sources || []).forEach(function (source) {
-    delete source.deviceId; delete source.roomKey;
-  }); });
-  return result;
-}
-function legacyCall(runtime, control, name, failedStage, args) {
-  if (control && control.shouldStop && control.shouldStop()) return { stopped: true };
-  try {
-    var value = runtime[name].apply(runtime, args || []);
-    if (value === false || value && value.success === false) {
-      return { failed: true, value: value, message: String(value && (value.message || value.reason) || failedStage) };
-    }
-    return { value: value };
-  } catch (error) {
-    return { failed: true, message: String(error.message || error) };
-  }
-}
-function runLegacy(runtime, control) {
-  var events = [];
-  var runner = legacyRunnerModule.createCommentCaptureRunner({
-    runtime: runtime,
-    commentCapture: legacyCapture,
-    stage: function (name, payload) { events.push(copy({ stage: name }, payload)); },
-    stopped: function (activeControl) {
-      return !!(activeControl && activeControl.shouldStop && activeControl.shouldStop());
-    },
-    call: function (name, failedStage, args, activeControl) {
-      return legacyCall(runtime, activeControl, name, failedStage, args);
-    }
+test("six OCR pages preserve scoped comments and report capture progress before completion", function () {
+  var reads = 0;
+  var run = runIsolated({
+    readComments: function () { reads += 1; return { text: "评论" + reads }; },
+    swipeComments: function () { return true; },
+    waitRandom: function () {}
+  }, { now: function () { return 1000; } });
+  assert.deepEqual([run.result.status, run.result.captureStatus, run.result.captureCompleted,
+    run.result.commentSwipeCount, run.result.commentPageCount, run.result.commentCount,
+    run.result.commentSourceCount, run.result.captureStopReason, run.result.captureElapsedMs],
+  ["LIVE_COMMENT_ENTRY_ENTERED", "LIVE_COMMENT_ENTRY_CAPTURED", true, 5, 6, 6, 6, "SWIPE_LIMIT_REACHED", 0]);
+  assert.deepEqual(run.result.comments.map(function (comment) { return comment.commentText; }),
+    ["评论1", "评论2", "评论3", "评论4", "评论5", "评论6"]);
+  assert.equal(new Set(run.result.comments.map(function (comment) { return comment.commentId; })).size, 6);
+  run.result.comments.forEach(function (comment, index) {
+    assert.deepEqual([comment.batchId, comment.deviceId, comment.roomKey, comment.pageIndex],
+      ["batch-1", "device-1", "room-1", index]);
+    assert.deepEqual(comment.sources, [{ deviceId: "device-1", roomKey: "room-1",
+      pageIndex: index, commentText: "评论" + (index + 1) }]);
+    assert.equal(Object.prototype.hasOwnProperty.call(comment, "userName"), false);
   });
-  return { result: runner.capture(SCOPE, control), events: events };
-}
-test("six-page filtered OCR result and stage payloads stay equivalent to the legacy runner", function () {
-  function runtime(filtered) {
-    var reads = 0;
-    return {
-      readComments: function () {
-        reads += 1;
-        return { text: (filtered ? "" : "用户" + reads + "：") + "评论" + reads };
-      },
-      swipeComments: function () { return true; },
-      waitRandom: function () {}
-    };
-  }
-  var legacyRun = runLegacy(runtime(false));
-  var isolatedRun = runIsolated(runtime(true));
-  var isolatedResult = withoutBackendSourceFields(isolatedRun.result);
-  var legacyResult = withoutBackendSourceFields(legacyRun.result);
-  delete isolatedResult.captureElapsedMs;
-  isolatedResult.comments.forEach(function (comment) { delete comment.commentId; });
-  legacyResult.comments.forEach(function (comment) { delete comment.commentId; });
-  assert.deepEqual(isolatedResult, legacyResult);
-  assert.deepEqual(isolatedRun.events.map(function (event) { return event.stage; }), legacyRun.events.map(function (event) { return event.stage; }));
-  assert.deepEqual([isolatedRun.result.commentSwipeCount, isolatedRun.result.commentPageCount], [5, 6]);
+  assert.deepEqual(run.events.map(function (event) { return event.stage; }), [
+    "CAPTURING_COMMENTS", "COMMENT_PAGE_CAPTURED", "SWIPING_COMMENTS",
+    "CAPTURING_COMMENTS", "COMMENT_PAGE_CAPTURED", "SWIPING_COMMENTS",
+    "CAPTURING_COMMENTS", "COMMENT_PAGE_CAPTURED", "SWIPING_COMMENTS",
+    "CAPTURING_COMMENTS", "COMMENT_PAGE_CAPTURED", "SWIPING_COMMENTS",
+    "CAPTURING_COMMENTS", "COMMENT_PAGE_CAPTURED", "SWIPING_COMMENTS",
+    "CAPTURING_COMMENTS", "COMMENT_PAGE_CAPTURED", "COMMENTS_CAPTURED"
+  ]);
+  assert.deepEqual(run.events.filter(function (event) { return event.stage === "COMMENT_PAGE_CAPTURED"; })
+    .map(function (event) { return [event.pageIndex, event.commentCount, event.captureCompleted]; }),
+  [[0, 1, false], [1, 2, false], [2, 3, false], [3, 4, false], [4, 5, false], [5, 6, false]]);
+  assert.equal(run.events[run.events.length - 1].captureCompleted, true);
+  assert.deepEqual(run.events[run.events.length - 1].comments, run.result.comments);
 });
 test("empty OCR retries up to the third attempt before continuing through five swipes", function () {
   var reads = 0;
@@ -132,7 +106,7 @@ test("OCR exceptions exhaust three attempts and preserve prior-page candidates",
     "CAPTURING_COMMENTS", "COMMENT_OCR_FAILED", 1]);
   assert.equal(run.result.comments[0].commentText, "已抓到的评论");
 });
-test("missing OCR and swipe capabilities return legacy failure payloads with partial data", function () {
+test("missing OCR and swipe capabilities return failure payloads with partial data", function () {
   var noOcr = runIsolated({ swipeComments: function () { return true; } }).result;
   var noSwipe = runIsolated({ readComments: function () { return { text: "首屏评论" }; } }).result;
   assert.deepEqual({ status: noOcr.status, stage: noOcr.failedStage, reason: noOcr.reasonCode }, {
@@ -226,7 +200,7 @@ test("Task2 verification failure envelope is recognized as platform verification
     ["PLATFORM_VERIFICATION", "滑块验证", 0]);
   assert.deepEqual(run.result.verificationDiagnostics, diagnostics);
 });
-test("custom platform verification failure receives the legacy partial-count details", function () {
+test("custom platform verification failure receives partial-count details", function () {
   var received = null;
   var diagnostics = {
     risk: { signal: "captcha" },
@@ -394,6 +368,59 @@ test("stop checks preserve completed OCR or swipe work and bound later actions",
     waitRandom: function () { stoppedInSwipeWait = true; }
   }, null, { shouldStop: function () { return stoppedInSwipeWait; } }).result;
   assert.deepEqual([swipeWaitStop.status, swipeWaitStop.commentSwipeCount, swipeWaitReads], ["STOPPED", 1, 1]);
+});
+function timedRunner(profile, hooks) {
+  hooks = hooks || {};
+  var clock = 0, reads = 0, swipes = 0, waits = [];
+  var stopped = false;
+  var timing = createTiming({ profile: profile, random: function (min) { return min; },
+    sleep: function (milliseconds) {
+      waits.push(milliseconds); clock += milliseconds;
+      if (hooks.stopDuringWait) stopped = true;
+    } });
+  var runtime = createTimedRuntime({ actionTiming: timing, control: { shouldStop: function () { return stopped; } },
+    actions: {
+      readComments: function () { reads += 1; return { success: true, value: { text: "captured" } }; },
+      swipeComments: function () { swipes += 1; return { success: true, value: { endDetected: !!hooks.endDetected } }; }
+    } });
+  var runnerOptions = { runtime: runtime, maxSwipeCount: 1,
+    now: function () { return clock; }, shouldStop: function () { return stopped; },
+    detectPlatformVerification: function () { return null; } };
+  if (hooks.deadline) runnerOptions.captureDurationMinutes = 1;
+  var result = runnerModule.createCommentCaptureRunner(runnerOptions).capture(SCOPE);
+  return { result: result, reads: reads, swipes: swipes, waits: waits, clock: clock };
+}
+test("timed runtime and runner apply swipe after timing exactly once", function () {
+  var run = timedRunner({ schemaVersion: 1, actions: {
+    swipeComments: { beforeMs: [0, 0], afterMs: [10, 10] }
+  } });
+  assert.deepEqual([run.result.captureStopReason, run.swipes, run.clock], ["SWIPE_LIMIT_REACHED", 1, 10]);
+  assert.deepEqual(run.waits, [10]);
+});
+test("timing deadline prevents a new action without reporting capture failure", function () {
+  var run = timedRunner({ schemaVersion: 1, actions: {
+    readComments: { beforeMs: [60000, 60000], afterMs: [0, 0] }
+  } }, { deadline: true });
+  assert.deepEqual([run.result.captureStopReason, run.result.commentCount, run.reads, run.swipes],
+    ["DURATION_REACHED", 0, 0, 0]);
+});
+test("completed OCR survives an after wait that reaches the deadline", function () {
+  var run = timedRunner({ schemaVersion: 1, actions: {
+    readComments: { beforeMs: [0, 0], afterMs: [60000, 60000] }
+  } }, { deadline: true });
+  assert.deepEqual([run.result.captureStopReason, run.result.commentCount, run.reads, run.swipes],
+    ["DURATION_REACHED", 1, 1, 0]);
+});
+test("completed OCR and swipe survive stop during their after timing", function () {
+  var read = timedRunner({ schemaVersion: 1, actions: {
+    readComments: { beforeMs: [0, 0], afterMs: [100, 100] }
+  } }, { stopDuringWait: true });
+  assert.deepEqual([read.result.status, read.result.commentCount, read.reads], ["STOPPED", 1, 1]);
+  var swipe = timedRunner({ schemaVersion: 1, actions: {
+    readComments: { beforeMs: [0, 0], afterMs: [0, 0] },
+    swipeComments: { beforeMs: [0, 0], afterMs: [100, 100] }
+  } }, { stopDuringWait: true });
+  assert.deepEqual([swipe.result.status, swipe.result.commentCount, swipe.result.commentSwipeCount], ["STOPPED", 1, 1]);
 });
 test("shouldStop, stopped and control aliases stop before any runtime action", function () {
   var actions = 0;

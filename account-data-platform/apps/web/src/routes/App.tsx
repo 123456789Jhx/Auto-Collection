@@ -1,4 +1,4 @@
-import { CloudSyncOutlined, FileTextOutlined, FireOutlined, LockOutlined, LoginOutlined, LogoutOutlined, MobileOutlined, UserOutlined, VideoCameraAddOutlined } from "@ant-design/icons";
+import { CloudSyncOutlined, FileTextOutlined, FireOutlined, LockOutlined, LoginOutlined, LogoutOutlined, MobileOutlined, TeamOutlined, UserOutlined, VideoCameraAddOutlined } from "@ant-design/icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Form, Input, Layout, Menu, Space, Spin, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
@@ -12,6 +12,7 @@ import { TaskSchedulerPage } from "./TaskSchedulerPage";
 import { TasksPage } from "./TasksPage";
 import { UpdateCenterPage } from "./UpdateCenterPage";
 import { RemoteWakePage } from "../features/remote-wake/RemoteWakePage";
+import { DeviceAccountsPage } from "./DeviceAccountsPage";
 
 const { Header, Sider, Content } = Layout;
 
@@ -24,7 +25,8 @@ const pages = {
   publishTasks: { title: "发布任务" },
   updateCenter: { title: "更新中心" },
   logs: { title: "日志中心" },
-  remoteWake: { title: "远程唤醒" }
+  remoteWake: { title: "远程唤醒" },
+  deviceAccounts: { title: "设备账号" }
 };
 
 type PageKey = keyof typeof pages;
@@ -39,6 +41,7 @@ function renderPage(page: PageKey) {
   if (page === "publishTasks") return <PublishTasksPage />;
   if (page === "updateCenter") return <UpdateCenterPage />;
   if (page === "remoteWake") return <RemoteWakePage />;
+  if (page === "deviceAccounts") return <DeviceAccountsPage />;
   return <LogsPage />;
 }
 
@@ -55,6 +58,7 @@ function pageFromPath(): PageKey {
   if (window.location.pathname === "/update-center") return "updateCenter";
   if (window.location.pathname === "/logs") return "logs";
   if (window.location.pathname === "/remote-wake") return "remoteWake";
+  if (window.location.pathname === "/device-accounts") return "deviceAccounts";
   return "publishVideo";
 }
 
@@ -119,6 +123,7 @@ export function App() {
       : nextPage === "publishTasks" ? "/publish-tasks"
       : nextPage === "updateCenter" ? "/update-center"
       : nextPage === "remoteWake" ? "/remote-wake"
+      : nextPage === "deviceAccounts" ? "/device-accounts"
       : nextPage === "logs" ? "/logs" : "/publish-video";
     if (window.location.pathname !== nextPath) {
       window.history.pushState({}, "", nextPath);
@@ -194,7 +199,8 @@ export function App() {
             // LEGACY_FREEZE: 远程脚本与发布任务保留旧 URL，只隐藏独立菜单入口。
             { key: "updateCenter", icon: <CloudSyncOutlined />, label: "更新中心" },
             { key: "logs", icon: <FileTextOutlined />, label: "日志中心" },
-            { key: "remoteWake", icon: <MobileOutlined />, label: "远程唤醒" }
+            { key: "remoteWake", icon: <MobileOutlined />, label: "远程唤醒" },
+            { key: "deviceAccounts", icon: <TeamOutlined />, label: "设备账号" }
           ]}
         />
       </Sider>

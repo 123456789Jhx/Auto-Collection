@@ -6,6 +6,7 @@ import { test } from "bun:test";
 const webRoot = path.resolve(import.meta.dir, "..");
 const appRoute = fs.readFileSync(path.join(webRoot, "src/routes/App.tsx"), "utf8");
 const publishVideoModule = fs.readFileSync(path.join(webRoot, "src/routes/PublishVideoModulePage.tsx"), "utf8");
+const deviceAccountsPagePath = path.join(webRoot, "src/routes/DeviceAccountsPage.tsx");
 const accountBindingControl = fs.readFileSync(
   path.join(webRoot, "src/routes/DeviceAccountBindingControl.tsx"),
   "utf8"
@@ -15,8 +16,13 @@ const deviceList = fs.readFileSync(path.join(webRoot, "src/routes/DeviceList.tsx
 const deviceBindingList = fs.readFileSync(path.join(webRoot, "src/routes/DeviceBindingList.tsx"), "utf8");
 
 test("视频发布提供结构化账号绑定入口", () => {
-  assert(publishVideoModule.includes("DeviceBindingList"));
+  assert(fs.existsSync(deviceAccountsPagePath), "DeviceAccountsPage.tsx should exist");
+  const deviceAccountsPage = fs.readFileSync(deviceAccountsPagePath, "utf8");
+  assert(deviceAccountsPage.includes("DeviceBindingList"));
+  assert(!publishVideoModule.includes("DeviceBindingList"));
   assert(appRoute.includes('key: "publishVideo"'));
+  assert(appRoute.includes('key: "deviceAccounts"'));
+  assert(appRoute.includes('window.location.pathname === "/device-accounts"'));
   assert(!appRoute.includes('key: "devices"'));
   assert(accountBindingControl.includes("抖音号 ID"));
   assert(accountBindingControl.includes("抖音账号名称"));
@@ -46,7 +52,19 @@ test("视频发布绑定页显示匹配账号或未绑定", () => {
 });
 
 test("独立设备页已移除但发布账号绑定能力保留", () => {
+  assert(fs.existsSync(deviceAccountsPagePath), "DeviceAccountsPage.tsx should exist");
+  const deviceAccountsPage = fs.readFileSync(deviceAccountsPagePath, "utf8");
   assert(!appRoute.includes("DevicesPage"));
-  assert(publishVideoModule.includes('label: "设备账号"'));
+  assert(!publishVideoModule.includes('label: "设备账号"'));
+  assert(deviceAccountsPage.includes("DeviceBindingList"));
   assert(deviceBindingList.includes("DeviceAccountBindingControl"));
+});
+
+test("设备账号在左侧菜单中位于远程唤醒下方", () => {
+  const menuItems = appRoute.match(/items=\{\[([\s\S]*?)\]\}/)?.[1] ?? "";
+  const remoteWakeIndex = menuItems.indexOf('key: "remoteWake"');
+  const deviceAccountsIndex = menuItems.indexOf('key: "deviceAccounts"');
+
+  assert(remoteWakeIndex >= 0);
+  assert(deviceAccountsIndex > remoteWakeIndex);
 });

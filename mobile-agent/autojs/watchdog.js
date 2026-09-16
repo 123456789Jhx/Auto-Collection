@@ -100,13 +100,29 @@ function loadConfig() {
   config.runtime.scriptDir = SCRIPT_DIR;
   config.output = config.output || {};
   function ensureWritableDir(dirPath) {
+    var stamp = new Date().getTime() + "-" + Math.floor(Math.random() * 1000000);
+    var probePath = files.join(dirPath, ".write-probe-" + stamp);
+    var payload = "probe-" + stamp;
     try {
-      files.createWithDirs(files.join(dirPath, ".write-test"));
-      files.remove(files.join(dirPath, ".write-test"));
-      return true;
-    } catch (error) {
+      // createWithDirs 在失败时返回 false 而不抛异常，必须同时判断返回值
+      if (files.createWithDirs(probePath) === false) {
+        return false;
+      }
+    } catch (createError) {
       return false;
     }
+    var writable = false;
+    try {
+      files.write(probePath, payload);
+      writable = String(files.read(probePath)) === String(payload);
+    } catch (writeError) {
+      writable = false;
+    }
+    try {
+      files.remove(probePath);
+    } catch (removeError) {
+    }
+    return writable;
   }
   function resolveOutputBaseDir() {
     if (config.output.fixedBaseDir) {

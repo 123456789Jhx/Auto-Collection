@@ -1,6 +1,5 @@
 import { Tabs, Typography } from "antd";
 import { useState } from "react";
-import { DeviceBindingList } from "./DeviceBindingList";
 import { PublishExecutionSettingsPage } from "./PublishExecutionSettingsPage";
 import { PublishPastePage } from "./PublishPastePage";
 import { PublishSchedulesPage } from "./PublishSchedulesPage";
@@ -45,11 +44,6 @@ export function PublishVideoModulePage() {
             label: "发布设置",
             children: <PublishExecutionSettingsPage />
           },
-          {
-            key: "device-binding",
-            label: "设备账号",
-            children: <DeviceBindingList />
-          }
         ]}
       />
     </div>

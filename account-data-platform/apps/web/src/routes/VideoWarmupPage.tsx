@@ -13,6 +13,7 @@ import {
 import {
   buildVideoWarmupCommands,
   buildVideoWarmupStopCommands,
+  deviceReportedVideoWarmupRunId,
   dispatchAccountWarmupCommands,
   dispatchAccountWarmupStops,
   readActiveVideoWarmupBatchId,
@@ -85,9 +86,23 @@ export function VideoWarmupPage() {
     command.payloadJson?.featureKey === "video_warmup" &&
     command.payloadJson?.batchId === activeBatchId), [activeBatchId, commands]);
   const stateFor = (row: VideoWarmupRow) => {
-    const restored = resolveVideoWarmupCommandState(row, videoStopCommands, activeBatchId);
     const device = devices.find((item) => item.id === row.deviceId);
-    if (device && !isAgentCommandChannelOpen(device) && !["stopped", "failed", "completed", "expired"].includes(restored.key)) {
+    const restored = resolveVideoWarmupCommandState(
+      row,
+      videoStopCommands,
+      activeBatchId,
+      Date.now(),
+      // 显式构造参数，避免 DeviceRow 的其他字段影响弱类型推断。
+      deviceReportedVideoWarmupRunId(device ? { latestHeartbeat: device.latestHeartbeat ?? null } : null)
+    );
+    // 设备心跳仍在上报这条任务时不能显示成“Agent 已停止”，
+    // 否则会丢掉停止入口（手机还在跑，前端却无法停止）。
+    if (
+      device &&
+      !isAgentCommandChannelOpen(device) &&
+      restored.key !== "device_still_running" &&
+      !["stopped", "failed", "completed", "expired"].includes(restored.key)
+    ) {
       return { key: "agent_disconnected", label: "Agent 已停止", color: "default", active: false };
     }
     return stoppingCommandIds.has(row.id) && restored.active

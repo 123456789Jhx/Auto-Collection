@@ -4,6 +4,7 @@ import {
   accountWarmupStopPayloadSchema,
   videoWarmupStopPayloadSchema,
 } from "../domain/account-warmup";
+import { commentActionTimingSchema } from "../domain/comment-action-timing";
 
 export const adminLoginSchema = z.object({
   username: z.string().trim().min(1),
@@ -147,6 +148,34 @@ export const p3ExtensionsConfigSchema = z
 
 export type P3ExtensionsConfigPayload = z.infer<typeof p3ExtensionsConfigSchema>;
 
+export const deviceProfileCaptureSchema = z
+  .object({
+    bringSelfToForeground: z.boolean().optional(),
+    foregroundWaitMs: z.number().int().min(0).max(60000).optional(),
+    useWorkerThread: z.boolean().optional(),
+    timeoutMs: z.number().int().min(1000).max(600000).optional()
+  })
+  .strict();
+
+// 设备画像覆盖：手机端按机型调整运行时行为，服务端取值优先于 APK 内置画像。
+// 字段与 mobile-agent/autojs/device-profiles.js 的 DEFAULT_VALUES 一一对应，
+// 这里用 strict 是为了让写错的字段名直接 400，而不是被静默忽略。
+export const deviceProfileOverrideSchema = z
+  .object({
+    capture: deviceProfileCaptureSchema.optional(),
+    openDouyinWaitMs: z
+      .tuple([z.number().int().min(0).max(600000), z.number().int().min(0).max(600000)])
+      .refine(([min, max]) => max >= min, {
+        message: "openDouyinWaitMs max must be greater than or equal to min",
+        path: [1]
+      })
+      .optional(),
+    outputRoots: z.array(z.string().trim().min(1).max(200)).max(10).optional(),
+    nodeQueryGraceMs: z.number().int().min(0).max(60000).optional(),
+    commentActionTiming: commentActionTimingSchema.optional()
+  })
+  .strict();
+
 export const updateTaskSchema = z
   .object({
     videoMinutesMin: z.number().int().min(120).optional(),
@@ -181,8 +210,19 @@ export const updateDeviceTaskConfigSchema = z.intersection(
     followedAccountId: z.string().trim().max(100).nullable().optional(),
     followedAliases: z.array(z.string().trim().min(1).max(100)).max(20).nullable().optional(),
     liveCommentMode: liveCommentModeSchema.optional(),
-    liveCommentBotConfig: z.record(z.unknown()).nullable().optional()
+    liveCommentBotConfig: z.record(z.unknown()).nullable().optional(),
+    deviceProfile: deviceProfileOverrideSchema.nullable().optional(),
+    expectedUpdatedAt: z.string().datetime().nullable().optional()
   })
+    .superRefine((value, context) => {
+      if (value.deviceProfile !== undefined && value.expectedUpdatedAt === undefined) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["expectedUpdatedAt"],
+          message: "expectedUpdatedAt is required when updating deviceProfile"
+        });
+      }
+    })
 );
 
 export type UpdateDeviceTaskConfigPayload = z.infer<typeof updateDeviceTaskConfigSchema>;

@@ -1,8 +1,24 @@
 function ensureDir(dirPath) {
-  if (!files.exists(dirPath)) {
-    files.createWithDirs(dirPath + "/.keep");
-    files.remove(dirPath + "/.keep");
+  if (!dirPath) {
+    console.log("[WARN] ensureDir 跳过：目录路径为空");
+    return false;
   }
+  try {
+    if (files.exists(dirPath)) {
+      return true;
+    }
+    // createWithDirs 失败时可能返回 false，也可能抛异常，两者都必须兜住，
+    // 否则未捕获异常会中断整个脚本引擎。
+    if (files.createWithDirs(dirPath + "/.keep") === false) {
+      console.log("[WARN] ensureDir 失败：" + dirPath);
+      return false;
+    }
+    files.remove(dirPath + "/.keep");
+  } catch (error) {
+    console.log("[WARN] ensureDir 失败：" + dirPath + " -> " + error);
+    return false;
+  }
+  return true;
 }
 
 function pad(value) {
@@ -28,9 +44,25 @@ function timePart(date) {
 function createLogger(config) {
   var logFile = "";
   var repeatState = {};
-  if (config.output.writeLogFile) {
-    ensureDir(config.output.logDir);
+  var fileLoggingDisabled = false;
+  if (config.output.writeLogFile && !ensureDir(config.output.logDir)) {
+    fileLoggingDisabled = true;
+    console.log("[WARN] 日志目录不可用，本次运行仅输出控制台日志");
+  }
+  if (config.output.writeLogFile && !fileLoggingDisabled && config.output.logDir) {
     logFile = buildLogFile(new Date());
+  }
+
+  function fileLoggingEnabled() {
+    if (!config.output.writeLogFile || fileLoggingDisabled) {
+      return false;
+    }
+    if (!config.output.logDir) {
+      fileLoggingDisabled = true;
+      console.log("[WARN] 日志目录为空，本次运行仅输出控制台日志");
+      return false;
+    }
+    return true;
   }
 
   function buildLogFile(date) {
@@ -141,10 +173,15 @@ function createLogger(config) {
       }
     }
     console.log(line);
-    if (config.output.writeLogFile) {
-      currentLogFile(now);
-      rotateLogIfNeeded();
-      files.append(logFile, line + "\n");
+    if (fileLoggingEnabled()) {
+      try {
+        currentLogFile(now);
+        rotateLogIfNeeded();
+        files.append(logFile, line + "\n");
+      } catch (fileError) {
+        fileLoggingDisabled = true;
+        console.log("[WARN] 日志文件写入失败，已降级为仅控制台日志：" + fileError);
+      }
     }
   }
 

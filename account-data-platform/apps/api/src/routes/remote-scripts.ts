@@ -2,7 +2,6 @@ import {
   agentUpdateEventListQuerySchema,
   agentVersionChannelSchema,
   agentVersionListQuerySchema,
-  buildBizScriptReleaseSchema,
   createRemoteScriptConfigSchema,
   createAgentVersionSchema,
   remoteScriptDeviceBindingPayloadSchema,
@@ -31,7 +30,9 @@ import {
   publishAgentVersion
 } from "../services/agent-version.service";
 import { z } from "zod";
-import { BizScriptBuildError, bizScriptReleaseService, listBizScriptFiles } from "../services/biz-script-release.service";
+import { listBizScriptFiles } from "../services/biz-script-release.service";
+import { createBizScriptWorkspaceRoutes } from "./biz-script-workspace";
+import { bizScriptWorkspaceService } from "../services/biz-script-workspace.production";
 
 type AdminContext = Context<{ Variables: AdminVariables }>;
 
@@ -56,6 +57,7 @@ function remoteScriptErrorResponse(c: AdminContext, error: unknown) {
 }
 
 export const remoteScriptConfigRoutes = new Hono<{ Variables: AdminVariables }>();
+remoteScriptConfigRoutes.route("/", createBizScriptWorkspaceRoutes(bizScriptWorkspaceService));
 
 remoteScriptConfigRoutes.get("/releases", async (c) => {
   const parsed = agentVersionListQuerySchema.safeParse(c.req.query());
@@ -74,19 +76,6 @@ remoteScriptConfigRoutes.post("/releases", async (c) => {
     return c.json({
       error: { code: error.message, message: error.userMessage, details: error.details }
     }, 409);
-  }
-});
-
-remoteScriptConfigRoutes.post("/releases/build", async (c) => {
-  const parsed = buildBizScriptReleaseSchema.safeParse(await c.req.json());
-  if (!parsed.success) return validationError(c, parsed.error);
-  try {
-    return c.json(await bizScriptReleaseService.build(parsed.data), 201);
-  } catch (error) {
-    if (!(error instanceof BizScriptBuildError)) throw error;
-    return c.json({
-      error: { code: error.message, message: error.userMessage, details: error.details }
-    }, error.message === "BUILD_IN_PROGRESS" ? 409 : 500);
   }
 });
 

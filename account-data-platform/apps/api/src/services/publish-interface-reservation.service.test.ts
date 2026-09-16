@@ -13,6 +13,7 @@ function candidate(index: number): InterfacePublishReservationCandidate {
     deviceCode: `device-${String(index).padStart(2, "0")}`,
     accountName: `账号-${index}`,
     accountNo: String(10000 + index),
+    externalAccountKey: `external-${index}`,
     noMaterialRetryMinutes: 10,
     nextReservationRetryAt: null
   };

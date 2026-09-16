@@ -1366,16 +1366,22 @@ function createCollectorApp(context) {
           sleep(Math.min(config.runtime.agentIdleLoopMs || 1000, 300));
         }
       } catch (error) {
-        logger.error("Agent 主循环异常", { message: String(error) });
-        floatyControl.update({
-          running: false,
-          paused: true,
-          stopRequested: false,
-          lastMessage: "Agent异常，待命中"
-        });
-        runBackground("Agent 异常心跳上报", function () {
-          heartbeatService.reportImmediateHeartbeat(counters.currentPhase, "error", "Agent异常，待命中");
-        });
+        // 异常处理本身绝不能再抛出：logger 或上报一旦抛异常就会从 catch 逃逸，
+        // 冲出 idleLoop 与 main()，导致整个 Agent 引擎静默死亡。
+        try {
+          logger.error("Agent 主循环异常", { message: String(error) });
+          floatyControl.update({
+            running: false,
+            paused: true,
+            stopRequested: false,
+            lastMessage: "Agent异常，待命中"
+          });
+          runBackground("Agent 异常心跳上报", function () {
+            heartbeatService.reportImmediateHeartbeat(counters.currentPhase, "error", "Agent异常，待命中");
+          });
+        } catch (handlerError) {
+          console.info("[WARN] agent_loop_handler_failed error=" + String(handlerError));
+        }
         sleep(1000);
       }
     }

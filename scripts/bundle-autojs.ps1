@@ -4,17 +4,19 @@ param(
   [string]$OutputDir = "",
   [string[]]$Files = $null,
   [string]$BaseVersion = "",
-  [string]$BaseManifestPath = ""
+  [string]$BaseManifestPath = "",
+  [string]$BaselineManifestPath = ""
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "biz-script-manifest.ps1")
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $sourceRoot = Join-Path $repoRoot "mobile-agent\autojs"
 $projectPath = Join-Path $sourceRoot "project.json"
 $project = Get-Content -Raw -Encoding UTF8 -LiteralPath $projectPath | ConvertFrom-Json
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-  $Version = [string]$project.versionName
+  $Version = [DateTime]::UtcNow.ToString("yyyyMMdd.HHmmssfff")
 }
 if ([string]::IsNullOrWhiteSpace($Version)) {
   throw "Biz script version is required."
@@ -29,6 +31,13 @@ if ([string]::IsNullOrWhiteSpace($PackageBaseUrl)) {
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
   $OutputDir = Join-Path $repoRoot "account-data-platform\apps\api\dist\agent"
 }
+if ([string]::IsNullOrWhiteSpace($BaselineManifestPath)) {
+  $BaselineManifestPath = [string]$env:BIZ_SCRIPT_BASELINE_MANIFEST
+}
+if ([string]::IsNullOrWhiteSpace($BaselineManifestPath)) {
+  $BaselineManifestPath = Join-Path $repoRoot "dist\apk\biz-script-baseline.json"
+}
+$apkBaseline = Assert-BizScriptBuildBaseline -SourceRoot $sourceRoot -BaselineManifestPath $BaselineManifestPath -Version $Version
 
 $roots = @("features", "domain")
 foreach ($rootName in $roots) {
@@ -216,6 +225,7 @@ $deltaFiles = @($sourceFiles | ForEach-Object { New-ManifestFile $_ })
 $manifestFiles = $deltaFiles
 if ($selectionProvided) {
   $baseManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $BaseManifestPath | ConvertFrom-Json
+  Assert-BizScriptPartialBaseline -Manifest $baseManifest -ApkBaseline $apkBaseline -BaseVersion $BaseVersion
   if ($baseManifest.version -ne $BaseVersion -or $baseManifest.channel -ne "biz-scripts" -or
     $baseManifest.mode -eq "partial" -or -not $baseManifest.files) {
     throw "Base manifest must be a complete biz-scripts manifest for $BaseVersion."
@@ -241,8 +251,11 @@ if ($selectionProvided) {
 }
 
 $embeddedManifest = [ordered]@{
+  schemaVersion = 2
   version = $Version
   channel = "biz-scripts"
+  baseCompatibilityId = $apkBaseline.baseCompatibilityId
+  sourceSha256 = Get-BizScriptFileListHash -Files $manifestFiles
   mode = $mode
   files = $manifestFiles
   entryFile = $entryFile
@@ -278,8 +291,11 @@ $zipHash = Get-Sha256Hex $zipPath
 $zipFileName = Split-Path -Leaf $zipPath
 $encodedZipName = Convert-ToEncodedPath $zipFileName
 $externalManifest = [ordered]@{
+  schemaVersion = 2
   version = $Version
   channel = "biz-scripts"
+  baseCompatibilityId = $embeddedManifest.baseCompatibilityId
+  sourceSha256 = $embeddedManifest.sourceSha256
   mode = $mode
   files = $manifestFiles
   entryFile = $entryFile

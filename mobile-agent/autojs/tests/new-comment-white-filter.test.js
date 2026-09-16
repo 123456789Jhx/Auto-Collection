@@ -70,7 +70,11 @@ test("runtime sends only the near-white comment mask to OCR", function () {
     screenSize: { width: 1080, height: 2248 },
     captureScreen: function () { return snapshot; },
     images: {
-      clip: function () { return clip; },
+      clip: function (input, x, y, width, height) {
+        assert.strictEqual(input, snapshot);
+        assert.deepEqual([x, y, width, height], [12, 1556, 763, 327]);
+        return clip;
+      },
       cvtColor: function () { return hsv; },
       inRange: function () { return mask; }
     },

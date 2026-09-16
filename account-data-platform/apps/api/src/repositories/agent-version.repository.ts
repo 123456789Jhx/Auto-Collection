@@ -5,6 +5,7 @@ import { config } from "../config";
 import { db } from "./db";
 
 export async function createAgentVersion(values: typeof agentVersions.$inferInsert) {
+  if (values.channel === "biz-scripts") throw new Error("SCOPED_RELEASE_REQUIRED");
   const [version] = await db.insert(agentVersions).values(values).returning();
   return version;
 }
@@ -55,7 +56,7 @@ export async function findLatestPublishedAgentVersion(channel = "stable") {
 
 export async function createAgentUpdateEvent(values: typeof agentUpdateEvents.$inferInsert) {
   const [event] = await db.insert(agentUpdateEvents).values(values).returning();
-  if (values.deviceId) {
+  if (values.deviceId && values.payloadJson?.channel !== "biz-scripts") {
     const patch: Partial<typeof collectorDevices.$inferInsert> = {
       targetVersion: values.toVersion,
       updateStatus: values.eventType,

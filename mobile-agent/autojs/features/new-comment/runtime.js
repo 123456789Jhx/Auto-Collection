@@ -8,7 +8,9 @@ var defaultAccessibility = require("../../core/accessibility.js");
 var cartDetector = require("./commerce-cart-detector.js");
 var anchorProfile = require("./anchor-profile.js");
 var commentWhiteFilter = require("./comment-white-filter.js");
-
+var createActionTiming = require("./action-timing.js").createActionTiming;
+var createCommentNavigation = require("./navigation.js").createCommentNavigation;
+var createTimedRuntimeActions = require("./timed-runtime-actions.js").createTimedRuntimeActions;
 function createIsolatedRuntime(context, options) {
   context = context || {};
   options = options || {};
@@ -128,7 +130,14 @@ function createIsolatedRuntime(context, options) {
       }
     }
   }, layout);
-
+  var actionTimingProfile = context.deviceProfile && context.deviceProfile.values && context.deviceProfile.values.commentActionTiming;
+  var actionTiming = createActionTiming({ getProfile: function () { var values = context.deviceProfile && context.deviceProfile.values;
+    return values && typeof values === "object" ? values.commentActionTiming || null : actionTimingProfile; },
+    openDouyinFallback: openDouyinWaitRange, logger: logger, random: randomAdapter, sleep: sleepAdapter,
+    allowMissingSleep: typeof options.sleep !== "function" && typeof context.sleep !== "function" && typeof sleep !== "function" });
+  var navigation = options.navigation || (typeof app !== "undefined" && app &&
+    typeof app.launchPackage === "function" ? createCommentNavigation({ screenSize: screenSize, random: randomAdapter,
+      sleep: sleepAdapter, shouldStop: stopped, logger: logger, driver: resolveGestureDriver, config: context.config || {} }) : null);
   function selectorFrom(description) {
     if (!description) return null;
     if (typeof options.createSelector === "function") return options.createSelector(description);
@@ -286,9 +295,15 @@ function createIsolatedRuntime(context, options) {
     return envelope(raw, reason, name + " failed");
   }
 
-  function openDouyin() {
-    return invoke("openDouyin", douyin, douyin.openApp || douyin.openDouyin || options.openDouyin, []);
-  }
+  function openDouyin() { var owner = navigation || douyin; return invoke("openDouyin", owner,
+    navigation ? navigation.openDouyin : douyin.openApp || douyin.openDouyin || options.openDouyin, []); }
+
+  var DEFAULT_OPEN_DOUYIN_WAIT_MS = [5000, 7000];
+
+  function openDouyinWaitRange() { var profile = context.deviceProfile, helper = context.deviceProfiles;
+    if (!profile || !helper || typeof helper.pickWaitRange !== "function") return DEFAULT_OPEN_DOUYIN_WAIT_MS.slice();
+    try { return helper.pickWaitRange(profile.values && profile.values.openDouyinWaitMs, DEFAULT_OPEN_DOUYIN_WAIT_MS); }
+    catch (error) { return DEFAULT_OPEN_DOUYIN_WAIT_MS.slice(); } }
 
   function openSearch(keyword, activeControl) {
     var search = options.openSearch || (options.fastSearch && options.fastSearch.openSearch) || douyin.openSearch;
@@ -305,6 +320,7 @@ function createIsolatedRuntime(context, options) {
   }
 
   function openLiveTab() {
+    if (navigation) return invoke("openLiveTab", navigation, navigation.openLiveTab, []);
     if (typeof douyin.openLiveTab === "function") return invoke("openLiveTab", douyin, douyin.openLiveTab, []);
     trace("openLiveTab");
     var descriptions = layout.SELECTOR_DESCRIPTIONS.liveTab || [];
@@ -318,6 +334,7 @@ function createIsolatedRuntime(context, options) {
   }
 
   function openFirstLive() {
+    if (navigation) return invoke("openFirstLive", navigation, navigation.openFirstLive, []);
     if (typeof douyin.clickFirstLiveByRandomArea === "function") return invoke(
       "openFirstLive", douyin, douyin.clickFirstLiveByRandomArea, [control], "CLICK_FAILED");
     if (typeof douyin.openFirstLive === "function") return invoke(
@@ -501,9 +518,10 @@ function createIsolatedRuntime(context, options) {
   function swipeComments() {
     trace("swipeComments");
     if (stopped()) return contract.stopped();
-    log("info", "评论区下滑并保持开始", { holdMs: 2000, coordinates: commentCapture.commentSwipeCoordinates(screenSize()) });
-    var result = commentCapture.swipeAndCheckEnd({ driver: resolveGestureDriver(),
-      screenSize: screenSize(), captureScreen: captureScreenFn, images: imageApi,
+    var size = screenSize(), coordinates = commentCapture.commentSwipeCoordinates(size, randomAdapter);
+    log("info", "评论区下滑并保持开始", { holdMs: 2000, coordinates: coordinates });
+    var result = commentCapture.swipeAndCheckEnd({ driver: resolveGestureDriver(), coordinates: coordinates,
+      screenSize: size, captureScreen: captureScreenFn, images: imageApi,
       ocrEngine: ocrEngine, shouldStop: stopped, sleep: sleepAdapter });
     log(result.success ? "info" : "error", "评论历史到底提示检查完成", result);
     return result;
@@ -512,6 +530,7 @@ function createIsolatedRuntime(context, options) {
     trace("nextLive");
     log("info", "抓取评论词动作开始", { action: "nextLive", source: "douyin.nextVideo" });
     if (stopped()) return contract.stopped();
+    if (navigation) return invoke("nextLive", navigation, navigation.nextLive, []);
     if (!douyin || typeof douyin.nextVideo !== "function") {
       var missing = contract.failure(contract.REASON.DEPENDENCY_MISSING, "douyin.nextVideo dependency missing");
       log("error", "抓取评论词动作完成", { action: "nextLive", source: "douyin.nextVideo", success: false, result: missing });
@@ -568,14 +587,13 @@ function createIsolatedRuntime(context, options) {
     return details;
   }
 
-  return { openDouyin: openDouyin, openSearch: openSearch, restartSearch: restartSearch,
-    openLiveTab: openLiveTab, openFirstLive: openFirstLive, isLiveRoom: isLiveRoom,
-    readViewerCount: readViewerCount, readCommerceCart: readCommerceCart, nextLive: nextLive, readComments: readComments,
-    openAnchorSummary: openAnchorSummary, openAnchorProfile: openAnchorProfile,
-    readRoomIdentity: readRoomIdentity,
-    closeAnchorProfile: closeAnchorProfile,
-    swipeComments: swipeComments, detectPlatformVerification: detectPlatformVerification,
-    waitRandom: waitRandom, getActionTrace: traceSnapshot };
+  return createTimedRuntimeActions({ actionTiming: actionTiming, navigation: navigation,
+    control: control, success: contract.success, actions: { openDouyin: openDouyin,
+      openDouyinWaitRange: openDouyinWaitRange, openSearch: openSearch, restartSearch: restartSearch, openLiveTab: openLiveTab, openFirstLive: openFirstLive,
+      isLiveRoom: isLiveRoom, readViewerCount: readViewerCount, readCommerceCart: readCommerceCart, nextLive: nextLive, readComments: readComments,
+      openAnchorSummary: openAnchorSummary, openAnchorProfile: openAnchorProfile, readRoomIdentity: readRoomIdentity,
+      closeAnchorProfile: closeAnchorProfile, swipeComments: swipeComments, detectPlatformVerification: detectPlatformVerification,
+      waitRandom: waitRandom, getActionTrace: traceSnapshot } });
 }
 
 module.exports = { createIsolatedRuntime: createIsolatedRuntime };

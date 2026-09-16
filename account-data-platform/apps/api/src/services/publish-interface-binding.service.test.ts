@@ -18,6 +18,7 @@ function row(overrides: Partial<InterfacePublishBindingRow> = {}): InterfacePubl
     bindingId: crypto.randomUUID(),
     accountName: "开心幸福一家人",
     accountNo: "41218954470",
+    externalAccountKey: `external-${overrides.deviceCode ?? "test-account"}`,
     bindingEnabled: true,
     activeAssignmentId: null,
     ...overrides
@@ -36,6 +37,7 @@ function fakeRepository(initial: InterfacePublishBindingRow[]) {
         bindingId: null,
         accountName: null,
         accountNo: null,
+        externalAccountKey: null,
         bindingEnabled: null
       });
     },
@@ -56,6 +58,7 @@ function fakeRepository(initial: InterfacePublishBindingRow[]) {
         bindingId: existing.bindingId ?? crypto.randomUUID(),
         accountName: input.accountName,
         accountNo: input.accountNo,
+        externalAccountKey: input.externalAccountKey,
         bindingEnabled: input.enabled
       });
       return existing;
@@ -66,6 +69,7 @@ function fakeRepository(initial: InterfacePublishBindingRow[]) {
       existing.bindingId = null;
       existing.accountName = null;
       existing.accountNo = null;
+      existing.externalAccountKey = null;
       existing.bindingEnabled = null;
       return { deviceCode };
     }
@@ -81,6 +85,7 @@ describe("interface publish binding service", () => {
       bindingId: null,
       accountName: null,
       accountNo: null,
+      externalAccountKey: null,
       bindingEnabled: null
     });
     const fake = fakeRepository([first, second]);
@@ -89,16 +94,19 @@ describe("interface publish binding service", () => {
     await expect(service.save("device-02", {
       accountName: " 开心幸福一家人 ",
       accountNo: " 41218954470 ",
+      externalAccountKey: " external-device-01 ",
       enabled: true
     }, "admin")).rejects.toBeInstanceOf(PublishInterfaceBindingServiceError);
 
     await service.save("device-01", {
       accountName: "新的账号",
       accountNo: "90001",
+      externalAccountKey: " external-90001 ",
       enabled: true
     }, "admin");
     expect(fake.rows.filter((item) => item.deviceCode === "device-01" && item.bindingEnabled)).toHaveLength(1);
     expect(fake.rows[0]?.accountName).toBe("新的账号");
+    expect(fake.rows[0]?.externalAccountKey).toBe("external-90001");
   });
 
   test("returns incomplete, offline, busy, unbound and matched without phone verification", async () => {
@@ -106,7 +114,7 @@ describe("interface publish binding service", () => {
       row({ deviceCode: "incomplete", accountName: "账号-incomplete", accountNo: null }),
       row({ deviceCode: "offline", accountName: "账号-offline", lastHeartbeatAt: new Date("2026-08-06T01:50:00.000Z") }),
       row({ deviceCode: "busy", accountName: "账号-busy", activeAssignmentId: crypto.randomUUID() }),
-      row({ deviceCode: "unbound", bindingId: null, accountName: null, accountNo: null, bindingEnabled: null }),
+      row({ deviceCode: "unbound", bindingId: null, accountName: null, accountNo: null, externalAccountKey: null, bindingEnabled: null }),
       row({ deviceCode: "matched", accountName: "账号-matched" })
     ]);
     const service = createPublishInterfaceBindingService(
@@ -130,6 +138,7 @@ describe("interface publish binding service", () => {
     await expect(service.save("device-01", {
       accountName: " ",
       accountNo: "41218954470",
+      externalAccountKey: "external-41218954470",
       enabled: true
     }, "admin")).rejects.toMatchObject({ code: "BINDING_INCOMPLETE" });
   });

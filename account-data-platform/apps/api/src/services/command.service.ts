@@ -16,12 +16,14 @@ import {
   findBaseCommandForAck,
   findMobileCommandByIdempotencyKey,
   claimPendingCommandByDeviceId,
+  finalizeAbandonedVideoWarmupRun,
   finalizePendingVideoWarmupRun,
   ignorePendingCommandsByDeviceId,
   listMobileCommands,
   updateClaimedBaseCommandStatus
 } from "../repositories/command.repository";
 import { findLatestHeartbeatByDeviceId } from "../repositories/heartbeat.repository";
+import { acknowledgeCommentTimingRunning, claimCommentTimingRefresh } from "../repositories/comment-timing-command.repository";
 import { findDeviceByCode, markDeviceCommandIssued, resolveDeviceByToken, updateDesiredAgentState } from "../repositories/device.repository";
 import { findTaskByCode } from "../repositories/task.repository";
 import {
@@ -50,6 +52,18 @@ export class BaseCommandAckConflictError extends Error {
 
   constructor(details: Record<string, unknown>) {
     super("BASE_COMMAND_ACK_CONFLICT");
+    this.details = details;
+  }
+}
+
+export type VideoWarmupConflictCode = "VIDEO_WARMUP_DEVICE_BUSY" | "VIDEO_WARMUP_DEVICE_REPORTS_ACTIVE_RUN";
+
+export class VideoWarmupConflictError extends Error {
+  readonly details: Record<string, unknown>;
+
+  constructor(code: VideoWarmupConflictCode, details: Record<string, unknown> = {}) {
+    super(code);
+    this.name = "VideoWarmupConflictError";
     this.details = details;
   }
 }
@@ -105,16 +119,31 @@ export async function createCommand(payload: CreateMobileCommandPayload) {
         ? exitAgentAppPayloadSchema.parse(payload.payload ?? {})
       : payload.payload ?? {};
   if (payload.commandType === "ACCOUNT_WARMUP_RUN" && (commandPayload as Record<string, unknown>).featureKey === "video_warmup") {
-    const activeRun = await findActiveVideoWarmupRun(device.id);
-    if (activeRun) throw new Error("VIDEO_WARMUP_DEVICE_BUSY");
     const heartbeat = await findLatestHeartbeatByDeviceId(device.id);
     const reportedRunId = (heartbeat?.rawPayload as Record<string, unknown> | null)?.runId;
     const heartbeatFresh = heartbeat?.reportedAt
       ? Date.now() - heartbeat.reportedAt.getTime() <= 120_000
       : false;
     const heartbeatActive = heartbeat?.status === "running" || heartbeat?.status === "paused";
-    if (heartbeatActive && heartbeatFresh && typeof reportedRunId === "string" && reportedRunId) {
-      throw new Error("VIDEO_WARMUP_DEVICE_REPORTS_ACTIVE_RUN");
+    const deviceReportsActiveRun = heartbeatFresh && heartbeatActive && typeof reportedRunId === "string" && !!reportedRunId;
+
+    // 设备明确在上报某条运行中的任务时，无论库里记录是什么状态都必须拒绝。
+    if (deviceReportsActiveRun) {
+      throw new VideoWarmupConflictError("VIDEO_WARMUP_DEVICE_REPORTS_ACTIVE_RUN", { runId: reportedRunId });
+    }
+
+    const activeRun = await findActiveVideoWarmupRun(device.id);
+    if (activeRun) {
+      const issuedAtMs = activeRun.issuedAt ? new Date(activeRun.issuedAt).getTime() : 0;
+      // 刚下发的命令 agent 可能还没轮询到，绝不能当成孤儿，否则会导致重复下发。
+      const runIsFresh = issuedAtMs > 0 && Date.now() - issuedAtMs < 120_000;
+      if (runIsFresh || !heartbeatFresh) {
+        // 新建中或设备失联，都无法确认是孤儿，保守判忙（记录租约到期后自动失效）。
+        throw new VideoWarmupConflictError("VIDEO_WARMUP_DEVICE_BUSY", { activeCommandId: activeRun.id });
+      }
+      // 设备在线却没有上报这条任务：典型的 agent 掉线/重启遗留的孤儿记录。
+      // 直接终结它，否则设备会被永久判定为忙碌，之后所有下发都会失败。
+      await finalizeAbandonedVideoWarmupRun({ commandId: activeRun.id, reason: "orphan_run_recovered" });
     }
   }
   const videoBatchId = payload.commandType === "VIDEO_WARMUP_STOP"
@@ -145,6 +174,20 @@ export async function createCommand(payload: CreateMobileCommandPayload) {
   }
 
   if (payload.commandType === "VIDEO_WARMUP_STOP") {
+    const heartbeat = await findLatestHeartbeatByDeviceId(device.id);
+    const agentReachable = heartbeat?.reportedAt
+      ? Date.now() - heartbeat.reportedAt.getTime() <= 120_000
+      : false;
+    if (!agentReachable) {
+      // agent 已失联，STOP 命令不可能送达。直接终结活动记录，
+      // 否则设备会被永久判定为忙碌，前端也会一直卡在“停止中”。
+      const abandonedRun = await finalizeAbandonedVideoWarmupRun({
+        deviceId: device.id,
+        batchId: videoBatchId!,
+        reason: "stop_requested_agent_unreachable"
+      });
+      if (abandonedRun) return abandonedRun;
+    }
     const finalizedRun = await finalizePendingVideoWarmupRun(device.id, videoBatchId!);
     if (finalizedRun) return finalizedRun;
   }
@@ -256,7 +299,8 @@ async function resolveCommandDevice(deviceCode: string, deviceToken?: string) {
 
 export async function pollCommands(deviceCode: string, executorType: CommandExecutor, deviceToken?: string) {
   const device = await resolveCommandDevice(deviceCode, deviceToken);
-  const command = await claimPendingCommandByDeviceId(device.id, executorType);
+  const timingRefresh = executorType === "AGENT" ? await claimCommentTimingRefresh(device.id) : null;
+  const command = timingRefresh ?? await claimPendingCommandByDeviceId(device.id, executorType);
   if (!command) return [];
   return [{
     id: command.id,
@@ -354,6 +398,8 @@ function equivalentCommandResult(left: Record<string, unknown> | null, right: Re
 
 export async function acknowledgeCommand(commandId: string, payload: MobileCommandAckPayload, deviceToken?: string) {
   const device = await resolveCommandDevice(payload.deviceId, deviceToken);
+  const timingAck = await acknowledgeCommentTimingRunning(commandId, device.id, payload.status);
+  if (timingAck) return timingAck;
   const result = await acknowledgeTaskAssignmentCommandAtomic({
     commandId,
     deviceId: device.id,

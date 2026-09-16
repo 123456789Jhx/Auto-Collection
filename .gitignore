@@ -47,3 +47,9 @@ tmp-window*.xml
 # Local OS/editor noise
 Thumbs.db
 .DS_Store
+
+# Local debug artifacts (root-level .tmp-*)
+.tmp-*
+
+# Local agent/tool caches and index state
+.ua/

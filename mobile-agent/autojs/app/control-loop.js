@@ -1243,6 +1243,7 @@ function createControlLoop(context) {
     }
     config.runtime.heartbeatMinutes = heartbeatMinutes;
     config.runtime.idleHeartbeatSeconds = Math.max(30, Number(config.runtime.idleHeartbeatSeconds || 60));
+    applyServerDeviceProfile(remoteConfig.deviceProfileOverride);
 
     var appliedConfig = {
       taskId: config.task.taskId,
@@ -1265,7 +1266,10 @@ function createControlLoop(context) {
       commerceCardLiveSendApproved: !!(config.task.commerceCardLiveComment && config.task.commerceCardLiveComment.executeEnabled && config.task.commerceCardLiveComment.manualExecutionApproved),
       liveCommentConfigApplied: !!remoteConfig.liveCommentConfig,
       commerceCardLiveConfigApplied: !!commerceCardLiveComment,
-      p3ExtensionsConfigApplied: !!remoteConfig.p3ExtensionsConfig
+      p3ExtensionsConfigApplied: !!remoteConfig.p3ExtensionsConfig,
+      deviceProfileKey: context.deviceProfile && context.deviceProfile.key || "",
+      deviceProfileSource: context.deviceProfile && context.deviceProfile.source || "",
+      deviceProfileOverrideApplied: !!remoteConfig.deviceProfileOverride
     };
 
     logger.info("后台配置已应用到当前脚本", appliedConfig);
@@ -1276,6 +1280,38 @@ function createControlLoop(context) {
       message: "配置已刷新，下一阶段按新随机区间执行",
       config: appliedConfig
     };
+  }
+
+  // 把服务端下发的设备画像覆盖合并到本地机型画像之上（服务端优先）。
+  // 覆盖为空时重新解析内置画像，保证后台清空配置后设备能恢复默认行为。
+  function applyServerDeviceProfile(serverOverride) {
+    var helper = context.deviceProfiles;
+    if (!helper || typeof helper.resolveDeviceProfile !== "function") {
+      return null;
+    }
+    var override = serverOverride && typeof serverOverride === "object" && !Array.isArray(serverOverride)
+      ? serverOverride
+      : null;
+    var resolved;
+    try {
+      resolved = helper.resolveDeviceProfile({
+        device: typeof device !== "undefined" ? device : null,
+        config: config,
+        serverOverride: override
+      });
+    } catch (error) {
+      logger.warn("设备画像覆盖应用失败，继续使用本地画像", { message: String(error) });
+      return null;
+    }
+    context.deviceProfile = resolved;
+    if (!config.deviceProfile) config.deviceProfile = {};
+    config.deviceProfile.resolved = resolved;
+    logger.info("设备画像已更新", {
+      profileKey: resolved.key,
+      source: resolved.source,
+      hasServerOverride: !!override
+    });
+    return resolved;
   }
 
   function waitWhilePaused() {

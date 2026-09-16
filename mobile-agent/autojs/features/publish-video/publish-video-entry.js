@@ -175,6 +175,9 @@ function createPublishVideoHandler(context, dependencies) {
     postPublishCleanupModule.createDouyinPostPublishCleanup &&
     postPublishCleanupModule.createDouyinPostPublishCleanup({
       logger: logger,
+      context: context,
+      deviceProfile: context.deviceProfile,
+      accessibility: context.accessibility,
       wait: dependencies.postPublishCleanupWait,
       openRecents: dependencies.openRecents,
       findDouyinCard: dependencies.findDouyinRecentsCard,

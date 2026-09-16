@@ -1,9 +1,10 @@
 import { liveRoomCaptures, liveRoomProfiles } from "@pkg/db/schema";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { config } from "../config";
 import { db } from "./db";
 
 export type LiveRoomComment = Record<string, unknown>;
+const PROFILE_TIMEOUT_MS = 5 * 60 * 1000;
 
 export async function upsertLiveRoomCapture(input: {
   batchId: string;
@@ -73,6 +74,18 @@ export async function findLiveRoomCapture(captureId: string) {
 }
 
 export async function findLiveRoomProfile(captureId: string) {
+  await db.update(liveRoomProfiles).set({
+    status: "FAILED",
+    errorMessage: "画像解析超时或服务已重启，请重新解析。",
+    updatedAt: nextProfileUpdatedAt(),
+    updatedBy: "system"
+  }).where(and(
+    eq(liveRoomProfiles.tenantId, config.tenantId),
+    eq(liveRoomProfiles.captureId, captureId),
+    isNull(liveRoomProfiles.deletedAt),
+    inArray(liveRoomProfiles.status, ["PENDING", "RUNNING"]),
+    lt(liveRoomProfiles.updatedAt, new Date(Date.now() - PROFILE_TIMEOUT_MS))
+  ));
   const [row] = await db.select().from(liveRoomProfiles).where(and(
     eq(liveRoomProfiles.tenantId, config.tenantId),
     eq(liveRoomProfiles.captureId, captureId),
@@ -93,6 +106,7 @@ export async function createLiveRoomProfile(input: {
     status: input.status,
     provider: input.provider,
     model: input.model,
+    updatedAt: new Date(),
     createdBy: "admin",
     updatedBy: "admin"
   }).onConflictDoUpdate({
@@ -102,20 +116,36 @@ export async function createLiveRoomProfile(input: {
       provider: input.provider,
       model: input.model,
       errorMessage: null,
-      updatedAt: new Date(),
+      completedAt: null,
+      updatedAt: nextProfileUpdatedAt(),
       updatedBy: "admin"
-    }
+    },
+    setWhere: and(
+      eq(liveRoomProfiles.status, "FAILED"),
+      isNull(liveRoomProfiles.deletedAt)
+    )
   }).returning();
   return row;
 }
 
-export async function updateLiveRoomProfile(captureId: string, values: Partial<typeof liveRoomProfiles["$inferInsert"]>) {
-  const [row] = await db.update(liveRoomProfiles).set({ ...values, updatedAt: new Date() }).where(and(
+export async function updateLiveRoomProfile(
+  captureId: string,
+  values: Partial<typeof liveRoomProfiles["$inferInsert"]>,
+  expectedUpdatedAt?: Date
+) {
+  const [row] = await db.update(liveRoomProfiles).set({ ...values, updatedAt: nextProfileUpdatedAt() }).where(and(
     eq(liveRoomProfiles.tenantId, config.tenantId),
     eq(liveRoomProfiles.captureId, captureId),
-    isNull(liveRoomProfiles.deletedAt)
+    isNull(liveRoomProfiles.deletedAt),
+    expectedUpdatedAt ? eq(liveRoomProfiles.updatedAt, expectedUpdatedAt) : undefined
   )).returning();
   return row ?? null;
+}
+
+function nextProfileUpdatedAt() {
+  // A millisecond-aligned, increasing timestamp also serves as the request ownership token.
+  return sql`greatest(${new Date().toISOString()}::timestamptz,
+    date_trunc('milliseconds', ${liveRoomProfiles.updatedAt}) + interval '1 millisecond')`;
 }
 
 function stringValue(value: unknown) {

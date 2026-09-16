@@ -1,6 +1,7 @@
 "use strict";
 
 var defaultCommentRunner = require("./comment-runner.js");
+var timingDefaults = require("./action-timing.js").DEFAULT_ACTIONS;
 
 function createIsolatedLiveCommentWorkflow(options) {
   options = options || {};
@@ -62,6 +63,12 @@ function createIsolatedLiveCommentWorkflow(options) {
       });
     return result;
   }
+  function legacyTiming(key, side, control, purpose) {
+    if (runtime.actionTiming) return null;
+    var action = timingDefaults[key];
+    var range = action[side === "before" ? "beforeMs" : "afterMs"];
+    return range[1] > 0 ? wait(control, range[0], range[1], purpose) : null;
+  }
 
   function fallbackSleep(min, max) {
     var milliseconds = Math.floor(min + Math.random() * (max - min + 1));
@@ -93,20 +100,20 @@ function createIsolatedLiveCommentWorkflow(options) {
   }
 
   function identifyAndClaimRoom(config, control) {
-    var result = wait(control, 5000, 7000, "点击主播信息前等待");
-    if (result.stopped) return { stopped: true };
+    var result = legacyTiming("openAnchorSummary", "before", control, "点击主播信息前等待");
+    if (result && result.stopped) return { stopped: true };
     result = call("openAnchorSummary", "OPENING_ANCHOR_SUMMARY", [], control);
     if (result.stopped) return { stopped: true };
     if (result.failed) return { failed: true, reasonCode: "ANCHOR_SUMMARY_OPEN_FAILED", message: result.message };
 
-    result = wait(control, 5000, 7000, "点击主播主页前等待");
-    if (result.stopped) return { stopped: true };
+    result = legacyTiming("openAnchorProfile", "before", control, "点击主播主页前等待");
+    if (result && result.stopped) return { stopped: true };
     result = call("openAnchorProfile", "OPENING_ANCHOR_PROFILE", [], control);
     if (result.stopped) return { stopped: true };
     if (result.failed) return { failed: true, reasonCode: "ANCHOR_PROFILE_OPEN_FAILED", message: result.message };
 
-    result = wait(control, 5000, 7000, "主播主页身份 OCR 前等待");
-    if (result.stopped) return { stopped: true };
+    result = legacyTiming("readRoomIdentity", "before", control, "主播主页身份 OCR 前等待");
+    if (result && result.stopped) return { stopped: true };
     var identityRead = call("readRoomIdentity", "READING_ROOM_IDENTITY", [], control);
     var profile = identityRead.failed ? identityRead.value && identityRead.value.details : identityRead.value;
     if (identityRead.stopped) return { stopped: true, identity: profile };
@@ -116,10 +123,8 @@ function createIsolatedLiveCommentWorkflow(options) {
       screenshotPath: profile && profile.screenshotPath || "", message: identityRead.message || ""
     });
 
-    result = wait(control, 5000, 7000, "返回直播间前等待");
-    if (result.stopped) {
-      return { stopped: true, identity: profile };
-    }
+    result = legacyTiming("closeAnchorProfile", "before", control, "返回直播间前等待");
+    if (result && result.stopped) return { stopped: true, identity: profile };
     var closed = call("closeAnchorProfile", "CLOSING_ANCHOR_PROFILE", [], control);
     if (closed.stopped) {
       return { stopped: true, identity: profile };
@@ -213,8 +218,8 @@ function createIsolatedLiveCommentWorkflow(options) {
       var next = call("nextLive", "SWITCHING_LIVE_ROOM", [], control);
       if (next.stopped) return { stopped: true };
       if (next.failed) continue;
-      var settle = wait(control, 7500, 8500, "切换直播间后等待人数/小黄车 OCR");
-      if (settle.stopped) return { stopped: true };
+      var settled = legacyTiming("nextLive", "after", control, "切换直播间后等待识别");
+      if (settled && settled.stopped) return { stopped: true };
     }
     log("error", "抓取评论词直播间人数筛选达到上限", {
       attemptedRoomCount: attempted, maxAttempts: maxAttempts, minViewerCount: minimum,
@@ -244,24 +249,21 @@ function createIsolatedLiveCommentWorkflow(options) {
     result = call("openDouyin", "OPENING_DOUYIN", [], control);
     if (result.stopped) return { status: "STOPPED" };
     if (result.failed) return failure("OPENING_DOUYIN", result.message);
-    result = wait(control, 7000, 7000, "打开抖音后等待");
-    if (result.stopped) return { status: "STOPPED" };
-
+    result = legacyTiming("openDouyin", "after", control, "打开抖音后等待");
+    if (result && result.stopped) return { status: "STOPPED" };
     stage("OPENING_SEARCH", { attempt: 1 });
     stage("INPUT_KEYWORD", { attempt: 1, keyword: keyword });
     result = call("openSearch", "OPENING_SEARCH", [keyword, control], control);
     if (result.stopped) return { status: "STOPPED" };
     if (result.failed) return failure("OPENING_SEARCH", result.message);
-    result = wait(control, 300, 900, "搜索结果加载");
-    if (result.stopped) return { status: "STOPPED" };
-
+    result = legacyTiming("submitSearch", "after", control, "搜索结果加载");
+    if (result && result.stopped) return { status: "STOPPED" };
     stage("OPENING_LIVE_TAB", { attempt: 1 });
     result = call("openLiveTab", "OPENING_LIVE_TAB", [], control);
     if (result.stopped) return { status: "STOPPED" };
     if (result.failed) return failure("OPENING_LIVE_TAB", result.message);
-    result = wait(control, 1000, 3000, "直播标签页加载");
-    if (result.stopped) return { status: "STOPPED" };
-
+    result = legacyTiming("openLiveTab", "after", control, "直播标签页加载");
+    if (result && result.stopped) return { status: "STOPPED" };
     stage("OPENING_FIRST_RESULT", { attempt: 1 });
     log("info", "抓取评论词准备点击第一个直播间", { keyword: keyword });
     result = call("openFirstLive", "OPENING_FIRST_RESULT", [], control);
@@ -334,8 +336,13 @@ function createIsolatedLiveCommentWorkflow(options) {
         commentCount: collectedComments.length, commentSwipeCount: totalSwipeCount, roomProfiles: roomProfiles
       };
       stage("RETURNING_TO_LIVE_ROOM", { roomKey: currentScreening.roomKey });
-      var returnWait = wait(control, 800, 1200, "抓取完成后等待切房");
-      if (returnWait.stopped) return { status: "STOPPED", comments: collectedComments, commentCount: collectedComments.length, roomProfiles: roomProfiles };
+      var finished = typeof runtime.finishRoomCapture === "function"
+        ? call("finishRoomCapture", "WAITING_TO_SWITCH_ROOM", [], control)
+        : wait(control, timingDefaults.finishRoomCapture.afterMs[0],
+          timingDefaults.finishRoomCapture.afterMs[1], "抓取完成后等待切房");
+      if (finished.stopped) return { status: "STOPPED", comments: collectedComments,
+        commentCount: collectedComments.length, roomProfiles: roomProfiles };
+      if (finished.failed) return failure("WAITING_TO_SWITCH_ROOM", finished.message);
       var nextRoom = call("nextLive", "SWITCHING_LIVE_ROOM", [], control);
       if (nextRoom.stopped) return { status: "STOPPED", comments: collectedComments, commentCount: collectedComments.length, roomProfiles: roomProfiles };
       if (nextRoom.failed) {
@@ -343,8 +350,9 @@ function createIsolatedLiveCommentWorkflow(options) {
         nextFailure.roomProfiles = roomProfiles;
         return nextFailure;
       }
-      var roomWait = wait(control, 7500, 8500, "切换直播间后等待人数/小黄车 OCR");
-      if (roomWait.stopped) return { status: "STOPPED", comments: collectedComments, commentCount: collectedComments.length, roomProfiles: roomProfiles };
+      var roomSettled = legacyTiming("nextLive", "after", control, "切换直播间后等待识别");
+      if (roomSettled && roomSettled.stopped) return { status: "STOPPED", comments: collectedComments,
+        commentCount: collectedComments.length, roomProfiles: roomProfiles };
       currentScreening = screenRooms(payload, control);
       rememberProfile(currentScreening);
       if (currentScreening.stopped) return { status: "STOPPED", comments: collectedComments, commentCount: collectedComments.length, roomProfiles: roomProfiles };

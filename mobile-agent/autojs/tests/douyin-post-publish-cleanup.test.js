@@ -40,6 +40,8 @@ test("确认发布成功后等待 30 秒，再通过最近任务清理抖音后�
   ]);
 });
 
+// Xiaomi14 safety and gesture coverage lives in xiaomi14-recents-safety.test.js.
+
 test("返回燎原星火前先执行发布任务终态收口", () => {
   const events = [];
   const cleanup = createDouyinPostPublishCleanup({

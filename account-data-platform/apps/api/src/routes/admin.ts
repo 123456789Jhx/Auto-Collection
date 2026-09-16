@@ -21,7 +21,7 @@ import { z } from "zod";
 import { validationError } from "../lib/validation";
 import { adminAuth, type AdminVariables } from "../middleware/admin-auth";
 import { loginAdmin } from "../services/auth.service";
-import { createCommand, getCommands } from "../services/command.service";
+import { createCommand, getCommands, VideoWarmupConflictError } from "../services/command.service";
 import { clearDeviceToken, deleteDeviceRecord, getDeviceDailyProgress, getDeviceProgressHistory, getDeviceTaskConfig, getDevices, getLiveCommentActions, getLiveCommentDeviceSummary, getLogDates, getLogDeviceSummary, getLogFileDates, getLogFileDetail, getLogFiles, getLogs, getOverview, getRecordDates, getRecordDeviceSummary, getRecords, getTasks, rotateDeviceToken, updateBaseConnectivityThreshold, updateDevice, updateDeviceTaskConfig, updateTaskConfig } from "../services/admin.service";
 import { getAgentVersions, publishAgentVersion } from "../services/agent-version.service";
 import { createTaskAssignmentCommandFromAdmin, createTaskAssignmentFromAdmin, getTaskAssignments } from "../services/task-orchestrator.service";
@@ -210,7 +210,7 @@ adminRoutes.get("/live-room-captures/:captureId/profile/markdown", async (c) => 
   return new Response(markdown, {
     headers: {
       "Content-Type": "text/markdown; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${encodeURIComponent(capture.roomKey)}-用户画像.md"`
+      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`${capture.roomKey}-用户画像.md`)}`
     }
   });
 });
@@ -523,6 +523,17 @@ adminRoutes.post("/mobile-commands", async (c) => {
         error: {
           code: error.message,
           message: "An active EXIT_AGENT_APP command conflicts with this request",
+          details: error.details
+        }
+      }, 409);
+    }
+    if (error instanceof VideoWarmupConflictError) {
+      return c.json({
+        error: {
+          code: error.message,
+          message: error.message === "VIDEO_WARMUP_DEVICE_BUSY"
+            ? "该设备已有进行中的视频养号任务，请先停止后再启动"
+            : "设备仍在上报视频养号运行中，请稍后再试",
           details: error.details
         }
       }, 409);

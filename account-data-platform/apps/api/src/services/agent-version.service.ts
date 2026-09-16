@@ -14,8 +14,9 @@ import {
   listAgentVersions,
   listDevicesWithUpdateEvents
 } from "../repositories/agent-version.repository";
-import { resolveDeviceByToken } from "../repositories/device.repository";
+import { findDeviceByToken, resolveDeviceByToken } from "../repositories/device.repository";
 import { parseOptionalDate } from "../lib/date";
+import { findScopedBizScriptVersion, listBizScriptDevices } from "./biz-script-delivery.service";
 
 function compareVersion(left: string, right: string) {
   const leftParts = left.split(".").map((item) => Number(item) || 0);
@@ -35,9 +36,18 @@ function resolveVersionDevice(deviceId: string, appVersion?: string, deviceToken
   return resolveDeviceByToken({ deviceToken, appVersion, expectedDeviceCode: deviceId });
 }
 
+async function resolveBizScriptDevice(deviceId: string, deviceToken?: string) {
+  if (!deviceToken) throw new Error("DEVICE_TOKEN_REQUIRED");
+  const device = await findDeviceByToken(deviceToken);
+  if (!device) throw new Error("DEVICE_UNREGISTERED");
+  if (!device.enabled) throw new Error("DEVICE_DISABLED");
+  if (device.deviceCode !== deviceId) throw new Error("DEVICE_TOKEN_MISMATCH");
+  return device;
+}
+
 export class AgentVersionServiceError extends Error {
   constructor(
-    code: "VERSION_CONFLICT",
+    readonly code: "VERSION_CONFLICT" | "SCOPED_RELEASE_REQUIRED",
     readonly userMessage: string,
     readonly details: Record<string, unknown> = {}
   ) {
@@ -46,7 +56,11 @@ export class AgentVersionServiceError extends Error {
 }
 
 export async function getAgentVersionCheck(deviceId: string, currentVersion: string, channel = "stable", deviceToken?: string) {
-  const [device, latest] = await Promise.all([resolveVersionDevice(deviceId, currentVersion, deviceToken), findLatestPublishedAgentVersion(channel)]);
+  const isBizScript = channel === "biz-scripts";
+  const device = await (isBizScript ? resolveBizScriptDevice(deviceId, deviceToken)
+    : resolveVersionDevice(deviceId, currentVersion, deviceToken));
+  const latest = await (isBizScript ? findScopedBizScriptVersion(device.id, currentVersion)
+    : findLatestPublishedAgentVersion(channel));
   if (!latest) {
     return {
       deviceId: device.deviceCode,
@@ -82,6 +96,9 @@ export async function getAgentVersions(query?: Partial<AgentVersionListQuery>) {
 }
 
 export async function publishAgentVersion(payload: CreateAgentVersionPayload) {
+  if (payload.channel === "biz-scripts") {
+    throw new AgentVersionServiceError("SCOPED_RELEASE_REQUIRED", "业务脚本请通过目录预览、指定试运行设备和推广流程发布");
+  }
   const existing = await findAgentVersion(payload.channel, payload.version);
   if (existing) return resolveExistingVersion(existing, payload);
   const values = {
@@ -138,6 +155,21 @@ export function getAgentUpdateEvents(query: AgentUpdateEventListQuery) {
 }
 
 export async function getAgentDeviceUpdateStatus(channel: string) {
+  if (channel === "biz-scripts") {
+    const devices = await listBizScriptDevices();
+    const data = devices.map((device) => ({
+      ...device, deviceStatus: device.fresh ? "online" : "offline", updateStatus: device.state,
+      updatedAt: device.lastHeartbeatAt, isCurrent: device.state === "CURRENT"
+    }));
+    const summary = data.reduce((counts, device) => {
+      if (device.isCurrent) counts.applied += 1;
+      else if (device.state === "FAILED" || device.state === "REJECTED") counts.failed += 1;
+      else if (!device.currentVersion) counts.noReport += 1;
+      else counts.pending += 1;
+      return counts;
+    }, { total: data.length, applied: 0, pending: 0, failed: 0, noReport: 0 });
+    return { data, targetVersion: null, summary };
+  }
   const [latest, rows] = await Promise.all([
     findLatestPublishedAgentVersion(channel),
     listDevicesWithUpdateEvents(channel)
@@ -174,11 +206,8 @@ export async function getAgentDeviceUpdateStatus(channel: string) {
 export async function saveAgentUpdateEvent(payload: MobileAgentUpdateEventPayload, deviceToken?: string) {
   const channel = typeof payload.payload?.channel === "string" ? payload.payload.channel : "stable";
   const isBizScriptEvent = channel === "biz-scripts";
-  const device = await resolveVersionDevice(
-    payload.deviceId,
-    isBizScriptEvent ? undefined : payload.fromVersion,
-    deviceToken
-  );
+  const device = await (isBizScriptEvent ? resolveBizScriptDevice(payload.deviceId, deviceToken)
+    : resolveVersionDevice(payload.deviceId, payload.fromVersion, deviceToken));
   const savedVersion = payload.toVersion ? await findAgentVersion(channel, payload.toVersion) : null;
   return createAgentUpdateEvent({
     tenantId: config.tenantId,

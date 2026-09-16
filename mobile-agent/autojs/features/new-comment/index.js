@@ -17,6 +17,9 @@ function createIsolatedLiveCommentEntryTask(context, options) {
   var finalCleanup = options.finalCleanup || options.cleanup ||
     cleanupModule.createDouyinPostPublishCleanup({
       logger: options.logger || context.logger,
+      context: context,
+      deviceProfile: context.deviceProfile,
+      accessibility: context.accessibility,
       cooldownMs: 0,
       isPublishing: function () { return false; }
     });

@@ -1,17 +1,29 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import { createBizScriptReleaseService, runPowerShellBundle } from "./biz-script-release.service";
 
 const paths = {
   bundleScriptPath: "D:/repo/scripts/bundle-autojs.ps1",
   outputDir: "D:/repo/apps/api/dist/agent",
-  packageBaseUrl: "https://api.example.test/downloads/agent"
+  packageBaseUrl: "https://api.example.test/downloads/agent",
+  baselineManifestPath: "D:/repo/dist/apk/biz-script-baseline.json"
 };
-const version = "1.3.11.20260804144731";
+const version = "20260808.020304567";
 const fileName = `AgriVideoCollector-biz-scripts-${version}.zip`;
+const sha256Text = (text: string) => createHash("sha256").update(text).digest("hex");
+const baseline = {
+  schemaVersion: 2, channel: "biz-scripts", version: "20260801.000000000", apkBuildId: "APK-FIXTURE",
+  files: [{ path: "features/example.js", sha256: "a".repeat(64) }],
+  baseFiles: [{ path: "core/helper.js", sha256: "b".repeat(64) }],
+  sourceSha256: sha256Text(`features/example.js:${"a".repeat(64)}`),
+  baseCompatibilityId: sha256Text(`autojs-biz-v2\ncore/helper.js:${"b".repeat(64)}`)
+};
+const now = () => new Date("2026-08-08T02:03:04.000Z");
 
 function manifest(sha256 = "a".repeat(64)) {
   return {
+    ...baseline,
     version,
     channel: "biz-scripts",
     fileName,
@@ -27,10 +39,12 @@ describe("business script build release", () => {
     const calls: Array<[string, unknown]> = [];
     const service = createBizScriptReleaseService({
       paths,
-      getLatestVersion: async () => "1.3.11.20260804144730",
+      now,
+      getLatestVersion: async () => "20260808.020304566",
       runBundle: async (input) => { calls.push(["bundle", input]); },
       readManifest: async (path) => {
         calls.push(["manifest", path]);
+        if (path === paths.baselineManifestPath) return baseline;
         return manifest();
       },
       sha256File: async (path) => {
@@ -44,11 +58,12 @@ describe("business script build release", () => {
     const result = await service.build({ releaseNote: "后台一键发布" });
 
     expect(result).toMatchObject({ id: "version-id", version, channel: "biz-scripts" });
-    expect(calls[0]).toEqual(["bundle", {
+    expect(calls.find(([name]) => name === "bundle")).toEqual(["bundle", {
       scriptPath: paths.bundleScriptPath,
       version,
       packageBaseUrl: paths.packageBaseUrl,
-      outputDir: paths.outputDir
+      outputDir: paths.outputDir,
+      baselineManifestPath: paths.baselineManifestPath
     }]);
     expect(calls.some(([name]) => name === "cleanup")).toBe(false);
   });
@@ -59,9 +74,10 @@ describe("business script build release", () => {
     let cleaned: string[] = [];
     const service = createBizScriptReleaseService({
       paths,
-      getLatestVersion: async () => "1.3.11.20260804144730",
+      now,
+      getLatestVersion: async () => "20260808.020304566",
       runBundle: async () => undefined,
-      readManifest: async () => manifest(),
+      readManifest: async (path) => path === paths.baselineManifestPath ? baseline : manifest(),
       sha256File: async () => "b".repeat(64),
       publish: async () => {
         published = true;
@@ -92,11 +108,11 @@ describe("business script build release", () => {
       now: () => new Date("2026-08-08T02:03:04.567Z"),
       getLatestVersion: async () => latest,
       runBundle: async () => undefined,
-      readManifest: async () => ({
+      readManifest: async (path) => path === paths.baselineManifestPath ? baseline : ({
         ...manifest(),
-        version: latest ? "1.0.20260808020305" : "1.0.20260808020304",
-        fileName: `AgriVideoCollector-biz-scripts-${latest ? "1.0.20260808020305" : "1.0.20260808020304"}.zip`,
-        packageUrl: `${paths.packageBaseUrl}/AgriVideoCollector-biz-scripts-${latest ? "1.0.20260808020305" : "1.0.20260808020304"}.zip`
+        version: latest ? "20260808.020304568" : "20260808.020304567",
+        fileName: `AgriVideoCollector-biz-scripts-${latest ? "20260808.020304568" : "20260808.020304567"}.zip`,
+        packageUrl: `${paths.packageBaseUrl}/AgriVideoCollector-biz-scripts-${latest ? "20260808.020304568" : "20260808.020304567"}.zip`
       }),
       sha256File: async () => "a".repeat(64),
       publish: async (payload) => {
@@ -109,7 +125,7 @@ describe("business script build release", () => {
 
     await service.build({});
     await service.build({});
-    expect(published).toEqual(["1.0.20260808020304", "1.0.20260808020305"]);
+    expect(published).toEqual(["20260808.020304567", "20260808.020304568"]);
     expect(Number(published[0]!.split(".").at(-1))).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
   });
 
@@ -131,29 +147,34 @@ describe("business script build release", () => {
       scriptPath: paths.bundleScriptPath,
       version,
       packageBaseUrl: paths.packageBaseUrl,
-      outputDir: paths.outputDir
+      outputDir: paths.outputDir,
+      baselineManifestPath: paths.baselineManifestPath
     }, { spawnProcess: (() => child) as never, timeoutMs: 5 })).rejects.toThrow("BUILD_FAILED");
     expect(killed).toBe(true);
   });
 
   test("rejects concurrent builds before invoking the bundler", async () => {
     let releaseFirst: (() => void) | undefined;
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
     let runs = 0;
     const service = createBizScriptReleaseService({
       paths,
-      getLatestVersion: async () => "1.3.11.20260804144730",
+      now,
+      getLatestVersion: async () => "20260808.020304566",
       runBundle: async () => {
         runs += 1;
+        markStarted?.();
         await new Promise<void>((resolve) => { releaseFirst = resolve; });
       },
-      readManifest: async () => manifest(),
+      readManifest: async (path) => path === paths.baselineManifestPath ? baseline : manifest(),
       sha256File: async () => "a".repeat(64),
       publish: async (payload) => ({ id: "version-id", ...payload, idempotent: false }),
       cleanup: async () => undefined
     });
 
     const first = service.build({});
-    await Promise.resolve();
+    await started;
     await expect(service.build({})).rejects.toThrow("BUILD_IN_PROGRESS");
     expect(runs).toBe(1);
     releaseFirst?.();

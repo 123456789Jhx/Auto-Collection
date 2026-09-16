@@ -22,7 +22,8 @@ test("shows inputs, multi-device control, progress and scoped stop actions", () 
   const clientSource = fs.readFileSync(path.join(webRoot, "src/lib/api-client-live-comment-entry.ts"), "utf8");
   const formSource = fs.readFileSync(path.join(webRoot, "src/lib/live-comment-entry-form.ts"), "utf8");
   const batchSource = fs.readFileSync(path.join(webRoot, "src/lib/live-comment-entry-batch.ts"), "utf8");
-  const visibleSource = `${pageSource}\n${progressSource}`;
+  const setupSource = fs.readFileSync(path.join(webRoot, "src/components/live-comment-entry/LiveCommentTaskSetup.tsx"), "utf8");
+  const visibleSource = `${pageSource}\n${setupSource}\n${progressSource}`;
 
   for (const text of [
     "目标直播间关键词",
@@ -37,11 +38,11 @@ test("shows inputs, multi-device control, progress and scoped stop actions", () 
   ]) {
     assert(visibleSource.includes(text), `missing live-comment entry text: ${text}`);
   }
-  assert(pageSource.includes('mode="multiple"'));
+  assert(setupSource.includes('mode="multiple"'));
   assert(progressSource.includes("stageHistory"));
   assert(pageSource.includes("refetchInterval: 2_000"));
   assert(pageSource.includes("loadError={commandsQuery.isError}"));
-  assert(pageSource.includes("maxCount={200}"));
+  assert(setupSource.includes("maxCount={200}"));
   assert(pageSource.includes("readActiveLiveCommentEntryBatchId"));
   assert(pageSource.includes("writeActiveLiveCommentEntryBatchId"));
   assert(clientSource.includes('commandType: "ACCOUNT_WARMUP_RUN"'));
@@ -55,21 +56,27 @@ test("shows inputs, multi-device control, progress and scoped stop actions", () 
   }
 });
 
-test("retains candidate APIs without rendering the batch table on the main page", () => {
+test("mounts room-scoped candidate import inside device details without a main-page batch table", () => {
   const pageSource = fs.readFileSync(path.join(webRoot, "src/routes/LiveCommentEntryPage.tsx"), "utf8");
   const candidateSource = fs.readFileSync(path.join(webRoot, "src/components/live-comment-entry/LiveCommentCandidates.tsx"), "utf8");
+  const profileSource = fs.readFileSync(path.join(webRoot, "src/components/live-comment-entry/LiveRoomProfilePanel.tsx"), "utf8");
   const clientSource = fs.readFileSync(path.join(webRoot, "src/lib/api-client-live-comment-entry.ts"), "utf8");
 
   assert(!pageSource.includes("<LiveCommentCandidates"));
+  assert(profileSource.includes("<LiveCommentCandidates"));
+  assert(profileSource.includes('label: "评论入库"'));
+  assert(candidateSource.includes("scopeLiveCommentCandidates"));
   assert(candidateSource.includes("getLiveCommentCandidates"));
   for (const text of [
-    "本批候选评论",
-    "设备回传后进入待入库",
+    "当前直播间候选评论",
     "全选待入库",
-    "来源（设备 / 房间 / 轮次）",
-    "批次抓取完成",
+    "取消全选",
+    "抓取中",
     "已入库",
-    "确认入库"
+    "确认入库",
+    "清洗后入库",
+    "filteredCount",
+    "duplicateCount"
   ]) {
     assert(candidateSource.includes(text), `missing candidate workflow text: ${text}`);
   }

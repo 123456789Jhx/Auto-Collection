@@ -41,7 +41,7 @@ function readZipEntries(zipPath) {
 
 test("business-script bundle contains no UTF-8 BOM in JavaScript or JSON entries", () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "biz-script-bundle-"));
-  const version = "bom-test";
+  const version = "20260912.100000001";
 
   try {
     const result = spawnSync(
@@ -76,7 +76,7 @@ test("business-script bundle contains no UTF-8 BOM in JavaScript or JSON entries
 
 test("business-script manifest uses ASCII paths and keeps Chinese display names", () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "biz-script-manifest-"));
-  const version = "manifest-ascii-test";
+  const version = "20260912.100000002";
 
   try {
     const result = spawnSync(
@@ -136,7 +136,7 @@ test("business-script bundle rejects non-ASCII entry names", () => {
         "-File",
         bundleScript,
         "-Version",
-        "ascii-gate-test",
+        "20260912.100000003",
         "-PackageBaseUrl",
         "http://127.0.0.1:3136/downloads/agent",
         "-OutputDir",
@@ -154,7 +154,7 @@ test("business-script bundle rejects non-ASCII entry names", () => {
 });
 
 test("business-script bundle defaults to the API-served artifact directory", () => {
-  const version = "default-output-test";
+  const version = "20260912.100000004";
   const apiArtifactDir = path.join(repoRoot, "account-data-platform", "apps", "api", "dist", "agent");
   const legacyArtifactDir = path.join(repoRoot, "account-data-platform", "dist", "agent");
   const fileName = `AgriVideoCollector-biz-scripts-${version}.zip`;

@@ -48,9 +48,9 @@ afterAll(async () => {
 
 test("claims only the matching warmup stop while its run remains active", async () => {
   const run = await createMobileCommand(commandValues("ACCOUNT_WARMUP_RUN", {
-    featureKey: "live_comment_entry",
+    featureKey: "isolated_live_comment_entry",
     batchId,
-    config: { targetKeyword: "药材种植", minViewerCount: 300 }
+    config: { targetKeyword: "药材种植", minViewerCount: 300, captureDurationMinutes: 5 }
   }));
   const claimedRun = await claimPendingCommandByDeviceId(deviceId, "AGENT");
   expect(claimedRun?.id).toBe(run.id);
@@ -64,9 +64,9 @@ test("claims only the matching warmup stop while its run remains active", async 
     targetCommandId: run.id
   }));
   await createMobileCommand(commandValues("ACCOUNT_WARMUP_RUN", {
-    featureKey: "live_comment_entry",
+    featureKey: "isolated_live_comment_entry",
     batchId: crypto.randomUUID(),
-    config: { targetKeyword: "第二个任务", minViewerCount: 300 }
+    config: { targetKeyword: "第二个任务", minViewerCount: 300, captureDurationMinutes: 5 }
   }));
 
   const claimedStop = await claimPendingCommandByDeviceId(deviceId, "AGENT");
@@ -76,6 +76,6 @@ test("claims only the matching warmup stop while its run remains active", async 
 
   const batchCommands = await listMobileCommands(100, { batchId });
   expect(batchCommands).toHaveLength(3);
-  expect((await listMobileCommands(100, { batchId, featureKey: "live_comment_entry" }))
+  expect((await listMobileCommands(100, { batchId, featureKey: "isolated_live_comment_entry" }))
     .filter((command) => command.commandType === "ACCOUNT_WARMUP_RUN")).toHaveLength(1);
 });

@@ -10,3 +10,5 @@ export * from "./domain/publish-routing";
 export * from "./domain/publish-interface";
 export * from "./domain/account-warmup";
 export * from "./domain/publish-material-url";
+export * from "./domain/biz-script-workspace";
+export * from "./domain/comment-action-timing";

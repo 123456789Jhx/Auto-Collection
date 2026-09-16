@@ -9,6 +9,17 @@ module.exports = {
     deviceToken: ""
   },
 
+  // 设备画像：按机型选择运行时行为，避免为适配某一机型而改动共用代码。
+  // 内置画像见 device-profiles.js；服务端可通过 device_task_configs.device_profile
+  // 下发覆盖，优先级高于这里。
+  deviceProfile: {
+    enabled: true,
+    // 留空则按 device.model 自动匹配；填画像 key（如 xiaomi_14）可强制指定。
+    forceKey: "",
+    // 本地覆盖画像参数，会合并到匹配到的画像之上。
+    overrides: {}
+  },
+
   task: {
     taskId: "task_local_001",
     platform: "douyin",

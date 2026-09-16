@@ -1,7 +1,7 @@
 import type { AccountWarmupStopPayload } from "@pkg/types";
 import { mutate, request } from "./api-client";
 import { download } from "./api-download";
-import type { AccountWarmupMobileCommand, AccountWarmupVocabularyEntry } from "./api-client-account-warmup";
+import type { AccountWarmupMobileCommand } from "./api-client-account-warmup";
 import type { LiveCommentEntryCommandInput } from "./live-comment-entry-form";
 
 export type LiveCommentEntryMobileCommand = AccountWarmupMobileCommand & {
@@ -37,13 +37,6 @@ export function stopLiveCommentEntryDevice(payload: {
     commandType: "ACCOUNT_WARMUP_STOP",
     payload: payload.payload,
     expiresInSeconds: 600
-  });
-}
-
-export function saveLiveCommentEntryComments(comments: string[]) {
-  return mutate<AccountWarmupVocabularyEntry[]>("/admin/account-warmup/vocabulary", {
-    relatedTerms: [],
-    comments
   });
 }
 

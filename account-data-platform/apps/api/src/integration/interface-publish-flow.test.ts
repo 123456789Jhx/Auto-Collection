@@ -35,6 +35,7 @@ const suffix = crypto.randomUUID().replaceAll("-", "");
 const actor = `node19-${suffix.slice(0, 8)}`;
 const deviceCode = `node19-${suffix.slice(0, 12)}`;
 const accountName = `节点19账号-${suffix.slice(0, 8)}`;
+const externalAccountKey = `external-${suffix}`;
 const tokenEnv = `NODE19_MOCK_TOKEN_${suffix}`;
 const clientConfig = { externalBaseUrl: "https://mock.interface.test", externalTokenEnv: tokenEnv };
 const ids = { config: "", device: "", binding: "", run: "", slot: "", task: "" };
@@ -81,6 +82,7 @@ beforeAll(async () => {
     platform: "DOUYIN",
     accountName,
     accountNo: `douyin-${suffix}`,
+    externalAccountKey,
     createdBy: actor,
     updatedBy: actor
   }).returning();
@@ -100,6 +102,7 @@ beforeAll(async () => {
     deviceCode,
     accountName,
     accountNo: `douyin-${suffix}`,
+    externalAccountKey,
     status: "VALID",
     reservationStatus: "RESERVED",
     createdBy: actor,
@@ -166,6 +169,7 @@ function candidate(name: string, order: number): PublishInterfaceSchedulerCandid
     slotExecutionId: `slot-${name}`,
     bindingId: `binding-${name}`,
     accountName: name,
+    externalAccountKey: `external-${name}`,
     priority: 0,
     attemptCount: 0,
     stableOrder: order,
@@ -179,7 +183,7 @@ describe("interface publish integrated flow", () => {
   test("persists one task and command, then stores phone success before outbox PATCH", async () => {
     const task = externalTask(`node19-task-${suffix}`);
     const server = createInterfacePublishMockServer({
-      queues: { [accountName]: [task, task] },
+      queues: { [externalAccountKey]: [task, task] },
       token: "node19-fake-token"
     });
     const service = createPublishInterfaceClaimService({
@@ -193,6 +197,7 @@ describe("interface publish integrated flow", () => {
       configId: ids.config,
       slotExecutionId: ids.slot,
       accountName,
+      externalAccountKey,
       clientConfig,
       actor
     };
@@ -279,7 +284,7 @@ describe("interface publish integrated flow", () => {
   test("fills N=3 with A/C/D while B waits ten minutes and claims stay serial", async () => {
     const names = ["A", "B", "C", "D"];
     const server = createInterfacePublishMockServer({
-      queues: Object.fromEntries(names.map((name) => [name, name === "B" ? [] : [externalTask(`task-${name}`, name)]])),
+      queues: Object.fromEntries(names.map((name) => [`external-${name}`, name === "B" ? [] : [externalTask(`task-${name}`, name)]])),
       token: "node19-fake-token"
     });
     const memory = memoryClaimRepository();
@@ -307,6 +312,7 @@ describe("interface publish integrated flow", () => {
           configId: "config-memory",
           slotExecutionId: item.slotExecutionId,
           accountName: item.accountName,
+          externalAccountKey: item.externalAccountKey,
           clientConfig,
           actor
         });
@@ -319,7 +325,7 @@ describe("interface publish integrated flow", () => {
       maxConcurrentPublishing: 3
     });
     expect(result).toMatchObject({ dispatched: 3, noMaterial: 1, claimsAttempted: 4 });
-    expect(new Set(server.state.claims)).toEqual(new Set(names));
+    expect(new Set(server.state.claims)).toEqual(new Set(["external-A", "external-B", "external-C", "external-D"]));
     expect(peakClaims).toBe(1);
     expect(memory.noMaterial.get("slot-B")?.toISOString()).toBe("2026-08-06T01:10:00.000Z");
   });
@@ -367,6 +373,7 @@ describe("interface publish integrated flow", () => {
       configId: "config-unknown",
       slotExecutionId: "slot-unknown",
       accountName: "unknown-account",
+      externalAccountKey: "external-unknown-account",
       clientConfig,
       actor
     };

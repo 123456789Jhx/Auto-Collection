@@ -88,9 +88,21 @@ function dumpCurrentXml(outputDir, logger) {
     throw new Error("无法获取当前页面根节点");
   }
 
+  if (!outputDir) {
+    throw new Error("导出目录为空，无法导出页面 XML");
+  }
   if (!files.exists(outputDir)) {
-    files.createWithDirs(outputDir + "/.keep");
-    files.remove(outputDir + "/.keep");
+    try {
+      // createWithDirs 失败时可能返回 false，也可能抛异常，两者都必须兜住。
+      if (files.createWithDirs(outputDir + "/.keep") !== false) {
+        files.remove(outputDir + "/.keep");
+      }
+    } catch (dirError) {
+      console.log("[WARN] 导出目录创建失败：" + outputDir + " -> " + dirError);
+    }
+  }
+  if (!files.exists(outputDir)) {
+    throw new Error("导出目录不可用：" + outputDir);
   }
 
   var now = new Date();

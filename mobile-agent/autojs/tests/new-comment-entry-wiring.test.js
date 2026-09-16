@@ -2,7 +2,6 @@
 
 var test = require("node:test");
 var assert = require("node:assert/strict");
-var crypto = require("node:crypto");
 var fs = require("node:fs");
 var path = require("node:path");
 var createNewBridge = require("../features/new-comment/command-bridge.js").createNewCommentCommandBridge;
@@ -11,10 +10,6 @@ var createOldBridge = require("../app/account-warmup-command-bridge.js").createA
 var root = path.join(__dirname, "..");
 var mainPath = path.join(root, "main.module.js");
 var entryPath = path.join(root, "features/new-comment/index.js");
-
-function sha256(filePath) {
-  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
-}
 
 test("主入口先安装隔离评论桥，再安装旧养号桥", function () {
   var source = fs.readFileSync(mainPath, "utf8");
@@ -110,11 +105,32 @@ test("真实新旧桥组合只恢复同一次底层轮询元数据且隔离命�
   assert.equal(Object.prototype.hasOwnProperty.call(secondOutput, "deviceRecoveryRequestSucceeded"), false);
 });
 
-test("隔离接线不修改旧桥且 uploader 不再暴露直播间租约能力", function () {
-  assert.equal(
-    sha256(path.join(root, "app/account-warmup-command-bridge.js")),
-    "14ce33d524bfddef8e1fbd6ba5d01e7afc4b9437a748a60bdc47594e0b0deddb"
-  );
+test("养号桥拒绝已下线评论入口且 uploader 不再暴露直播间租约能力", function () {
+  var acknowledgements = [];
+  var workers = [];
+  var bridge = createOldBridge({
+    uploader: {
+      pollCommands: function () { return []; },
+      ackCommand: function (id, status, result) {
+        acknowledgements.push({ id: id, status: status, result: result });
+        return { success: true };
+      }
+    },
+    logger: { info: function () {}, warn: function () {}, error: function () {} },
+    loadBizScript: function (modulePath) { return require(path.join(root, modulePath)); },
+    startThread: function (worker) { workers.push(worker); return { interrupt: function () {} }; }
+  });
+  bridge.install();
+  bridge.intercept([{ id: "retired-entry", commandType: "ACCOUNT_WARMUP_RUN", payload: {
+    featureKey: "live_comment_entry", batchId: "batch-retired", config: {}
+  } }]);
+  assert.equal(workers.length, 1);
+  workers[0]();
+  assert.equal(acknowledgements.length, 1);
+  assert.equal(acknowledgements[0].id, "retired-entry");
+  assert.equal(acknowledgements[0].status, "FAILED");
+  assert.match(acknowledgements[0].result.message, /unsupported account warmup feature: live_comment_entry/);
+  assert.equal(bridge.getActive(), null);
   var uploaderSource = fs.readFileSync(path.join(root, "core/uploader.js"), "utf8");
   assert.equal(uploaderSource.includes("claimLiveRoom: claimLiveRoom"), false);
   assert.equal(uploaderSource.includes("releaseLiveRoom: releaseLiveRoom"), false);

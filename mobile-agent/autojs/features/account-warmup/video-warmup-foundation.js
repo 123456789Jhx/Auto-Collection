@@ -1,12 +1,38 @@
-// 职责：承载视频养号的逐步动作；当前版本进入固定关键词搜索结果页。
+// 职责：视频养号任务的编排骨架——按固定顺序推进动作，并守住停机、手势重试与页面上下文三个不变量。
+// 关键约定（2026-09-10 修复）：
+// 1. 滑动起点在下、终点在上＝下一条视频（此前方向被写反）；
+// 2. 下滑只派发贝塞尔曲线，禁止直线兜底（见远程脚本模块进度台账 2026-09-10）；派发被拒属瞬时状态，
+//    在界面动作层内重试同一手法的贝塞尔路径，不降级到平台或全局直线滑动；
+// 3. 连续 MAX_CONSECUTIVE_SWIPE_FAILURES 次滑动仍未派发成功才判定 SWIPE_FAILED；
+// 4. 每次滑动后校验仍在抖音视频页，异常先复核、再恢复，恢复无效则明确结束任务；
+// 5. 每个视频的观看等待在 10000~15000ms 内逐轮随机，payload.secondsPerVideo 仅保留兼容记录。
+
+var swipeGeometry = require("./video-warmup-swipe.js");
+var defaultUi = require("./video-warmup-ui.js");
+
+var OPEN_APP_PRE_DELAY_MS = 1000;
+var OPEN_APP_SETTLE_MS = 1500;
+var NAVIGATION_SETTLE_MS = 800;
+var SWIPE_SETTLE_MS = 600;
+var CONTEXT_RECHECK_MS = 1200;
+var CONTEXT_RECOVER_SETTLE_MS = 1500;
+var MAX_CONSECUTIVE_SWIPE_FAILURES = 3;
+
 function createVideoWarmupFoundationTask(options) {
   options = options || {};
   var context = options.context || {};
   var douyin = context.douyin || {};
   var logger = options.logger || { info: function () {} };
-  var ui = options.ui || createDefaultUi();
+  var ui = options.ui || defaultUi.createDefaultUi({
+    context: context,
+    random: options.random,
+    logger: logger
+  });
   var wait = options.wait || context.sleep || function (delayMs) {
     if (typeof sleep === "function") sleep(delayMs);
+  };
+  var random = options.random || function (min, max) {
+    return Math.floor(min + Math.random() * (max - min + 1));
   };
 
   function stopped(control) {
@@ -28,208 +54,166 @@ function createVideoWarmupFoundationTask(options) {
     return { status: "STOPPED", watchedVideos: watchedVideos || 0 };
   }
 
+  function swipeAccepted(result) {
+    if (result === true) return true;
+    return !!(result && result.accepted === true);
+  }
+
+  function swipeReason(result) {
+    if (result && result.reason) return String(result.reason);
+    return result === false || result === null || result === undefined
+      ? "SWIPE_DISPATCH_REJECTED"
+      : "";
+  }
+
+  function verifyContext(checkContext) {
+    if (typeof checkContext !== "function") return { ok: true, reason: "NO_CONTEXT_PROBE" };
+    try {
+      var result = checkContext();
+      if (result && result.ok === false) {
+        return { ok: false, reason: String(result.reason || "VIDEO_CONTEXT_LOST") };
+      }
+    } catch (error) {
+      return { ok: true, reason: "CONTEXT_PROBE_ERROR" };
+    }
+    return { ok: true, reason: "" };
+  }
+
+  function openVideoPage(keyword, control) {
+    if (waitOrStop(OPEN_APP_PRE_DELAY_MS, control)) return "STOPPED";
+    if (!douyin.openApp || douyin.openApp() === false) {
+      if (logger.warn) logger.warn("视频养号打开抖音失败", {});
+      return "DOUYIN_OPEN_FAILED";
+    }
+    if (waitOrStop(OPEN_APP_SETTLE_MS, control)) return "STOPPED";
+    if (!ui.openSearchEntry()) {
+      if (logger.warn) logger.warn("视频养号点击搜索入口失败", {});
+      return "VIDEO_WARMUP_SEARCH_ENTRY_FAILED";
+    }
+    if (!ui.setSearchKeyword(keyword)) {
+      if (logger.warn) logger.warn("视频养号输入关键词失败", { keyword: keyword });
+      return "VIDEO_WARMUP_SEARCH_INPUT_FAILED";
+    }
+    if (waitOrStop(NAVIGATION_SETTLE_MS, control)) return "STOPPED";
+    if (!ui.submitSearch()) {
+      if (logger.warn) logger.warn("视频养号点击搜索按钮失败", { keyword: keyword });
+      return "VIDEO_WARMUP_SEARCH_SUBMIT_FAILED";
+    }
+    if (waitOrStop(NAVIGATION_SETTLE_MS, control)) return "STOPPED";
+    if (!ui.openUpperVideoTab()) {
+      if (logger.warn) logger.warn("视频养号点击第一排视频菜单失败", {});
+      return "VIDEO_WARMUP_UPPER_VIDEO_TAB_FAILED";
+    }
+    if (waitOrStop(NAVIGATION_SETTLE_MS, control)) return "STOPPED";
+    if (!ui.openLowerVideoTab()) {
+      if (logger.warn) logger.warn("视频养号点击第二排视频菜单失败", {});
+      return "VIDEO_WARMUP_LOWER_VIDEO_TAB_FAILED";
+    }
+    if (waitOrStop(NAVIGATION_SETTLE_MS, control)) return "STOPPED";
+    if (!ui.openFirstVideo()) {
+      if (logger.warn) logger.warn("视频养号点击第一个视频失败", {});
+      return "VIDEO_WARMUP_FIRST_VIDEO_FAILED";
+    }
+    return "";
+  }
+
+  function watchLoop(control) {
+    var watchedVideos = 0;
+    var consecutiveSwipeFailures = 0;
+    var checkContext = ui.verifyVideoContext;
+    while (!stopped(control)) {
+      var watchDurationMs = swipeGeometry.resolveWatchDurationMs(random);
+      if (waitOrStop(watchDurationMs, control)) return stoppedResult(watchedVideos);
+      var swipe = ui.nextVideo(control);
+      if (!swipeAccepted(swipe)) {
+        consecutiveSwipeFailures += 1;
+        if (logger.warn) logger.warn("视频养号下一视频手势未派发", {
+          watchedVideos: watchedVideos,
+          consecutiveSwipeFailures: consecutiveSwipeFailures,
+          reason: swipeReason(swipe)
+        });
+        if (consecutiveSwipeFailures >= MAX_CONSECUTIVE_SWIPE_FAILURES) {
+          return {
+            status: "VIDEO_WARMUP_SWIPE_FAILED",
+            watchedVideos: watchedVideos,
+            consecutiveSwipeFailures: consecutiveSwipeFailures
+          };
+        }
+        continue;
+      }
+      consecutiveSwipeFailures = 0;
+      watchedVideos += 1;
+      if (waitOrStop(SWIPE_SETTLE_MS, control)) return stoppedResult(watchedVideos);
+
+      var screenContext = verifyContext(checkContext);
+      if (!screenContext.ok) {
+        if (waitOrStop(CONTEXT_RECHECK_MS, control)) return stoppedResult(watchedVideos);
+        screenContext = verifyContext(checkContext);
+      }
+      if (!screenContext.ok) {
+        if (logger.warn) logger.warn("视频养号视频页上下文丢失", {
+          watchedVideos: watchedVideos,
+          reason: screenContext.reason,
+          swipePath: String(swipe && swipe.path || "")
+        });
+        var recovered = ui.recoverVideoContext ? ui.recoverVideoContext() : false;
+        if (!recovered) {
+          return {
+            status: "VIDEO_WARMUP_CONTEXT_LOST",
+            watchedVideos: watchedVideos,
+            reason: "CONTEXT_RECOVER_UNAVAILABLE"
+          };
+        }
+        if (waitOrStop(CONTEXT_RECOVER_SETTLE_MS, control)) return stoppedResult(watchedVideos);
+        var recoveredContext = verifyContext(checkContext);
+        if (!recoveredContext.ok) {
+          return {
+            status: "VIDEO_WARMUP_CONTEXT_LOST",
+            watchedVideos: watchedVideos,
+            reason: recoveredContext.reason
+          };
+        }
+      }
+      logger.info("视频养号已滑到下一个视频", {
+        watchedVideos: watchedVideos,
+        watchDurationMs: watchDurationMs,
+        swipePath: String(swipe && swipe.path || ""),
+        contextReason: screenContext.reason || ""
+      });
+    }
+    return stoppedResult(watchedVideos);
+  }
+
   function run(payload, control) {
     payload = payload || {};
     var keyword = String(payload.targetKeyword || "").trim();
-    var secondsPerVideo = 15;
+    var secondsPerVideo = swipeGeometry.resolveSecondsPerVideo(payload.secondsPerVideo);
     if (!keyword) {
       if (logger.warn) logger.warn("视频养号搜索关键词为空", {});
       return { status: "VIDEO_WARMUP_KEYWORD_REQUIRED" };
     }
     logger.info("视频养号开始打开抖音", {
       targetKeyword: keyword,
-      secondsPerVideo: secondsPerVideo
+      secondsPerVideo: secondsPerVideo,
+      payloadSecondsPerVideo: Number(payload.secondsPerVideo) > 0 ? Number(payload.secondsPerVideo) : null
     });
-    if (waitOrStop(5000, control)) return stoppedResult(0);
-    if (!douyin.openApp || douyin.openApp() === false) {
-      if (logger.warn) logger.warn("视频养号打开抖音失败", {});
-      return { status: "DOUYIN_OPEN_FAILED" };
-    }
-    if (waitOrStop(5000, control)) return stoppedResult(0);
-    if (!ui.openSearchEntry()) {
-      if (logger.warn) logger.warn("视频养号点击搜索入口失败", {});
-      return { status: "VIDEO_WARMUP_SEARCH_ENTRY_FAILED" };
-    }
-    if (!ui.setSearchKeyword(keyword)) {
-      if (logger.warn) logger.warn("视频养号输入关键词失败", { keyword: keyword });
-      return { status: "VIDEO_WARMUP_SEARCH_INPUT_FAILED" };
-    }
-    if (waitOrStop(5000, control)) return stoppedResult(0);
-    if (!ui.submitSearch()) {
-      if (logger.warn) logger.warn("视频养号点击搜索按钮失败", { keyword: keyword });
-      return { status: "VIDEO_WARMUP_SEARCH_SUBMIT_FAILED" };
-    }
-    if (waitOrStop(5000, control)) return stoppedResult(0);
-    if (!ui.openUpperVideoTab()) {
-      if (logger.warn) logger.warn("视频养号点击第一排视频菜单失败", {});
-      return { status: "VIDEO_WARMUP_UPPER_VIDEO_TAB_FAILED" };
-    }
-    if (waitOrStop(5000, control)) return stoppedResult(0);
-    if (!ui.openLowerVideoTab()) {
-      if (logger.warn) logger.warn("视频养号点击第二排视频菜单失败", {});
-      return { status: "VIDEO_WARMUP_LOWER_VIDEO_TAB_FAILED" };
-    }
-    if (waitOrStop(5000, control)) return stoppedResult(0);
-    if (!ui.openFirstVideo()) {
-      if (logger.warn) logger.warn("视频养号点击第一个视频失败", {});
-      return { status: "VIDEO_WARMUP_FIRST_VIDEO_FAILED" };
-    }
-
-    var watchedVideos = 0;
-    while (!stopped(control)) {
-      if (waitOrStop(secondsPerVideo * 1000, control)) return stoppedResult(watchedVideos);
-      watchedVideos += 1;
-      if (!ui.nextVideo()) {
-        if (logger.warn) logger.warn("视频养号下滑失败", { watchedVideos: watchedVideos });
-        return { status: "VIDEO_WARMUP_SWIPE_FAILED", watchedVideos: watchedVideos };
-      }
-      logger.info("视频养号已下滑到下一个视频", { watchedVideos: watchedVideos });
-    }
-    return stoppedResult(watchedVideos);
+    var openFailure = openVideoPage(keyword, control);
+    if (openFailure === "STOPPED") return stoppedResult(0);
+    if (openFailure) return { status: openFailure };
+    return watchLoop(control);
   }
 
   return { run: run };
 }
 
-function createDefaultUi() {
-  function screenSize() {
-    return {
-      width: Math.max(1, Number(typeof device !== "undefined" && device.width || 1080)),
-      height: Math.max(1, Number(typeof device !== "undefined" && device.height || 2400))
-    };
-  }
-
-  function findFirst(selectors, predicate) {
-    for (var i = 0; i < selectors.length; i++) {
-      try {
-        var node = selectors[i] && selectors[i].findOne && selectors[i].findOne(500);
-        if (node && (!predicate || predicate(node))) return node;
-      } catch (error) {}
-    }
-    return null;
-  }
-
-  function clickNode(node) {
-    var current = node;
-    for (var i = 0; i < 5 && current; i++) {
-      try { if (current.clickable && current.clickable() && current.click()) return true; } catch (error) {}
-      try { current = current.parent && current.parent(); } catch (parentError) { current = null; }
-    }
-    try {
-      var bounds = node && node.bounds && node.bounds();
-      return !!(bounds && typeof click === "function" && click(bounds.centerX(), bounds.centerY()));
-    } catch (clickError) { return false; }
-  }
-
-  function clickPoint(xRatio, yRatio) {
-    var size = screenSize();
-    return typeof click === "function" && !!click(
-      Math.floor(size.width * xRatio),
-      Math.floor(size.height * yRatio)
-    );
-  }
-
-  function openSearchEntry() {
-    var selectors = [];
-    try { selectors.push(desc("搜索")); } catch (error) {}
-    try { selectors.push(descContains("搜索")); } catch (error2) {}
-    try { selectors.push(text("搜索")); } catch (error3) {}
-    var size = screenSize();
-    var node = findFirst(selectors, function (candidate) {
-      var bounds = candidate.bounds && candidate.bounds();
-      return bounds && bounds.centerX() >= size.width * 0.65 && bounds.centerY() <= size.height * 0.20;
-    });
-    return node ? clickNode(node) : clickPoint(0.90, 0.075);
-  }
-
-  function findSearchInput() {
-    var selectors = [];
-    try { selectors.push(className("android.widget.EditText")); } catch (error) {}
-    try { selectors.push(idContains("et_search")); } catch (error2) {}
-    try { selectors.push(idContains("search_edit")); } catch (error3) {}
-    try { selectors.push(descContains("搜索框")); } catch (error4) {}
-    return findFirst(selectors);
-  }
-
-  function setSearchKeyword(keyword) {
-    var inputNode = findSearchInput();
-    if (!inputNode) return false;
-    clickNode(inputNode);
-    try { if (inputNode.setText && inputNode.setText(keyword) !== false) return true; } catch (error) {}
-    try { if (typeof setText === "function") { setText(keyword); return true; } } catch (globalError) {}
-    return false;
-  }
-
-  function submitSearch() {
-    var selectors = [];
-    try { selectors.push(text("搜索")); } catch (error) {}
-    try { selectors.push(desc("搜索")); } catch (error2) {}
-    var size = screenSize();
-    var node = findFirst(selectors, function (candidate) {
-      var bounds = candidate.bounds && candidate.bounds();
-      return bounds && bounds.centerX() >= size.width * 0.72 && bounds.centerY() <= size.height * 0.20;
-    });
-    return node ? clickNode(node) : clickPoint(0.90, 0.08);
-  }
-
-  function findVideoTab(minYRatio, maxYRatio) {
-    var selectors = [];
-    try { selectors.push(text("视频")); } catch (error) {}
-    try { selectors.push(desc("视频")); } catch (error2) {}
-    var size = screenSize();
-    for (var selectorIndex = 0; selectorIndex < selectors.length; selectorIndex++) {
-      try {
-        var nodes = selectors[selectorIndex].find();
-        var count = typeof nodes.length === "number" ? nodes.length : nodes.size ? nodes.size() : 0;
-        for (var nodeIndex = 0; nodeIndex < count; nodeIndex++) {
-          var node = typeof nodes.get === "function" ? nodes.get(nodeIndex) : nodes[nodeIndex];
-          var bounds = node && node.bounds && node.bounds();
-          if (!bounds) continue;
-          var centerYRatio = bounds.centerY() / size.height;
-          if (centerYRatio >= minYRatio && centerYRatio <= maxYRatio) return node;
-        }
-      } catch (findError) {}
-    }
-    return null;
-  }
-
-  function openUpperVideoTab() {
-    var node = findVideoTab(0.10, 0.17);
-    return node ? clickNode(node) : clickPoint(0.27, 0.135);
-  }
-
-  function openLowerVideoTab() {
-    var node = findVideoTab(0.17, 0.24);
-    return node ? clickNode(node) : clickPoint(0.61, 0.19);
-  }
-
-  function openFirstVideo() {
-    return clickPoint(0.265, 0.38);
-  }
-
-  function nextVideo() {
-    var size = screenSize();
-    if (typeof swipe !== "function") return false;
-    return swipe(
-      Math.floor(size.width * 0.50),
-      Math.floor(size.height * 0.78),
-      Math.floor(size.width * 0.50),
-      Math.floor(size.height * 0.22),
-      520
-    ) !== false;
-  }
-
-  return {
-    openSearchEntry: openSearchEntry,
-    setSearchKeyword: setSearchKeyword,
-    submitSearch: submitSearch,
-    openUpperVideoTab: openUpperVideoTab,
-    openLowerVideoTab: openLowerVideoTab,
-    openFirstVideo: openFirstVideo,
-    nextVideo: nextVideo
-  };
-}
-
 module.exports = {
-  createVideoWarmupFoundationTask: createVideoWarmupFoundationTask
+  createVideoWarmupFoundationTask: createVideoWarmupFoundationTask,
+  createDefaultUi: defaultUi.createDefaultUi,
+  videoSwipeCoordinates: swipeGeometry.videoSwipeCoordinates,
+  bowControlPoints: swipeGeometry.bowControlPoints,
+  resolveSecondsPerVideo: swipeGeometry.resolveSecondsPerVideo,
+  resolveWatchDurationMs: swipeGeometry.resolveWatchDurationMs,
+  WATCH_DURATION_MIN_MS: swipeGeometry.WATCH_DURATION_MIN_MS,
+  WATCH_DURATION_MAX_MS: swipeGeometry.WATCH_DURATION_MAX_MS,
+  SWIPE_ACTION_SIGNATURE: swipeGeometry.SWIPE_ACTION_SIGNATURE
 };

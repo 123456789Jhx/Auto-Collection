@@ -12,7 +12,7 @@ test("isolated commands default to five minutes and reject out-of-range duration
     assert.equal(accountWarmupRunPayloadSchema.safeParse({ ...payload, config: { ...payload.config, captureDurationMinutes: minutes } }).success, false);
     assert.throws(() => buildLiveCommentEntryCommands({ batchId, targetKeyword: "crop", deviceCodes: ["device"], captureDurationMinutes: minutes }));
   }
-  assert.equal(accountWarmupRunPayloadSchema.parse({ ...payload, featureKey: "live_comment_entry" }).config.captureDurationMinutes, undefined);
+  assert.equal(accountWarmupRunPayloadSchema.safeParse({ ...payload, featureKey: "live_comment_entry" }).success, false);
 });
 
 test("custom duration survives form and batch restoration and reaches every device", async () => {

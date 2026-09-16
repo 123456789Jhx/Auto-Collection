@@ -1,8 +1,24 @@
 function ensureDir(dirPath) {
-  if (!files.exists(dirPath)) {
-    files.createWithDirs(dirPath + "/.keep");
-    files.remove(dirPath + "/.keep");
+  if (!dirPath) {
+    console.log("[WARN] ensureDir 跳过：目录路径为空");
+    return false;
   }
+  try {
+    if (files.exists(dirPath)) {
+      return true;
+    }
+    // createWithDirs 失败时可能返回 false，也可能抛异常，两者都必须兜住，
+    // 否则未捕获异常会中断整个脚本引擎。
+    if (files.createWithDirs(dirPath + "/.keep") === false) {
+      console.log("[WARN] ensureDir 失败：" + dirPath);
+      return false;
+    }
+    files.remove(dirPath + "/.keep");
+  } catch (error) {
+    console.log("[WARN] ensureDir 失败：" + dirPath + " -> " + error);
+    return false;
+  }
+  return true;
 }
 
 function safeName(value) {

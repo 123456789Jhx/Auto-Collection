@@ -20,7 +20,9 @@
         "@hono/zod-validator": "^0.4.2",
         "@pkg/db": "workspace:*",
         "@pkg/types": "workspace:*",
+        "acorn": "^8.15.0",
         "drizzle-orm": "^0.39.1",
+        "fflate": "^0.8.3",
         "hono": "^4.6.14",
         "ioredis": "^5.4.2",
         "postgres": "^3.4.5",
@@ -467,6 +469,8 @@
     "fast-levenshtein": ["fast-levenshtein@2.0.6", "https://registry.npmmirror.com/fast-levenshtein/-/fast-levenshtein-2.0.6.tgz", {}, "sha512-DCXu6Ifhqcks7TZKY3Hxp3y6qphY5SJZmrWMDrKcERSOXWQdMhU9Ig/PYrzyw/ul9jOIyh0N4M0tbC5hodg8dw=="],
 
     "fdir": ["fdir@6.5.0", "https://registry.npmmirror.com/fdir/-/fdir-6.5.0.tgz", { "peerDependencies": { "picomatch": "^3 || ^4" }, "optionalPeers": ["picomatch"] }, "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg=="],
+
+    "fflate": ["fflate@0.8.3", "", {}, "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA=="],
 
     "file-entry-cache": ["file-entry-cache@8.0.0", "https://registry.npmmirror.com/file-entry-cache/-/file-entry-cache-8.0.0.tgz", { "dependencies": { "flat-cache": "^4.0.0" } }, "sha512-XXTUwCvisa5oacNGRP9SfNtYBNAMi+RPwBFmblZEF7N7swHYQS6/Zfk7SRwx4D5j3CH211YNRco1DEMNVfZCnQ=="],
 

@@ -1130,10 +1130,26 @@ function createUploader(config, logger, storage) {
   }
 
   function ensureDir(path) {
-    if (!files.exists(path)) {
-      files.createWithDirs(path + "/.keep");
-      files.remove(path + "/.keep");
+    if (!path) {
+      console.log("[WARN] ensureDir 跳过：目录路径为空");
+      return false;
     }
+    try {
+      if (files.exists(path)) {
+        return true;
+      }
+      // createWithDirs 失败时可能返回 false，也可能抛异常，两者都必须兜住，
+      // 否则未捕获异常会中断整个脚本引擎。
+      if (files.createWithDirs(path + "/.keep") === false) {
+        console.log("[WARN] ensureDir 失败：" + path);
+        return false;
+      }
+      files.remove(path + "/.keep");
+    } catch (error) {
+      console.log("[WARN] ensureDir 失败：" + path + " -> " + error);
+      return false;
+    }
+    return true;
   }
 
   function deletePath(path) {

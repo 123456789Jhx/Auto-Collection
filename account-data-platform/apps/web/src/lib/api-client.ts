@@ -9,6 +9,7 @@ import type {
   ResolveCommerceCardCommentActionPayload,
   RevokeCommerceCardExecutionApprovalPayload
 } from "@pkg/types";
+import type { DeviceProfileOverride } from "./device-profile-form";
 
 const apiBaseUrl =
   (import.meta.env.PROD ? import.meta.env.VITE_API_BASE_URL_PROD : import.meta.env.VITE_API_BASE_URL_DEV) ??
@@ -596,6 +597,7 @@ export function updateDeviceTaskConfig(deviceCode: string, payload: {
   liveCommentBotConfig?: Record<string, unknown> | null;
   liveCommentConfig?: Record<string, unknown>;
   p3ExtensionsConfig?: Record<string, unknown>;
+  deviceProfile?: DeviceProfileOverride | null;
 }, platform?: string) {
   return patch<unknown>(`/admin/devices/${encodeURIComponent(deviceCode)}/task-config${toQuery({ platform })}`, payload);
 }

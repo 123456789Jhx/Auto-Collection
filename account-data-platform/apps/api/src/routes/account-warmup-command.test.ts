@@ -106,12 +106,26 @@ describe("account warmup mobile commands", () => {
     expect(response.status).toBe(400);
   });
 
-  test("creates a live comment entry command with normalized keyword and viewer floor", async () => {
+  test("rejects the retired live comment entry command", async () => {
     const response = await adminRequest("/api/v1/admin/mobile-commands", {
       deviceId: deviceCode,
       commandType: "ACCOUNT_WARMUP_RUN",
       payload: {
         featureKey: "live_comment_entry",
+        batchId: crypto.randomUUID(),
+        config: { targetKeyword: "药材种植", minViewerCount: 300 }
+      }
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: "VALIDATION_ERROR" } });
+  });
+
+  test("creates an isolated live comment entry command with normalized keyword and viewer floor", async () => {
+    const response = await adminRequest("/api/v1/admin/mobile-commands", {
+      deviceId: deviceCode,
+      commandType: "ACCOUNT_WARMUP_RUN",
+      payload: {
+        featureKey: "isolated_live_comment_entry",
         batchId: crypto.randomUUID(),
         config: { targetKeyword: "  药材种植  ", minViewerCount: 0 }
       }
@@ -119,17 +133,17 @@ describe("account warmup mobile commands", () => {
     expect(response.status).toBe(201);
     const created = await response.json();
     expect(created.payloadJson).toMatchObject({
-      featureKey: "live_comment_entry",
-      config: { targetKeyword: "药材种植", minViewerCount: 0 }
+      featureKey: "isolated_live_comment_entry",
+      config: { targetKeyword: "药材种植", minViewerCount: 0, captureDurationMinutes: 5 }
     });
   });
 
-  test("rejects a live comment entry command with a negative viewer floor", async () => {
+  test("rejects an isolated live comment entry command with a negative viewer floor", async () => {
     const response = await adminRequest("/api/v1/admin/mobile-commands", {
       deviceId: deviceCode,
       commandType: "ACCOUNT_WARMUP_RUN",
       payload: {
-        featureKey: "live_comment_entry",
+        featureKey: "isolated_live_comment_entry",
         batchId: crypto.randomUUID(),
         config: { targetKeyword: "测试", minViewerCount: -1 }
       }
@@ -143,7 +157,7 @@ describe("account warmup mobile commands", () => {
       deviceId: deviceCode,
       commandType: "ACCOUNT_WARMUP_RUN",
       payload: {
-        featureKey: "live_comment_entry",
+        featureKey: "isolated_live_comment_entry",
         batchId: filteredBatchId,
         config: { targetKeyword: "筛选测试", minViewerCount: 300 }
       }

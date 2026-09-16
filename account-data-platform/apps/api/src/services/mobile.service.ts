@@ -199,6 +199,8 @@ export async function getCurrentTask(deviceId: string, platform: string, clientI
     commerceCardLiveComment: pickCommerceCardLiveCommentConfig(taskConfig.p3ExtensionsConfig),
     effectiveWorkflow,
     p3ExtensionsConfig: taskConfig.p3ExtensionsConfig ?? null,
+    // 设备画像覆盖：手机端拿到后合并到自己内置的机型画像之上，服务端优先。
+    deviceProfileOverride: taskConfig.deviceProfile ?? null,
     heartbeatMinutes: taskConfig.heartbeatMinutes,
     configSource: result.config ? "device" : "task"
   };

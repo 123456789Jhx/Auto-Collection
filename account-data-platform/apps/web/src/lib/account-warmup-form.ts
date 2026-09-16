@@ -289,14 +289,47 @@ export function buildVideoWarmupStopCommands(input: {
   });
 }
 
+/**
+ * 读取设备心跳里实际上报的 video_warmup 运行 id。
+ * 心跳比服务端命令记录更能代表“设备此刻是否真的在跑这条任务”。
+ */
+export function deviceReportedVideoWarmupRunId(device?: {
+  latestHeartbeat?: { rawPayload?: Record<string, unknown> | null } | null;
+} | null) {
+  const raw = device?.latestHeartbeat?.rawPayload;
+  if (!raw || typeof raw !== "object") return "";
+  if ((raw as Record<string, unknown>).featureKey !== "video_warmup") return "";
+  const runId = (raw as Record<string, unknown>).runId;
+  return typeof runId === "string" ? runId : "";
+}
+
 export function resolveVideoWarmupCommandState(
   runCommand: AccountWarmupCommandView,
   commands: AccountWarmupCommandView[],
   batchId: string,
-  nowMs = Date.now()
+  nowMs = Date.now(),
+  deviceReportedRunId = ""
 ) {
   const resultStatus = String(runCommand.resultJson?.status ?? "");
   const expiresAtMs = runCommand.expiresAt ? Date.parse(runCommand.expiresAt) : Number.NaN;
+
+  const stopCommand = commands.find((command) =>
+    command.commandType === "VIDEO_WARMUP_STOP" &&
+    command.deviceId === runCommand.deviceId &&
+    command.payloadJson?.featureKey === "video_warmup" &&
+    command.payloadJson?.batchId === batchId);
+
+  // 设备心跳仍在上报这条任务时，任务其实还在跑：
+  // 即使服务端记录已被终结（例如超时回收），也必须保留停止入口，
+  // 否则前端会失去停止能力，而手机仍在继续执行。
+  if (deviceReportedRunId && deviceReportedRunId === runCommand.id) {
+    const stopStatus = String(stopCommand?.status ?? "");
+    const stopInFlight = Boolean(stopStatus && ["PENDING", "FETCHED", "CLAIMED", "RUNNING"].includes(stopStatus));
+    return stopInFlight
+      ? { key: "stopping", label: "停止中", color: "warning", active: true }
+      : { key: "device_still_running", label: "设备仍在运行", color: "warning", active: true };
+  }
+
   if (resultStatus === "STOPPED") return { key: "stopped", label: "已停止", color: "default", active: false };
 
   // A terminal RUN record is authoritative; stale STOP records must not revive it.
@@ -310,12 +343,6 @@ export function resolveVideoWarmupCommandState(
   if (terminalStatus === "TIMED_OUT") {
     return { key: "expired", label: "Expired", color: "default", active: false };
   }
-
-  const stopCommand = commands.find((command) =>
-    command.commandType === "VIDEO_WARMUP_STOP" &&
-    command.deviceId === runCommand.deviceId &&
-    command.payloadJson?.featureKey === "video_warmup" &&
-    command.payloadJson?.batchId === batchId);
   if (stopCommand?.status === "FAILED") {
     return { key: "stop_failed", label: "停止失败", color: "error", active: true };
   }

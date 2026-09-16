@@ -30,7 +30,6 @@ var SWIPE_OPTIONS = {
   liveRoomEndY: 0.22,
 };
 var REGION_RATIOS = {
-  comment: { left: 0.03, top: 0.635, width: 0.70, height: 0.245 },
   liveEnded: {
     left: 0.32,
     top: 0.06,
@@ -76,6 +75,14 @@ var REGION_RATIOS = {
   platformVerification: { left: 0.08, top: 0.18, width: 0.84, height: 0.64 },
 };
 function getRegion(name, screenSize) {
+  if (name === "comment") {
+    var commentSize = geometry.normalizeScreenSize(screenSize);
+    var commentLeft = Math.round(12 * commentSize.width / 1080);
+    var commentTop = Math.round(1556 * commentSize.height / 2248);
+    return geometry.clampRegion({ name: name, left: commentLeft, top: commentTop,
+      width: Math.round(775 * commentSize.width / 1080) - commentLeft,
+      height: Math.round(1883 * commentSize.height / 2248) - commentTop }, commentSize);
+  }
   if (name === "anchorProfileCapture" || name === "anchorIdentity") {
     var profileSize = geometry.normalizeScreenSize(screenSize);
     var left = name === "anchorIdentity" ? Math.round(360 * profileSize.width / 1080) : 0;
@@ -108,13 +115,13 @@ function getCommentSwipe(screenSize, options) {
     region.height,
     geometry.isNumber(options.startYRatio)
       ? options.startYRatio
-      : SWIPE_OPTIONS.commentStartY,
+      : SWIPE_OPTIONS.commentStartY
   );
   var end = geometry.coordinateFromRatio(
     region.height,
     geometry.isNumber(options.endYRatio)
       ? options.endYRatio
-      : SWIPE_OPTIONS.commentEndY,
+      : SWIPE_OPTIONS.commentEndY
   );
   var size = geometry.normalizeScreenSize(screenSize);
   var x = region.left + Math.floor((region.width - 1) / 2);

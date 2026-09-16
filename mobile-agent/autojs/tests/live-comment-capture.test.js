@@ -1,7 +1,6 @@
 var assert = require("assert");
 var capture = require("../domain/live-comment-capture.js");
 var accessibility = require("../core/accessibility.js");
-var runtimeModule = require("../features/account-warmup/live-comment-entry-runtime.js");
 var fastSearchModule = require("../features/account-warmup/fast-target-search.js");
 
 function FakePath() {
@@ -62,104 +61,6 @@ function testAccessibilityGestureDriverBuildsAPath() {
     ["lineTo", 12, 80]
   ]);
   assert.strictEqual(dispatched.strokes[0].durationMs, 180);
-}
-
-function testRuntimeUsesTheInjectedGestureDriverForCommentSwipe() {
-  var calls = [];
-  var previousSwipe = global.swipe;
-  global.swipe = function () {
-    throw new Error("comment runtime must not call legacy swipe");
-  };
-  try {
-    var runtime = runtimeModule.createDefaultRuntime({
-      screenSize: function () { return { width: 1080, height: 2248 }; },
-      screenRecognizer: { extractScreen: function () { return { ocrRegions: {} }; } },
-      gestureDriver: {
-        swipe: function (input) {
-          calls.push(input);
-          return { success: true };
-        }
-      }
-    });
-    assert.strictEqual(runtime.swipeComments(), true);
-  } finally {
-    if (previousSwipe === undefined) delete global.swipe;
-    else global.swipe = previousSwipe;
-  }
-
-  var coordinates = capture.commentSwipeCoordinates({ width: 1080, height: 2248 });
-  assert.deepStrictEqual(calls, [{
-    points: [
-      { x: coordinates.startX, y: coordinates.startY },
-      { x: coordinates.endX, y: coordinates.endY }
-    ],
-    durationMs: coordinates.durationMs
-  }]);
-}
-
-function testLiveCommentActionsUseGestureDriverForTapAndRoomSwipe() {
-  var calls = [];
-  var runtime = runtimeModule.createDefaultRuntime({
-    screenSize: function () { return { width: 1080, height: 2248 }; },
-    screenRecognizer: { extractScreen: function () { return { ocrRegions: {} }; } },
-    gestureDriver: {
-      tap: function (input) { calls.push({ type: "tap", input: input }); return { success: true }; },
-      swipe: function (input) { calls.push({ type: "swipe", input: input }); return { success: true }; }
-    }
-  });
-
-  var previousClick = global.click;
-  global.click = function () { throw new Error("live comment runtime must not call legacy click"); };
-  try {
-    assert.strictEqual(runtime.openLiveTab(), false);
-    assert.strictEqual(runtime.openFirstLive(), true);
-    assert.strictEqual(runtime.nextLive(), true);
-  } finally {
-    if (previousClick === undefined) delete global.click;
-    else global.click = previousClick;
-  }
-
-  assert.deepStrictEqual(calls, [
-    { type: "tap", input: { x: 388, y: 786, durationMs: 180 } },
-    {
-      type: "swipe",
-      input: {
-        points: [{ x: 540, y: 1753 }, { x: 540, y: 494 }],
-        durationMs: 520
-      }
-    }
-  ]);
-}
-
-function testLiveCommentLiveTabUsesGestureTap() {
-  var previousText = global.text;
-  var taps = [];
-  global.text = function () {
-    return {
-      find: function () {
-        return [{
-          bounds: function () {
-            return {
-              centerX: function () { return 540; },
-              centerY: function () { return 300; }
-            };
-          },
-          click: function () { throw new Error("live tab must not call node.click"); }
-        }];
-      }
-    };
-  };
-  try {
-    var runtime = runtimeModule.createDefaultRuntime({
-      screenSize: function () { return { width: 1080, height: 2248 }; },
-      gestureDriver: { tap: function (input) { taps.push(input); return { success: true }; } }
-    });
-    assert.strictEqual(runtime.openLiveTab(), true);
-  } finally {
-    if (previousText === undefined) delete global.text;
-    else global.text = previousText;
-  }
-  assert.deepStrictEqual(taps, [{ x: 540, y: 300, durationMs: 180 }]);
 }
 
 function testFastSearchUsesGestureDriverForSearchClicks() {
@@ -278,9 +179,6 @@ function testBuildsStableScopedCandidatesAndKeepsDuplicateSources() {
 
 testCommentRegionAndSwipeStayInsideTheRedBox();
 testAccessibilityGestureDriverBuildsAPath();
-testRuntimeUsesTheInjectedGestureDriverForCommentSwipe();
-testLiveCommentActionsUseGestureDriverForTapAndRoomSwipe();
-testLiveCommentLiveTabUsesGestureTap();
 testFastSearchUsesGestureDriverForSearchClicks();
 testParsesOnlyTextAfterTheUsernameSeparator();
 testJoinsAWrappedCommentUntilTheNextUsername();

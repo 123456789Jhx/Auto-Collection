@@ -33,6 +33,7 @@ function slotCandidate(slot: "MORNING" | "AFTERNOON", order: number): PublishInt
     slotExecutionId: `slot-${slot}`,
     bindingId: "binding-1",
     accountName: "恢复测试账号",
+    externalAccountKey: "external-recovery-account",
     priority: slot === "MORNING" ? 0 : 1,
     attemptCount: 0,
     stableOrder: order,

@@ -122,12 +122,16 @@ export function resolveTaskConfig(task: typeof collectionTasks.$inferSelect, ove
     liveCommentMode: override?.liveCommentMode ?? "agri_chatbot",
     liveCommentBotConfig: mergedLiveCommentBotConfig,
     liveCommentConfig: mergedLiveCommentConfig,
-    p3ExtensionsConfig: mergeNestedConfig(mergeNestedConfig(defaultP3ExtensionsConfig, task.p3ExtensionsConfig), override?.p3ExtensionsConfig)
+    p3ExtensionsConfig: mergeNestedConfig(mergeNestedConfig(defaultP3ExtensionsConfig, task.p3ExtensionsConfig), override?.p3ExtensionsConfig),
+    // 设备画像覆盖原样透传给手机端，由手机端与 APK 内置画像合并后再使用。
+    // 服务端不做字段合并，避免两端各有一套默认值而互相打架。
+    deviceProfile: override?.deviceProfile ?? null
   };
 }
 
 const defaultSearchKeywords = ["水稻病虫害", "玉米病虫害", "大棚蔬菜"];
 const defaultMatchKeywords = ["水稻", "玉米", "小麦", "农业", "农田", "病虫害", "农药", "大棚"];
+const defaultTaskCode = "task_agri_interest_default";
 
 export async function findCurrentTask(platform: string) {
   const [task] = await db
@@ -148,11 +152,14 @@ export async function findCurrentTask(platform: string) {
     return task;
   }
 
+  // 默认任务在租户内是单例（唯一键 tenant_id + task_code）。
+  // 当设备 platform 与既有默认任务不一致（如 android）时，裸 INSERT 会触发唯一键冲突，
+  // 进而让整个接口 500，所以这里必须做冲突兜底。
   const [created] = await db
     .insert(collectionTasks)
     .values({
       tenantId: config.tenantId,
-      taskCode: "task_agri_interest_default",
+      taskCode: defaultTaskCode,
       name: "农业兴趣浏览默认任务",
       platform,
       mode: "search",
@@ -164,9 +171,31 @@ export async function findCurrentTask(platform: string) {
       heartbeatMinutes: 1,
       status: "ENABLED"
     })
+    .onConflictDoNothing({ target: [collectionTasks.tenantId, collectionTasks.taskCode] })
     .returning();
 
-  return created;
+  if (created) {
+    return created;
+  }
+
+  // 唯一键已被占用：复用既有默认任务（platform 不同，或曾被软删除）
+  const [existing] = await db
+    .select()
+    .from(collectionTasks)
+    .where(and(eq(collectionTasks.tenantId, config.tenantId), eq(collectionTasks.taskCode, defaultTaskCode)))
+    .orderBy(desc(collectionTasks.createdAt))
+    .limit(1);
+
+  if (existing && existing.deletedAt) {
+    const [revived] = await db
+      .update(collectionTasks)
+      .set({ deletedAt: null, status: "ENABLED", updatedAt: new Date(), updatedBy: "system" })
+      .where(eq(collectionTasks.id, existing.id))
+      .returning();
+    return revived ?? null;
+  }
+
+  return existing ?? null;
 }
 
 export async function findTaskByCode(taskCode: string) {

@@ -9,10 +9,15 @@ var COMMENT_FALLBACK_SEPARATOR_PATTERN = /[,，.。!！?？、…—~～\-()（�
 var COMMENT_SPECIAL_SYMBOL_PATTERN = /[|｜\\／/_＿@＠#＃$＄%％^＾&＆*＊+＋=＝<＜>＞{｛}｝`｀©®™￥¥€£]/;
 var COMMENT_SWIPE_BASE_SCREEN = { width: 1080, height: 2248 };
 var COMMENT_SWIPE_BASE_COORDINATES = {
-  startX: 220,
-  startY: 1587,
-  endX: 220,
-  endY: 1962
+  startX: 279,
+  startY: 1607,
+  endXMin: 245,
+  endXMax: 338,
+  endY: 1880,
+  controlOffsetMin: 20,
+  controlOffsetMax: 60,
+  controlYMin: 1690,
+  controlYMax: 1790
 };
 
 function screenDimensions(input) {
@@ -33,14 +38,24 @@ function commentOcrRegions(size) {
   return { commentArea: commentOcrRegion(size) };
 }
 
-function commentSwipeCoordinates(size) {
+function commentSwipeCoordinates(size, randomInt) {
   var screen = screenDimensions(size);
   var options = layout.SWIPE_OPTIONS;
+  var base = COMMENT_SWIPE_BASE_COORDINATES;
+  randomInt = randomInt || function (min, max) { return Math.floor(min + Math.random() * (max - min + 1)); };
+  var endX = randomInt(base.endXMin, base.endXMax);
+  var controlX = (base.startX + endX) / 2 + randomInt(base.controlOffsetMin, base.controlOffsetMax);
+  var controlY = randomInt(base.controlYMin, base.controlYMax);
   return {
-    startX: Math.floor(COMMENT_SWIPE_BASE_COORDINATES.startX * screen.width / COMMENT_SWIPE_BASE_SCREEN.width),
-    startY: Math.floor(COMMENT_SWIPE_BASE_COORDINATES.startY * screen.height / COMMENT_SWIPE_BASE_SCREEN.height),
-    endX: Math.floor(COMMENT_SWIPE_BASE_COORDINATES.endX * screen.width / COMMENT_SWIPE_BASE_SCREEN.width),
-    endY: Math.floor(COMMENT_SWIPE_BASE_COORDINATES.endY * screen.height / COMMENT_SWIPE_BASE_SCREEN.height),
+    startX: Math.floor(base.startX * screen.width / COMMENT_SWIPE_BASE_SCREEN.width),
+    startY: Math.floor(base.startY * screen.height / COMMENT_SWIPE_BASE_SCREEN.height),
+    endX: Math.floor(endX * screen.width / COMMENT_SWIPE_BASE_SCREEN.width),
+    endY: Math.floor(base.endY * screen.height / COMMENT_SWIPE_BASE_SCREEN.height),
+    controlPoint: {
+      x: Math.floor(controlX * screen.width / COMMENT_SWIPE_BASE_SCREEN.width),
+      y: Math.floor(controlY * screen.height / COMMENT_SWIPE_BASE_SCREEN.height)
+    },
+    startHoldMs: 120,
     durationMs: options.durationMs
   };
 }
@@ -138,10 +153,11 @@ function swipeAndCheckEnd(deps) {
   if (!deps.captureScreen || !deps.images || !deps.images.clip || !deps.ocrEngine || !deps.ocrEngine.recognize) {
     return contract.failure("COMMENT_END_OCR_UNAVAILABLE", "history-end OCR dependency missing");
   }
-  var coordinates = commentSwipeCoordinates(deps.screenSize), attempts = 0, lastText = "";
+  var coordinates = deps.coordinates || commentSwipeCoordinates(deps.screenSize, deps.random);
+  var attempts = 0, lastText = "";
   return driver.swipeAndHold({ points: [{ x: coordinates.startX, y: coordinates.startY },
-    { x: coordinates.endX, y: coordinates.endY }], durationMs: coordinates.durationMs,
-    holdMs: 2000, shouldStop: deps.shouldStop }, function (isHeld) {
+    { x: coordinates.endX, y: coordinates.endY }], controlPoint: coordinates.controlPoint, durationMs: coordinates.durationMs,
+    startHoldMs: coordinates.startHoldMs, holdMs: 2000, shouldStop: deps.shouldStop }, function (isHeld) {
     while (isHeld() && attempts < 20) {
       if (deps.shouldStop()) return contract.stopped();
       if (deps.sleep(100) === false) return contract.failure("COMMENT_HOLD_WAIT_FAILED", "hold wait failed");

@@ -63,32 +63,83 @@ function requireWithModuleLoadLog(loaderName, path, resolvedPath, source) {
 }
 
 function localBaselineRequire(path) {
+  if (bizScriptRuntime && bizScriptRuntime.state.source === "overlay" && /^(features|domain)\//.test(path)) {
+    throw new Error("mixed business sources are forbidden in a validated overlay engine: " + path);
+  }
   return requireWithModuleLoadLog("loadBaselineScript", path, files.join(SCRIPT_DIR, path), "baseline");
 }
 
 function localRequire(path) {
   var normalized = String(path || "").replace(/\\/g, "/");
-  if (normalized.indexOf("features/") === 0 || normalized.indexOf("domain/") === 0) {
-    var overridePath = files.join(BIZ_SCRIPT_CURRENT_DIR, normalized);
-    if (files.exists(overridePath)) {
-      return requireWithModuleLoadLog("loadBizScript", path, overridePath, "overlay");
+  var business = /^(features|domain)\//.test(normalized);
+  try {
+    return requireWithModuleLoadLog("loadBizScript", path, bizScriptRuntime.resolve(normalized),
+      business ? bizScriptRuntime.state.source : "baseline");
+  } catch (error) {
+    if (business) {
+      try { bizScriptRuntime.markFailed(error); } catch (markError) {
+        console.info("[WARN] biz_module_rejection_record_failed error=" + String(markError));
+      }
     }
+    throw error;
   }
-  return requireWithModuleLoadLog("loadBizScript", path, files.join(SCRIPT_DIR, path), "baseline");
 }
 
-var config = localRequire("config.js");
+var config = localBaselineRequire("config.js");
 config.runtime.scriptDir = SCRIPT_DIR;
 config.runtime.bizScriptRoot = BIZ_SCRIPT_ROOT;
+var bizScriptRuntime = localBaselineRequire("app/biz-script-runtime.js").createBizScriptRuntime({
+  scriptDir: SCRIPT_DIR,
+  currentDir: BIZ_SCRIPT_CURRENT_DIR,
+  deps: localBaselineRequire("app/biz-script-updater.js").createDefaultDeps(config)
+});
+config.runtime.bizScriptRuntimeState = bizScriptRuntime.state;
+config.runtime.bizScriptsVersion = bizScriptRuntime.state.version;
+if (typeof events !== "undefined" && events.on) events.on("exit", bizScriptRuntime.cleanup);
+
+// 设备画像：按机型决定截图授权流程、输出目录候选、打开抖音后的等待区间等行为。
+// 内置画像来自 device-profiles.js，服务端可在拉取任务配置后覆盖（见 control-loop.js）。
+var deviceProfiles = localBaselineRequire("device-profiles.js");
+var deviceProfile = deviceProfiles.resolveDeviceProfile({
+  device: typeof device !== "undefined" ? device : null,
+  config: config
+});
+config.deviceProfile.resolved = deviceProfile;
+console.info("[INFO] device_profile_resolved " + JSON.stringify({
+  key: deviceProfile.key,
+  label: deviceProfile.label,
+  matchedBy: deviceProfile.matchedBy,
+  source: deviceProfile.source,
+  model: typeof device !== "undefined" && device ? device.model : "",
+  brand: typeof device !== "undefined" && device ? device.brand : "",
+  sdkInt: typeof device !== "undefined" && device ? device.sdkInt : "",
+  outputRoots: deviceProfile.values.outputRoots
+}));
 
 function ensureWritableDir(dirPath) {
+  var stamp = new Date().getTime() + "-" + Math.floor(Math.random() * 1000000);
+  var probePath = files.join(dirPath, ".write-probe-" + stamp);
+  var payload = "probe-" + stamp;
   try {
-    files.createWithDirs(files.join(dirPath, ".write-test"));
-    files.remove(files.join(dirPath, ".write-test"));
-    return true;
-  } catch (error) {
+    // createWithDirs 在失败时返回 false 而不抛异常，必须同时判断返回值
+    if (files.createWithDirs(probePath) === false) {
+      return false;
+    }
+  } catch (createError) {
     return false;
   }
+  var writable = false;
+  try {
+    files.write(probePath, payload);
+    writable = String(files.read(probePath)) === String(payload);
+  } catch (writeError) {
+    writable = false;
+  }
+  try {
+    files.remove(probePath);
+  } catch (removeError) {
+  }
+  return writable;
 }
 
 function resolveOutputBaseDir() {
@@ -96,14 +147,9 @@ function resolveOutputBaseDir() {
     return config.output.fixedBaseDir;
   }
   var folderName = config.output.folderName || "datasource";
-  var visibleRoots = [
-    "/storage/emulated/0/燎原星火",
-    "/sdcard/燎原星火",
-    "/storage/emulated/0/Download/燎原星火",
-    "/sdcard/Download/燎原星火",
-    "/storage/emulated/0/AgriVideoCollector",
-    "/sdcard/AgriVideoCollector"
-  ];
+  // 候选顺序来自设备画像：不具备公共目录写权限的机型（如小米14 未授予
+  // 「所有文件访问」）画像里 outputRoots 为空，直接使用脚本目录，避免逐个失败探测。
+  var visibleRoots = deviceProfiles.pickOutputRoots(deviceProfile);
   for (var i = 0; i < visibleRoots.length; i++) {
     var visibleBaseDir = files.join(visibleRoots[i], folderName);
     if (ensureWritableDir(visibleBaseDir)) {
@@ -121,6 +167,7 @@ if (config.output.useProjectDir) {
   config.output.xmlDir = files.join(config.output.baseDir, "页面XML");
 }
 
+try {
 var createLogger = localRequire("core/logger.js").createLogger;
 var createPermissionManager = localRequire("core/permission.js").createPermissionManager;
 var createStorage = localRequire("core/storage.js").createStorage;
@@ -161,8 +208,10 @@ var createPhaseRunner = localRequire("app/phase-runner.js").createPhaseRunner;
 var createLiveCommentRunner = localRequire("features/live-comment/runner.js").createLiveCommentRunner;
 var createCommerceCardLiveRunner = localRequire("features/commerce-card-live/runner.js").createCommerceCardLiveRunner;
 var createCollectorApp = localRequire("app/collector-app.js").createCollectorApp;
+var accessibility = localRequire("core/accessibility.js");
 
 var logger = createLogger(config);
+logger.info("业务脚本运行版本", bizScriptRuntime.state);
 var permissions = createPermissionManager(config, logger);
 var storage = createStorage(config, logger);
 var uploader = createUploader(config, logger, storage);
@@ -198,6 +247,10 @@ var context = {
   screenRecognizer: screenRecognizer,
   matcher: matcher,
   floatyControl: floatyControl,
+  accessibility: accessibility,
+  // 设备画像：feature 通过 context 读取，避免依赖 overlay 到基座文件的相对 require。
+  deviceProfiles: deviceProfiles,
+  deviceProfile: deviceProfile,
   douyin: douyin,
   counters: {
     viewedCount: 0,
@@ -282,4 +335,25 @@ context.liveCommentRunner = createLiveCommentRunner(context);
 context.commerceCardLiveRunner = createCommerceCardLiveRunner(context);
 
 var app = createCollectorApp(context);
-app.main();
+} catch (startupError) {
+  try { bizScriptRuntime.markFailed(startupError); } catch (markError) {
+    console.info("[WARN] biz_startup_rejection_record_failed error=" + String(markError));
+  }
+  throw startupError;
+}
+try {
+  app.main();
+} catch (mainError) {
+  // app.main() 抛出会直接终止引擎。这里显式记录，避免出现无法排查的"静默死亡"。
+  try {
+    if (context.logger && typeof context.logger.error === "function") {
+      context.logger.error("Agent 主进程异常退出", { message: String(mainError) });
+    } else {
+      console.info("[ERROR] agent_main_aborted " + String(mainError));
+    }
+  } catch (logError) {
+    try { console.info("[ERROR] agent_main_aborted " + String(mainError)); } catch (consoleError) {
+    }
+  }
+  throw mainError;
+}

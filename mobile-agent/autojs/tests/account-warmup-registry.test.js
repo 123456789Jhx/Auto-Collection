@@ -31,15 +31,7 @@ function testLoadsOnlyAllowlistedFeatureKeys() {
       if (/video-warmup-foundation/.test(path)) {
         return { createVideoWarmupFoundationTask: function () { return { run: function () { return { status: "VIDEO_WARMUP_DOUYIN_OPENED" }; } }; } };
       }
-      if (/live-comment-entry-runtime/.test(path)) {
-        return { createDefaultRuntime: function () { return {}; } };
-      }
-      if (/live-comment-entry-comment-runner/.test(path)) {
-        return { createCommentCaptureRunner: function () { return {}; } };
-      }
-      if (/live-comment-entry/.test(path)) {
-        return { createLiveCommentEntryTask: function () { return { run: function () { return { status: "LIVE_COMMENT_ENTRY_ENTERED" }; } }; } };
-      }
+      assert.doesNotMatch(path, /live-comment-entry|domain\/live-comment-capture/);
       return { createTargetLiveEntryTask: function () { return { run: function () {} }; } };
     }
   });
@@ -55,13 +47,9 @@ function testLoadsOnlyAllowlistedFeatureKeys() {
     "features/account-warmup/live-session-runner.js",
     "features/account-warmup/live-transient-popup.js",
     "features/account-warmup/video-warmup-foundation.js",
-    "features/account-warmup/live-comment-entry.js",
-    "features/account-warmup/live-comment-entry-runtime.js",
-    "features/account-warmup/live-comment-entry-comment-runner.js",
-    "domain/live-comment-capture.js",
     "features/publish-video/douyin-post-publish-cleanup.js"
   ]);
-  assert.deepStrictEqual(registry.create("live_comment_entry").run(), { status: "LIVE_COMMENT_ENTRY_ENTERED" });
+  assert.throws(function () { registry.create("live_comment_entry"); }, /unsupported account warmup feature/);
   assert.strictEqual(interactionRunnerCreated, 0);
   assert.strictEqual(liveSessionRunnerCreated, 0);
   assert.strictEqual(typeof registry.create("target_live_interaction").run, "function");
@@ -70,28 +58,19 @@ function testLoadsOnlyAllowlistedFeatureKeys() {
   assert.deepStrictEqual(registry.create("video_warmup").run(), { status: "VIDEO_WARMUP_DOUYIN_OPENED" });
   assert.deepStrictEqual(registry.cleanupAfterStop({ taskId: "run-1", batchId: "batch-1" }), { completed: true });
   assert.deepStrictEqual(cleanupPayloads, [{ taskId: "run-1" }]);
-  assert.strictEqual(loaded.length, 15);
+  assert.strictEqual(loaded.length, 11);
   assert.throws(function () { registry.create("../../app/control-loop.js"); }, /unsupported account warmup feature/);
 }
 
 testLoadsOnlyAllowlistedFeatureKeys();
 
-function testPreloadsAllLiveCommentDependenciesBeforeTaskThread() {
+function testPreloadsWarmupDependenciesBeforeTaskThread() {
   var startupPhase = true;
   var lateLoads = [];
   var context = {};
   function load(path) {
     if (!startupPhase) lateLoads.push(path);
-    if (/live-comment-entry-comment-runner/.test(path)) {
-      return require("../features/account-warmup/live-comment-entry-comment-runner.js");
-    }
-    if (/live-comment-entry-runtime/.test(path)) {
-      return { createDefaultRuntime: function () { return {}; } };
-    }
-    if (/live-comment-entry\.js$/.test(path)) {
-      return require("../features/account-warmup/live-comment-entry.js");
-    }
-    if (/live-comment-capture/.test(path)) return {};
+    assert.doesNotMatch(path, /live-comment-entry|domain\/live-comment-capture/);
     if (/douyin-post-publish-cleanup/.test(path)) {
       return { createDouyinPostPublishCleanup: function () { return { run: function () { return { completed: true }; } }; } };
     }
@@ -111,10 +90,12 @@ function testPreloadsAllLiveCommentDependenciesBeforeTaskThread() {
 
   var registry = createRegistry(context);
   startupPhase = false;
-  registry.create("live_comment_entry");
+  registry.create("target_live_interaction");
+  registry.create("video_warmup");
+  registry.cleanupAfterStop({ taskId: "run-preloaded" });
 
   assert.deepStrictEqual(lateLoads, []);
 }
 
-testPreloadsAllLiveCommentDependenciesBeforeTaskThread();
+testPreloadsWarmupDependenciesBeforeTaskThread();
 console.log("account warmup registry tests passed");

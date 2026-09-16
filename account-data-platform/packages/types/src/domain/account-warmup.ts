@@ -51,7 +51,6 @@ export const accountWarmupLiveCommentEntryConfigSchema = z.object({
 export const accountWarmupFeatureKeySchema = z.enum([
   "target_live_interaction",
   "video_warmup",
-  "live_comment_entry",
   "isolated_live_comment_entry"
 ]);
 
@@ -67,12 +66,6 @@ const accountWarmupVideoRunPayloadSchema = z.object({
   config: accountWarmupVideoConfigSchema
 }).strict();
 
-const accountWarmupLiveCommentEntryRunPayloadSchema = z.object({
-  featureKey: z.literal("live_comment_entry"),
-  batchId: batchIdSchema,
-  config: accountWarmupLiveCommentEntryConfigSchema
-}).strict();
-
 const accountWarmupIsolatedLiveCommentEntryRunPayloadSchema = z.object({
   featureKey: z.literal("isolated_live_comment_entry"),
   batchId: batchIdSchema,
@@ -84,7 +77,6 @@ const accountWarmupIsolatedLiveCommentEntryRunPayloadSchema = z.object({
 export const accountWarmupRunPayloadSchema = z.discriminatedUnion("featureKey", [
   accountWarmupTargetLiveRunPayloadSchema,
   accountWarmupVideoRunPayloadSchema,
-  accountWarmupLiveCommentEntryRunPayloadSchema,
   accountWarmupIsolatedLiveCommentEntryRunPayloadSchema
 ]);
 

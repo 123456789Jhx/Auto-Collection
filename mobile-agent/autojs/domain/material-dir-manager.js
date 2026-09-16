@@ -67,10 +67,25 @@ function createPublishMaterialManager(dependencies) {
   }
 
   function ensureDirectory(path, keepFile) {
-    if (filesApi.exists(path)) return;
-    var marker = joinPath(path, ".keep");
-    filesApi.createWithDirs(marker);
-    if (!keepFile) filesApi.remove(marker);
+    if (!path) {
+      logger.warn("素材目录为空，已跳过创建");
+      return false;
+    }
+    try {
+      if (filesApi.exists(path)) return true;
+      var marker = joinPath(path, ".keep");
+      // createWithDirs 失败时可能返回 false，也可能抛异常，两者都必须兜住，
+      // 否则未捕获异常会中断整个脚本引擎。
+      if (filesApi.createWithDirs(marker) === false) {
+        logger.warn("素材目录创建失败", { path: path });
+        return false;
+      }
+      if (!keepFile) filesApi.remove(marker);
+    } catch (error) {
+      logger.warn("素材目录创建异常", { path: path, message: errorMessage(error) });
+      return false;
+    }
+    return true;
   }
 
   function canRemoveDirectory(path) {

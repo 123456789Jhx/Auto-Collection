@@ -89,6 +89,9 @@ function createAccountWarmupCommandBridge(context) {
         if (!cleanupModule || typeof cleanupModule.createDouyinPostPublishCleanup !== "function") continue;
         stopCleanup = cleanupModule.createDouyinPostPublishCleanup({
           logger: logger,
+          context: context,
+          deviceProfile: context.deviceProfile,
+          accessibility: context.accessibility,
           cooldownMs: 0,
           isPublishing: function () { return false; }
         });
@@ -136,21 +139,6 @@ function createAccountWarmupCommandBridge(context) {
         progress[key] = event[key];
       }
     });
-    // Later stages such as SWIPING_COMMENTS do not repeat the candidate list.
-    // Keep the latest partial capture so a concurrent manual STOP cannot erase
-    // comments already acknowledged by the device.
-    if (runState.featureKey === "live_comment_entry" && runState.latestProgress) {
-      if (!Array.isArray(progress.comments) && Array.isArray(runState.latestProgress.comments)) {
-        progress.comments = runState.latestProgress.comments;
-      }
-      if (progress.commentCount === undefined && runState.latestProgress.commentCount !== undefined) {
-        progress.commentCount = runState.latestProgress.commentCount;
-      }
-      if (progress.commentSourceCount === undefined && runState.latestProgress.commentSourceCount !== undefined) {
-        progress.commentSourceCount = runState.latestProgress.commentSourceCount;
-      }
-    }
-    if (runState.featureKey === "live_comment_entry") runState.latestProgress = progress;
     try {
       ack(runState.command, "RUNNING", progress);
     } catch (error) {
@@ -200,23 +188,8 @@ function createAccountWarmupCommandBridge(context) {
     return runState.stopCleanupResult;
   }
 
-  function preserveLiveEntryProgress(runState, result) {
-    result = result || {};
-    if (!runState || runState.featureKey !== "live_comment_entry") return result;
-    var preserved = {};
-    Object.keys(result).forEach(function (key) { preserved[key] = result[key]; });
-    preserved.featureKey = runState.featureKey;
-    preserved.batchId = runState.batchId;
-    preserved.stageHistory = runState.stageHistory.slice();
-    if (!preserved.stage && preserved.stageHistory.length) {
-      preserved.stage = preserved.stageHistory[preserved.stageHistory.length - 1];
-    }
-    return preserved;
-  }
-
   function finishCommand(command, status, result) {
     if (!active || active.commandId !== command.id) return false;
-    result = preserveLiveEntryProgress(active, result);
     active.terminal = { status: status, result: result || {} };
     var response;
     try {
@@ -237,29 +210,8 @@ function createAccountWarmupCommandBridge(context) {
   function requiresImmediateCleanup(result) {
     return !!(result && (
       result.reasonCode === "PLATFORM_VERIFICATION" ||
-      result.status === "LIVE_COMMENT_ENTRY_PLATFORM_VERIFICATION" ||
       result.cleanupRequired === true
     ));
-  }
-
-  function liveEntryStopResult(runState, cleanupResult) {
-    var progress = runState && runState.latestProgress || {};
-    var result = {
-      status: "LIVE_COMMENT_ENTRY_STOPPED",
-      stage: "STOPPED",
-      targetCommandId: runState && runState.commandId,
-      cleanup: cleanupResult
-    };
-    if (Array.isArray(progress.comments)) {
-      result.comments = progress.comments;
-      result.commentCount = progress.comments.length;
-      result.captureStatus = "LIVE_COMMENT_ENTRY_PARTIAL";
-      result.captureCompleted = false;
-    } else if (progress.commentCount !== undefined) {
-      result.commentCount = progress.commentCount;
-    }
-    if (progress.commentSourceCount !== undefined) result.commentSourceCount = progress.commentSourceCount;
-    return result;
   }
 
   function runCommand(command) {
@@ -284,7 +236,6 @@ function createAccountWarmupCommandBridge(context) {
       stopRequested: false,
       stopCleanupStarted: false,
       stageHistory: [],
-      latestProgress: null,
       command: command,
       thread: null
     };
@@ -315,15 +266,9 @@ function createAccountWarmupCommandBridge(context) {
           runState.stopRequested = true;
           result.cleanup = cleanupImmediatelyAfterStop(runState);
         }
-        if (runState.featureKey === "live_comment_entry" && result && result.status === "STOPPED") {
-          result.status = "LIVE_COMMENT_ENTRY_STOPPED";
-        }
         var done = result && (
           result.status === "TARGET_LIVE_ENTERED" ||
           result.status === "VIDEO_WARMUP_DOUYIN_OPENED" ||
-          result.status === "LIVE_COMMENT_ENTRY_ENTERED" ||
-          result.status === "LIVE_COMMENT_ENTRY_CAPTURED" ||
-          result.status === "LIVE_COMMENT_ENTRY_STOPPED" ||
           result.status === "STOPPED"
         );
         finishCommand(command, done ? "DONE" : "FAILED", result || { status: "FAILED" });
@@ -352,17 +297,12 @@ function createAccountWarmupCommandBridge(context) {
     runState.stopRequested = true;
     interruptWorker(runState);
     var cleanupResult = cleanupImmediatelyAfterStop(runState);
-    var runStopResult = runState.featureKey === "live_comment_entry"
-      ? liveEntryStopResult(runState, cleanupResult)
-      : { status: "STOPPED", cleanup: cleanupResult };
-    ack(command, "DONE", runState.featureKey === "live_comment_entry"
-      ? runStopResult
-      : {
-        status: "STOPPED",
-        targetCommandId: String(payload.targetCommandId || ""),
-        cleanup: cleanupResult
-      });
-    finishCommand(runState.command, "DONE", runStopResult);
+    ack(command, "DONE", {
+      status: "STOPPED",
+      targetCommandId: String(payload.targetCommandId || ""),
+      cleanup: cleanupResult
+    });
+    finishCommand(runState.command, "DONE", { status: "STOPPED", cleanup: cleanupResult });
   }
 
   function videoStopCommand(command) {

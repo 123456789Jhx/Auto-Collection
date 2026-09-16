@@ -1,4 +1,5 @@
 // 职责：按关键词搜索并停留在经过稳定区域文本验证的目标直播间。
+var postPublishCleanupModule = require("../publish-video/douyin-post-publish-cleanup.js");
 function createTargetLiveEntryTask(options) {
   options = options || {};
   var context = options.context || {};
@@ -47,7 +48,11 @@ function createTargetLiveEntryTask(options) {
     for (var round = 0; round < maxRounds; round++) {
       try {
         if (!runtime.openDouyin()) throw new Error("DOUYIN_OPEN_FAILED");
-        runtime.waitRandom(7000, 7000);
+        // 打开抖音后的等待区间取自设备画像（不同机型冷启动耗时差异很大）。
+        var openWait = typeof runtime.openDouyinWaitRange === "function"
+          ? runtime.openDouyinWaitRange()
+          : [5000, 7000];
+        runtime.waitRandom(openWait[0], openWait[1]);
         if (stopped(control)) return { status: "STOPPED", attempts: attempts };
         var searchResult = runtime.openSearch(payload.targetKeyword, control);
         if (searchResult && searchResult.stopped) return { status: "STOPPED", attempts: attempts };
@@ -183,6 +188,24 @@ function createRuntime(context, logger, fastSearch) {
     sleep(Math.floor(min + Math.random() * (max - min + 1)));
   }
 
+  // 打开抖音后的等待区间取自设备画像（不同机型冷启动耗时差异很大）。
+  // 画像不可用或取值非法时回退到历史默认值。
+  var DEFAULT_OPEN_DOUYIN_WAIT_MS = [5000, 7000];
+
+  function openDouyinWaitRange() {
+    var profile = context.deviceProfile;
+    var helper = context.deviceProfiles;
+    if (!profile || !helper || typeof helper.pickWaitRange !== "function") {
+      return DEFAULT_OPEN_DOUYIN_WAIT_MS.slice();
+    }
+    try {
+      return helper.pickWaitRange(profile.values && profile.values.openDouyinWaitMs, DEFAULT_OPEN_DOUYIN_WAIT_MS);
+    } catch (error) {
+      return DEFAULT_OPEN_DOUYIN_WAIT_MS.slice();
+    }
+  }
+
+
   function screenSize() {
     return {
       width: Math.max(1, Number(typeof device !== "undefined" && device.width || 1080)),
@@ -301,6 +324,22 @@ function createRuntime(context, logger, fastSearch) {
   }
 
   function recover() {
+    if (String(context.deviceProfile && context.deviceProfile.key || "") === "xiaomi_14") {
+      var createCleanup = postPublishCleanupModule.createDouyinPostPublishCleanup;
+      if (typeof createCleanup !== "function") {
+        logger.warn("小米14目标直播恢复缺少共享清理器");
+        return false;
+      }
+      var cleanup = createCleanup({
+        context: context,
+        logger: logger,
+        cooldownMs: 0,
+        isPublishing: function () { return false; }
+      });
+      var cleanupResult = cleanup && typeof cleanup.run === "function"
+        ? cleanup.run({ taskId: "target-live-recovery" }) : null;
+      return !!(cleanupResult && cleanupResult.completed === true);
+    }
     if (typeof recents === "function") recents();
     waitRandom(1000, 1600);
     var card = findDouyinCard();
@@ -315,7 +354,9 @@ function createRuntime(context, logger, fastSearch) {
         } catch (error) {}
         try { target = target.parent && target.parent(); } catch (parentError) { target = null; }
       }
-      if (bounds) swipe(bounds.right - 10, bounds.centerY(), bounds.left + 10, bounds.centerY(), 420);
+      if (bounds) {
+        swipe(bounds.right - 10, bounds.centerY(), bounds.left + 10, bounds.centerY(), 420);
+      }
     }
     waitRandom(700, 1200);
     if (typeof home === "function") home();
@@ -324,6 +365,7 @@ function createRuntime(context, logger, fastSearch) {
 
   return {
     openDouyin: function () { return douyin.openApp && douyin.openApp(); },
+    openDouyinWaitRange: openDouyinWaitRange,
     openSearch: function (keyword, control) {
       if (fastSearch && fastSearch.openSearch) return fastSearch.openSearch(keyword, control);
       return douyin.openSearch && douyin.openSearch(keyword);
@@ -384,6 +426,7 @@ function invokeNextLive(douyin) {
 
 module.exports = {
   createTargetLiveEntryTask: createTargetLiveEntryTask,
+  createTargetLiveRuntime: createRuntime,
   clickFirstLiveCard: clickFirstLiveCard,
   detectCommerceCart: detectCommerceCart,
   invokeNextLive: invokeNextLive

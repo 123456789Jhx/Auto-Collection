@@ -37,6 +37,7 @@ beforeAll(async () => {
     platform: "DOUYIN",
     accountName: `重启测试账号-${suffix.slice(0, 8)}`,
     accountNo: `douyin-${suffix}`,
+    externalAccountKey: `external-${suffix}`,
     createdBy: actor,
     updatedBy: actor
   }).returning();

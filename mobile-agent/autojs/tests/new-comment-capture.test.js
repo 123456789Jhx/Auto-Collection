@@ -131,13 +131,55 @@ test("comment OCR stays bounded while live-room geometry remains legacy-equivale
   });
 });
 
-test("comment swipe stays inside the approved comment region", function () {
-  assert.deepEqual(isolated.commentSwipeCoordinates({ width: 1080, height: 2248 }), {
-    startX: 220,
-    startY: 1587,
-    endX: 220,
-    endY: 1962,
-    durationMs: 520
+test("comment OCR uses the new rectangle with scaled endpoints", function () {
+  [
+    [{ width: 1080, height: 2248 }, { x: 12, y: 1556, w: 763, h: 327 }],
+    [{ width: 720, height: 1600 }, { x: 8, y: 1107, w: 509, h: 233 }],
+    [{ width: 540, height: 1124 }, { x: 6, y: 778, w: 382, h: 164 }]
+  ].forEach(function (entry) {
+    assert.deepEqual(isolated.commentOcrRegion(entry[0]), entry[1]);
+  });
+});
+
+test("comment swipe randomizes the endpoint and both control coordinates once", function () {
+  var requested = [];
+  var result = isolated.commentSwipeCoordinates({ width: 1080, height: 2248 }, function (min, max) {
+    requested.push([min, max]);
+    return min;
+  });
+  assert.deepEqual(result, {
+    startX: 279, startY: 1607, endX: 245, endY: 1880,
+    controlPoint: { x: 282, y: 1690 }, startHoldMs: 120, durationMs: 520
+  });
+  assert.deepEqual(requested, [[245, 338], [20, 60], [1690, 1790]]);
+});
+
+test("random quadratic paths stay inside the OCR rectangle and never turn upward", function () {
+  [{ width: 1080, height: 2248 }, { width: 720, height: 1600 },
+    { width: 1440, height: 3200 }].forEach(function (size) {
+    for (var combination = 0; combination < 8; combination += 1) {
+      var draw = 0;
+      var coordinates = isolated.commentSwipeCoordinates(size, function (min, max) {
+        return combination & (1 << draw++) ? max : min;
+      });
+      assert.equal(draw, 3);
+      var start = { x: coordinates.startX, y: coordinates.startY };
+      var end = { x: coordinates.endX, y: coordinates.endY };
+      var control = coordinates.controlPoint;
+      var region = isolated.commentOcrRegion(size);
+      assert.ok(control.y > start.y && control.y < end.y);
+      assert.ok(control.x - start.x > (end.x - start.x) * (control.y - start.y) / (end.y - start.y));
+      var previousY = start.y;
+      for (var step = 0; step <= 40; step += 1) {
+        var t = step / 40, u = 1 - t;
+        var x = u * u * start.x + 2 * u * t * control.x + t * t * end.x;
+        var y = u * u * start.y + 2 * u * t * control.y + t * t * end.y;
+        assert.ok(x >= region.x && x < region.x + region.w);
+        assert.ok(y >= region.y && y < region.y + region.h);
+        assert.ok(y >= previousY);
+        previousY = y;
+      }
+    }
   });
 });
 

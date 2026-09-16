@@ -1,5 +1,5 @@
 import { CheckCircleFilled, ClockCircleOutlined, DownOutlined, ExclamationCircleFilled, EyeOutlined, MobileOutlined, ReloadOutlined, StopOutlined } from "@ant-design/icons";
-import { Alert, Button, Col, Empty, Modal, Row, Skeleton, Space, Statistic, Tooltip, Typography } from "antd";
+import { Alert, Button, Col, Modal, Row, Skeleton, Space, Statistic, Tooltip, Typography } from "antd";
 import { useState } from "react";
 import type { LiveCommentEntryMobileCommand } from "../../lib/api-client-live-comment-entry";
 import type { LiveCommentEntryDispatchFailure } from "../../lib/live-comment-entry-batch";
@@ -92,11 +92,6 @@ function DeviceStatusCard(props: {
         <strong key={row.viewState.stage} className="live-device-stage">{displayStage(row.viewState.stageLabel)}</strong>
         <div className="live-device-activity" aria-hidden="true"><span /></div>
       </div>
-      <div className="live-device-history-preview">
-        <span className="live-device-label">阶段记录 <span className="live-device-history-count">{stages.length}</span></span>
-        <ol>{stages.slice(-3).map((stage, index) => <li key={`${stage}-${index}`}>{displayStage(stage)}</li>)}</ol>
-        {!stages.length ? <span className="live-device-muted">等待阶段回执</span> : null}
-      </div>
       {resultText !== "-" ? (
         <div className="live-device-result" aria-label="结果 / 错误">
           {tone === "error" ? <ExclamationCircleFilled /> : <CheckCircleFilled />}
@@ -116,10 +111,8 @@ function DeviceStatusCard(props: {
       <footer className="live-device-footer">
         <span className="live-device-updated"><ClockCircleOutlined /><span>最后更新 <time dateTime={updatedAt || undefined}>{formatDateTime(updatedAt)}</time></span></span>
         <Space size={4} className="live-device-actions">
-          <Tooltip title={expanded ? "收起记录" : "展开完整记录"}>
-            <Button type="text" icon={<DownOutlined className="live-device-disclosure" data-expanded={expanded} />} aria-label={`${expanded ? "收起" : "展开"} ${deviceLabel} 记录`} aria-expanded={expanded} aria-controls={detailId} onClick={() => setExpanded(!expanded)} />
-          </Tooltip>
-          <Tooltip title="查看详情"><Button icon={<EyeOutlined />} aria-label={`查看 ${deviceLabel} 详情`} onClick={() => props.onViewDetails(row)} /></Tooltip>
+          <Button type="text" icon={<DownOutlined className="live-device-disclosure" data-expanded={expanded} />} aria-label={`${expanded ? "收起" : "展开"} ${deviceLabel} 记录`} aria-expanded={expanded} aria-controls={detailId} onClick={() => setExpanded(!expanded)}>阶段记录 {stages.length}</Button>
+          <Tooltip title="查看详情"><Button icon={<EyeOutlined />} aria-label={`查看 ${deviceLabel} 详情`} onClick={() => props.onViewDetails(row)}>查看评论</Button></Tooltip>
           {row.viewState.active ? (
             <Tooltip title="停止该设备任务"><Button danger icon={<StopOutlined />} aria-label={`停止 ${deviceLabel}`} disabled={row.viewState.key === "stopping" || !row.deviceCode} loading={props.stopping} onClick={() => props.onStop(row)} /></Tooltip>
           ) : null}
@@ -149,13 +142,13 @@ export function LiveCommentEntryProgress(props: {
   const capturedCount = props.rows.filter(isLiveCommentEntryCaptureCompleted).length;
 
   return (
-    <section className="ops-panel live-device-progress">
-      <div className="ops-panel-head">
-        <span>执行进度</span>
-        <span className="ops-small">{props.activeBatchId ? `批次 ${props.activeBatchId.slice(0, 8)}` : "尚未开始"}</span>
+    <section className="ops-panel live-device-progress" aria-label="执行进度与评论结果">
+      <div className="ops-panel-head lc-progress-head">
+        <div className="lc-section-title"><span className="lc-section-number">02</span><div><h2>执行进度</h2><p>选择设备查看评论结果与完整记录</p></div></div>
+        <span className="lc-batch-label">{props.activeBatchId ? `批次 ${props.activeBatchId.slice(0, 8)}` : "等待创建任务"}</span>
       </div>
       <div className="ops-panel-body">
-        <Row gutter={[24, 16]}>
+        <Row gutter={[0, 16]} className="lc-progress-stats">
           <Col xs={12} sm={6}><Statistic title="设备总数" value={props.deviceTotal} /></Col>
           <Col xs={12} sm={6}><Statistic title="执行中" value={summary.running} /></Col>
           <Col xs={12} sm={6}><Statistic title="抓取完成" value={capturedCount} /></Col>
@@ -201,7 +194,14 @@ export function LiveCommentEntryProgress(props: {
         {props.rows.map((row) => <DeviceStatusCard key={row.id} row={row} stopping={props.stoppingCommandIds.has(row.id)} onStop={props.onStop} onViewDetails={props.onViewDetails} />)}
         {props.loading && !props.rows.length ? <div className="live-device-skeleton"><Skeleton active paragraph={{ rows: 3 }} /></div> : null}
       </div>
-      {!props.loading && !props.rows.length ? <Empty className="live-device-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description={props.activeBatchId ? "等待设备领取任务" : "尚未下发任务"} /> : null}
+      {!props.loading && !props.loadError && !props.rows.length ? (
+        <div className="lc-progress-empty">
+          <div className="lc-empty-device" aria-hidden="true"><MobileOutlined /><span /><span /></div>
+          <h3>{props.activeBatchId ? "等待设备领取任务" : "准备好，开始一次新的抓取"}</h3>
+          <p>{props.activeBatchId ? "设备回传后，这里会展示每台设备的实时执行阶段。" : "填写关键词并选择设备。开始后，在这里查看进度和评论结果。"}</p>
+          <div className="lc-empty-flow"><span>选择设备</span><i /><span>抓取评论</span><i /><span>整理入库</span></div>
+        </div>
+      ) : null}
       <Modal
         open={Boolean(props.warningAlert)}
         title="任务异常警告"

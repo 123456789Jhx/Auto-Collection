@@ -116,6 +116,114 @@ function createPermissionManager(config, logger, deps) {
     return false;
   }
 
+  // 截图授权流程由设备画像控制，取值见 device-profiles.js：
+  //   bringSelfToForeground —— MIUI/HyperOS 会拦截「后台弹出界面」，后台发起的
+  //                            授权弹窗能显示但点不动，需要先切前台再申请。
+  //   useWorkerThread       —— requestScreenCapture 会阻塞到用户处理弹窗为止，
+  //                            主线程同步调用会冻结事件分发导致弹窗点不动。
+  // 这里的默认值与画像默认值一致，画像缺失时行为不变。
+  var DEFAULT_CAPTURE_POLICY = {
+    bringSelfToForeground: true,
+    foregroundWaitMs: 800,
+    useWorkerThread: true,
+    timeoutMs: 120000
+  };
+
+  function resolveCapturePolicy() {
+    var profile = deps.deviceProfile ||
+      (config && config.deviceProfile && config.deviceProfile.resolved) || null;
+    var values = (profile && profile.values && profile.values.capture) || {};
+    var policy = {};
+    Object.keys(DEFAULT_CAPTURE_POLICY).forEach(function (key) {
+      policy[key] = DEFAULT_CAPTURE_POLICY[key];
+    });
+    policy.profileKey = profile ? String(profile.key || "") : "";
+    if (typeof values.bringSelfToForeground === "boolean") {
+      policy.bringSelfToForeground = values.bringSelfToForeground;
+    }
+    if (typeof values.useWorkerThread === "boolean") {
+      policy.useWorkerThread = values.useWorkerThread;
+    }
+    var waitMs = Number(values.foregroundWaitMs);
+    if (isFinite(waitMs) && waitMs >= 0) {
+      policy.foregroundWaitMs = waitMs;
+    }
+    var timeoutMs = Number(values.timeoutMs);
+    if (isFinite(timeoutMs) && timeoutMs > 0) {
+      policy.timeoutMs = timeoutMs;
+    }
+    return policy;
+  }
+
+  // 从后台 Service 发起的授权弹窗在 MIUI 上不可交互，申请前先把自身 App 拉回前台，
+  // 让系统弹窗由前台 Activity 发起。是否启用由画像决定。
+  function bringSelfToForeground(policy) {
+    if (!policy.bringSelfToForeground) {
+      return false;
+    }
+    var packageName = deps.packageName ||
+      (config.app && config.app.packageName) ||
+      "com.agri.video.collector";
+    try {
+      if (appApi && typeof appApi.launchPackage === "function") {
+        appApi.launchPackage(packageName);
+      } else if (appApi && typeof appApi.launch === "function") {
+        appApi.launch(packageName);
+      } else {
+        return false;
+      }
+    } catch (error) {
+      logger.warn("截图权限申请前拉起自身前台失败", { message: String(error) });
+      return false;
+    }
+    if (policy.foregroundWaitMs > 0) {
+      sleepFn(policy.foregroundWaitMs);
+    }
+    logger.info("已拉起自身前台后再申请截图权限", { packageName: packageName });
+    return true;
+  }
+
+  // requestScreenCapture 会一直阻塞到用户处理系统授权弹窗为止。在主线程调用
+  // 会冻结事件分发，弹窗上的「立即开始」点了没反应，因此在子线程发起，
+  // 主线程只轮询等待，让系统弹窗能正常接收点击。
+  function requestCapturePermissionWithoutBlockingUi(policy) {
+    if (!policy.useWorkerThread) {
+      return requestScreenCaptureFn(false);
+    }
+    var threadsApi = deps.threads || (typeof threads !== "undefined" ? threads : null);
+    if (!threadsApi || typeof threadsApi.start !== "function") {
+      return requestScreenCaptureFn(false);
+    }
+    var pending = { done: false, granted: false, error: "" };
+    try {
+      threadsApi.start(function () {
+        try {
+          pending.granted = requestScreenCaptureFn(false);
+        } catch (error) {
+          pending.error = String(error);
+        }
+        pending.done = true;
+      });
+    } catch (error) {
+      logger.warn("子线程申请截图权限失败，回退主线程同步申请", { message: String(error) });
+      return requestScreenCaptureFn(false);
+    }
+    logger.info("截图权限弹窗已发起，等待用户在系统弹窗确认");
+    var maxPolls = Math.max(1, Math.ceil(policy.timeoutMs / 500));
+    for (var waited = 0; waited < maxPolls && !pending.done; waited += 1) {
+      sleepFn(500);
+    }
+    if (!pending.done) {
+      logger.error("截图权限请求超时，用户未处理系统授权弹窗");
+      return false;
+    }
+    if (pending.error) {
+      logger.error("截图权限请求异常", { message: pending.error });
+      return false;
+    }
+    return pending.granted;
+  }
+
   function ensureCapturePermission() {
     if (captureGranted) {
       return true;
@@ -127,11 +235,14 @@ function createPermissionManager(config, logger, deps) {
       return false;
     }
     captureRequestInFlight = true;
-    logger.info("请求截图权限");
+    // 每次申请时重新解析，保证服务端下发的画像覆盖能在下一次申请时生效。
+    var policy = resolveCapturePolicy();
+    logger.info("请求截图权限", { deviceProfile: policy.profileKey || "unknown" });
     try {
-      var granted = requestScreenCaptureFn(false);
+      bringSelfToForeground(policy);
+      var granted = requestCapturePermissionWithoutBlockingUi(policy);
       if (!granted) {
-        logger.error("截图权限请求失败");
+        logger.error("截图权限请求失败，若系统弹窗点不动请检查悬浮窗遮挡与后台弹出界面权限");
         toastFn("截图权限失败，任务停止");
         return false;
       }
@@ -155,9 +266,23 @@ function createPermissionManager(config, logger, deps) {
       dirs.push(config.output.logDir);
     }
     dirs.forEach(function (dirPath) {
-      if (!filesApi.exists(dirPath)) {
-        filesApi.createWithDirs(dirPath + "/.keep");
+      if (!dirPath) {
+        console.log("[WARN] ensureOutputDirs 跳过：目录路径为空");
+        return;
+      }
+      try {
+        if (filesApi.exists(dirPath)) {
+          return;
+        }
+        // createWithDirs 失败时可能返回 false，也可能抛异常，两者都必须兜住，
+        // 否则未捕获异常会中断整个脚本引擎。
+        if (filesApi.createWithDirs(dirPath + "/.keep") === false) {
+          logger.warn("输出目录创建失败", { dirPath: dirPath });
+          return;
+        }
         filesApi.remove(dirPath + "/.keep");
+      } catch (error) {
+        logger.warn("输出目录创建异常", { dirPath: dirPath, message: String(error) });
       }
     });
     return true;

@@ -9,6 +9,7 @@ const {
   buildVideoWarmupCommands,
   buildVideoWarmupStopCommands,
   clearVideoWarmupDeviceKeyword,
+  deviceReportedVideoWarmupRunId,
   readLastVideoWarmupKeyword,
   readVideoWarmupDeviceKeywords,
   resolveVideoWarmupKeyword,
@@ -313,5 +314,62 @@ test("shows pending run stop as waiting cancellation", () => {
 
   const state = resolveVideoWarmupCommandState(run, [stop], "batch-1", Date.parse("2026-08-07T17:05:00.000Z"));
   assert.equal(state.key, "waiting_cancel");
+  assert.equal(state.active, true);
+});
+
+test("reads the video warmup run id the device reports in its heartbeat", () => {
+  assert.equal(deviceReportedVideoWarmupRunId({
+    latestHeartbeat: {
+      rawPayload: { featureKey: "video_warmup", runId: "run-1", batchId: "batch-1" }
+    }
+  }), "run-1");
+
+  assert.equal(deviceReportedVideoWarmupRunId({
+    latestHeartbeat: { rawPayload: { featureKey: "target_live_interaction", runId: "run-2" } }
+  }), "");
+  assert.equal(deviceReportedVideoWarmupRunId({
+    latestHeartbeat: { rawPayload: { featureKey: "video_warmup" } }
+  }), "");
+  assert.equal(deviceReportedVideoWarmupRunId({ latestHeartbeat: null }), "");
+  assert.equal(deviceReportedVideoWarmupRunId(null), "");
+  assert.equal(deviceReportedVideoWarmupRunId(undefined), "");
+});
+
+test("keeps the stop entry available when the device still reports a finalized run", () => {
+  const run = {
+    id: "run-timeout",
+    deviceId: "device-id-a",
+    status: "TIMED_OUT",
+    resultJson: { status: "STOPPED", reason: "orphan_run_recovered" }
+  };
+
+  // 服务端已终结但设备仍在上报该任务：必须保持可停止
+  const stuck = resolveVideoWarmupCommandState(run, [], "batch-1", Date.now(), "run-timeout");
+  assert.equal(stuck.key, "device_still_running");
+  assert.equal(stuck.active, true);
+  assert.equal(shouldClearVideoWarmupBatch([stuck]), false);
+
+  // 设备上报的是另一条任务：保持既有终态
+  const released = resolveVideoWarmupCommandState(run, [], "batch-1", Date.now(), "another-run");
+  assert.equal(released.active, false);
+
+  // 没有设备上报信息：保持既有终态，行为不变
+  const unknown = resolveVideoWarmupCommandState(run, [], "batch-1", Date.now());
+  assert.equal(unknown.active, false);
+});
+
+test("shows an in-flight stop for a finalized run the device still runs", () => {
+  const run = { id: "run-timeout", deviceId: "device-id-a", status: "TIMED_OUT", resultJson: null };
+  const stop = {
+    id: "stop-pending",
+    deviceId: "device-id-a",
+    commandType: "VIDEO_WARMUP_STOP",
+    status: "PENDING",
+    payloadJson: { featureKey: "video_warmup", batchId: "batch-1" },
+    resultJson: null
+  };
+
+  const state = resolveVideoWarmupCommandState(run, [stop], "batch-1", Date.now(), "run-timeout");
+  assert.equal(state.key, "stopping");
   assert.equal(state.active, true);
 });

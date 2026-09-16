@@ -1,18 +1,9 @@
-import { PlayCircleOutlined, StopOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  App as AntdApp,
-  Button,
-  Col,
-  Input,
-  InputNumber,
-  Row,
-  Select,
-  Space,
-  Typography
-} from "antd";
+import { App as AntdApp } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LiveCommentDeviceDrawer } from "../components/live-comment-entry/LiveCommentDeviceDrawer";
+import { LiveCommentTaskSetup } from "../components/live-comment-entry/LiveCommentTaskSetup";
+import { LiveCommentWorkspace } from "../components/live-comment-entry/LiveCommentWorkspace";
 import {
   LiveCommentEntryProgress,
   liveCommentEntryResultText,
@@ -311,86 +302,16 @@ export function LiveCommentEntryPage() {
   }
 
   return (
-    <div className="ops-page live-comment-entry-page">
-      <div className="ops-page-header"><Typography.Title level={3}>抓取评论词</Typography.Title></div>
-      <section className="ops-panel">
-        <div className="ops-panel-head"><span>直播间入口设置</span></div>
-        <div className="ops-panel-body">
-          <Row gutter={[16, 16]} align="bottom">
-            <Col xs={24} lg={6}>
-              <Space direction="vertical" size={6} style={{ width: "100%" }}>
-                <Typography.Text strong>目标直播间关键词</Typography.Text>
-                <Input
-                  aria-label="目标直播间关键词"
-                  placeholder="请输入直播名称关键词"
-                  maxLength={100}
-                  value={targetKeyword}
-                  disabled={locked}
-                  onChange={(event) => setTargetKeyword(event.target.value)}
-                />
-              </Space>
-            </Col>
-            <Col xs={24} sm={12} lg={5}>
-              <Space direction="vertical" size={6} style={{ width: "100%" }}>
-                <Typography.Text strong>直播间人数下限（0 表示不限制）</Typography.Text>
-                <InputNumber
-                  aria-label="直播间人数下限"
-                  min={0}
-                  precision={0}
-                  value={minViewerCount}
-                  disabled={locked}
-                  style={{ width: "100%" }}
-                  onChange={(value) => setMinViewerCount(value ?? 300)}
-                />
-              </Space>
-            </Col>
-            <Col xs={24} sm={12} lg={5}>
-              <Space direction="vertical" size={6} style={{ width: "100%" }}>
-                <Typography.Text strong>每个直播间抓取时长（分钟）</Typography.Text>
-                <InputNumber aria-label="每个直播间抓取时长（分钟）" min={1} max={60} precision={0}
-                  value={captureDurationMinutes} disabled={locked} style={{ width: "100%" }}
-                  onChange={(value) => setCaptureDurationMinutes(value ?? 5)} />
-              </Space>
-            </Col>
-            <Col xs={24} lg={8}>
-              <Space direction="vertical" size={6} style={{ width: "100%" }}>
-                <Typography.Text strong>选择执行设备</Typography.Text>
-                <Select
-                  mode="multiple"
-                  aria-label="选择执行设备"
-                  placeholder="选择一台或多台在线设备"
-                  value={selectedDeviceCodes}
-                  disabled={locked}
-                  maxCount={200}
-                  style={{ width: "100%" }}
-                  options={selectableDevices.map((device) => ({
-                    value: device.deviceCode,
-                    label: `${device.deviceName || device.deviceCode} (${device.deviceCode})`
-                  }))}
-                  onChange={setSelectedDeviceCodes}
-                />
-              </Space>
-            </Col>
-          </Row>
-          <Space style={{ marginTop: 16 }}>
-            <Button
-              type="primary"
-              icon={<PlayCircleOutlined />}
-              disabled={locked || !targetKeyword.trim() || !selectedDeviceCodes.length}
-              loading={startMutation.isPending}
-              onClick={startNewBatch}
-            >开始抓取评论</Button>
-            <Button
-              danger
-              icon={<StopOutlined />}
-              disabled={!stoppableRows.length}
-              loading={stopMutation.isPending || stoppingCommandIds.size > 0}
-              onClick={() => stopMutation.mutate(stoppableRows)}
-            >停止本批任务</Button>
-          </Space>
-        </div>
-      </section>
-
+    <LiveCommentWorkspace running={summary.running} batchId={activeBatchId}>
+      <LiveCommentTaskSetup targetKeyword={targetKeyword} minViewerCount={minViewerCount}
+        captureDurationMinutes={captureDurationMinutes} selectedDeviceCodes={selectedDeviceCodes}
+        selectableDevices={selectableDevices} devices={devices} locked={locked}
+        loadingDevices={devicesQuery.isPending} devicesError={devicesQuery.isError}
+        starting={startMutation.isPending} stopping={stopMutation.isPending || stoppingCommandIds.size > 0}
+        canStop={stoppableRows.length > 0} onKeywordChange={setTargetKeyword}
+        onViewerCountChange={setMinViewerCount} onDurationChange={setCaptureDurationMinutes}
+        onDevicesChange={setSelectedDeviceCodes} onReloadDevices={() => void devicesQuery.refetch()}
+        onStart={startNewBatch} onStop={() => stopMutation.mutate(stoppableRows)} />
       <LiveCommentEntryProgress
         activeBatchId={activeBatchId}
         rows={rows}
@@ -417,6 +338,6 @@ export function LiveCommentEntryPage() {
         batchId={activeBatchId}
         onClose={() => setDetailRow(null)}
       />
-    </div>
+    </LiveCommentWorkspace>
   );
 }

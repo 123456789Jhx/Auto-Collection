@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { config } from "../config";
+import { createBizScriptDownloadRoutes } from "./biz-script-workspace";
+import { bizScriptWorkspaceService } from "../services/biz-script-workspace.production";
 
 const allowedExtensions = new Set([".zip", ".json", ".sha256", ".mp4", ".jpg", ".apk"]);
 
@@ -15,6 +17,7 @@ function contentTypeFor(extension: string) {
 }
 
 export const downloadRoutes = new Hono();
+downloadRoutes.route("/biz-scripts", createBizScriptDownloadRoutes(bizScriptWorkspaceService));
 
 downloadRoutes.get("/agent/:fileName", async (c) => {
   const fileName = basename(c.req.param("fileName"));

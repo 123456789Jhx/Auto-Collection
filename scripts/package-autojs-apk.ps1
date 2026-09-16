@@ -10,10 +10,13 @@ param(
   [switch]$AllowLoopback,
   [string[]]$NativeAbis = @("arm64-v8a"),
   [switch]$EnableMinify,
+  [string]$BizScriptBaselineVersion = "",
+  [string]$BaselineManifestPath = "",
   [switch]$SkipBuild
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "biz-script-manifest.ps1")
 
 $productionApiBaseUrl = "https://qk-api.dafengchan.top/api/v1"
 
@@ -856,6 +859,9 @@ Write-Utf8NoBom -Path $targetConfigPath -Value $targetConfigText
 Write-Host "Registration secret and version injected into staged AutoJS config."
 
 $buildId = "AGRI-" + $Environment.ToUpperInvariant() + "-" + (Get-Date -Format "yyyyMMddHHmmss")
+$stagedBaselinePath = Join-Path $targetProject "biz-script-baseline.json"
+Write-BizScriptBaselineManifest -SourceRoot $targetProject -OutputPath $stagedBaselinePath -Version $BizScriptBaselineVersion -ApkBuildId $buildId
+$expectedBaselineText = Get-Content -Raw -Encoding UTF8 -LiteralPath $stagedBaselinePath
 $inrtConfig = [ordered]@{
   name = $appName
   main = $sourceConfig.main
@@ -906,7 +912,7 @@ $env:Path = "$JavaHome\bin;$AndroidSdkRoot\platform-tools;$AndroidSdkRoot\cmdlin
 
 Push-Location $AutoJs6Root
 try {
-  .\gradlew.bat app:assembleInrtRelease --no-daemon --stacktrace '-Dorg.gradle.jvmargs=-Xms512m -Xmx2g -Dkotlin.daemon.jvm.options=-Xmx1g -Dfile.encoding=UTF-8 -XX:+UseG1GC'
+  .\gradlew.bat app:assembleInrtRelease --no-daemon --stacktrace '-Dorg.gradle.jvmargs=-Xms256m -Xmx3g -Dkotlin.daemon.jvm.options=-Xmx1g -Dfile.encoding=UTF-8 -XX:+UseSerialGC'
   Assert-LastCommandSucceeded "Gradle build"
 } finally {
   Pop-Location
@@ -1017,3 +1023,15 @@ Write-Host "APK packaged:"
 Write-Host "  APK: $dest"
 Write-Host "  SHA256: $sha256"
 Write-ApkSizeBreakdown -ApkPath $dest
+
+if ([string]::IsNullOrWhiteSpace($BaselineManifestPath)) {
+  $BaselineManifestPath = [string]$env:BIZ_SCRIPT_BASELINE_MANIFEST
+}
+if ([string]::IsNullOrWhiteSpace($BaselineManifestPath)) {
+  $BaselineManifestPath = Join-Path $repoRoot "dist\apk\biz-script-baseline.json"
+} elseif (-not [IO.Path]::IsPathRooted($BaselineManifestPath)) {
+  $BaselineManifestPath = Join-Path $repoRoot $BaselineManifestPath
+}
+Export-BizScriptApkBaseline -ApkPath $dest -ExpectedBaselineText $expectedBaselineText -DefaultManifestPath $BaselineManifestPath
+Write-Host "  APK business baseline: $dest.biz-script-baseline.json"
+Write-Host "  Default business baseline: $BaselineManifestPath"

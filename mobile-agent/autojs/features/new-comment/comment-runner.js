@@ -1,5 +1,6 @@
 "use strict";
 var defaultCommentCapture = require("./comment-capture.js");
+var timingDefaults = require("./action-timing.js").DEFAULT_ACTIONS;
 var COMMENT_OCR_ATTEMPTS = 3;
 function createCommentCaptureRunner(options) {
   options = options || {};
@@ -56,6 +57,7 @@ function createCommentCaptureRunner(options) {
       return {
         failed: true,
         value: raw.value,
+        reason: raw.reason || raw.reasonCode,
         message: String(raw.message || raw.reason || failedStage)
       };
     }
@@ -68,11 +70,12 @@ function createCommentCaptureRunner(options) {
       return {
         failed: true,
         value: raw,
+        reason: raw && (raw.reason || raw.reasonCode),
         message: String(raw && (raw.message || raw.stage || raw.reason) || failedStage)
       };
     }
     if (raw && raw.success === true) {
-      return { value: raw.value };
+      return { value: raw.value, completedBeforeDeadline: raw.timingCompletedBeforeDeadline };
     }
     return { value: raw };
   }
@@ -224,10 +227,22 @@ function createCommentCaptureRunner(options) {
     if (typeof value === "string") return value;
     value = value || {}; return String(value.text || value.commentText || value.rawText || "");
   }
-  function waitBetween(min, max, failedStage, reasonCode, details) {
+  function waitBetween(timingKey, timingSide, failedStage, reasonCode, details) {
+    var fallback = timingDefaults[timingKey][timingSide === "before" ? "beforeMs" : "afterMs"];
+    var min = fallback[0], max = fallback[1];
     var remaining = Math.max(0, deadline - now());
     if (!remaining) return null;
     min = Math.min(min, remaining); max = Math.min(max, remaining);
+    if (timingKey && runtime.actionTiming && (typeof runtime.actionTiming.run === "function" ||
+      typeof runtime.actionTiming.wait === "function")) {
+      var timingDetails = { remainingMs: function () { return Math.max(0, deadline - now()); }, purpose: failedStage };
+      var timed = typeof runtime.actionTiming.run === "function"
+        ? runtime.actionTiming.run(timingKey, function () { return { success: true }; }, details.control, timingDetails)
+        : runtime.actionTiming.wait(timingKey, details.control, timingDetails);
+      if (timed && timed.stopped) return stoppedResult(details.pages, details.scope, details.swipeCount);
+      if (timed && timed.success === false) return failure(failedStage, reasonCode, timed.message || timed.reason, details);
+      return null;
+    }
     if (!actionAvailable("waitRandom")) {
       return stopped(details.control) ? stoppedResult(details.pages, details.scope, details.swipeCount) : null;
     }
@@ -277,8 +292,10 @@ function createCommentCaptureRunner(options) {
           swipeCount: actualSwipeCount, maxSwipeCount: null, ocrAttempt: ocrAttempt
         });
         if (expired()) break captureLoop;
-        var read = invoke("readComments", "CAPTURING_COMMENTS", [], control);
-        if (expired() && !read.stopped) break captureLoop;
+        var read = invoke("readComments", "CAPTURING_COMMENTS", [{
+          remainingMs: function () { return Math.max(0, deadline - now()); }
+        }], control);
+        if (expired() && !read.stopped && read.completedBeforeDeadline !== true) break captureLoop;
         var readComments = [];
         if (!read.failed && (!read.stopped || read.completed)) {
           try {
@@ -295,6 +312,15 @@ function createCommentCaptureRunner(options) {
         if (read.stopped) {
           if (read.completed && !read.failed && readComments.length) pages.push({ pageIndex: pageIndex, comments: readComments });
           return stoppedResult(read.completed && !read.failed && readComments.length ? pages : pendingPages, scope, actualSwipeCount);
+        }
+        if (expired()) {
+          if (read.failed) {
+            lastReadFailure = read.reason === "TIMING_DEADLINE_REACHED" ? null : read;
+          } else {
+            if (readComments.length) pageComments = readComments;
+            lastReadFailure = null;
+          }
+          break;
         }
         var verificationPages = readComments.length
           ? pages.concat([{ pageIndex: pageIndex, comments: readComments }])
@@ -318,7 +344,7 @@ function createCommentCaptureRunner(options) {
             pageIndex: pageIndex, nextAttempt: ocrAttempt + 1,
             reasonCode: lastReadFailure ? "COMMENT_OCR_FAILED" : "COMMENT_OCR_EMPTY"
           });
-          var retryWait = waitBetween(350, 650, "CAPTURING_COMMENTS", "COMMENT_OCR_FAILED", {
+          var retryWait = waitBetween("commentOcrRetry", "before", "CAPTURING_COMMENTS", "COMMENT_OCR_FAILED", {
             control: control, pageIndex: pageIndex, swipeCount: actualSwipeCount,
             pages: pageComments.length ? verificationPages : pendingPages, scope: scope
           });
@@ -357,7 +383,10 @@ function createCommentCaptureRunner(options) {
       });
       log("info", "抓取评论词评论区滑动开始", { swipeIndex: actualSwipeCount + 1, swipeCount: actualSwipeCount, maxSwipeCount: timed ? null : maxSwipeCount, captureDurationMinutes: timed ? minutes : null, remainingMs: timed ? Math.max(0, deadline - now()) : null });
       if (expired()) break;
-      var swipe = invoke("swipeComments", "SWIPING_COMMENTS", [], control);
+      var swipe = invoke("swipeComments", "SWIPING_COMMENTS", [{
+        remainingMs: function () { return Math.max(0, deadline - now()); }
+      }], control);
+      if (swipe.failed && swipe.reason === "TIMING_DEADLINE_REACHED" && expired()) break;
       var completedSwipeCount = swipe.failed ? actualSwipeCount : actualSwipeCount + 1;
       if (swipe.stopped) return stoppedResult(pages, scope, swipe.completed ? completedSwipeCount : actualSwipeCount);
       if (expired() && !swipe.failed) { actualSwipeCount = completedSwipeCount; break; }
@@ -383,11 +412,13 @@ function createCommentCaptureRunner(options) {
         });
         break;
       }
-      var swipeWait = waitBetween(2500, 4500, "SWIPING_COMMENTS", "COMMENT_SWIPE_FAILED", {
-        control: control, pageIndex: pageIndex, swipeCount: actualSwipeCount,
-        pages: pages, scope: scope
-      });
-      if (swipeWait) return swipeWait;
+      if (!runtime.actionTiming) {
+        var swipeWait = waitBetween("swipeComments", "after", "SWIPING_COMMENTS", "COMMENT_SWIPE_FAILED", {
+          control: control, pageIndex: pageIndex, swipeCount: actualSwipeCount,
+          pages: pages, scope: scope
+        });
+        if (swipeWait) return swipeWait;
+      }
     }
     var captured = candidates(pages, scope);
     if (!timed && !captured.length && !stoppedEarly) {

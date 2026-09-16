@@ -11,6 +11,7 @@ const request = {
   configId: "config-1",
   slotExecutionId: "slot-1",
   accountName: "开心幸福一家人",
+  externalAccountKey: "query-41218954470",
   clientConfig: {
     externalBaseUrl: "https://external.example.test",
     externalTokenEnv: "PUBLISH_EXTERNAL_TOKEN"
@@ -63,14 +64,14 @@ function memoryRepository(overrides: Partial<PublishInterfaceClaimRepository> = 
 }
 
 describe("interface publish single-account claim", () => {
-  test("calls the external client exactly once for the requested account", async () => {
+  test("queries by the external key while validating and saving the account name", async () => {
     const { repository, events } = memoryRepository();
     const calls: string[] = [];
     const service = createPublishInterfaceClaimService({
       repository,
       now: () => now,
-      claim: async (_config, accountName) => {
-        calls.push(accountName);
+      claim: async (_config, externalAccountKey) => {
+        calls.push(externalAccountKey);
         return { kind: "CLAIMED", task };
       }
     });
@@ -80,8 +81,11 @@ describe("interface publish single-account claim", () => {
       publishTaskId: "publish-task-1",
       externalTaskId: task.taskId
     });
-    expect(calls).toEqual([request.accountName]);
-    expect(events.filter((event) => event.kind === "CLAIMED")).toHaveLength(1);
+    expect(calls).toEqual(["query-41218954470"]);
+    expect(events.filter((event) => event.kind === "CLAIMED")).toMatchObject([{
+      accountName: "开心幸福一家人",
+      task: { accountName: "开心幸福一家人" }
+    }]);
   });
 
   test("accepts the documented external pending status", async () => {
@@ -203,6 +207,7 @@ describe("interface publish single-account claim", () => {
   test("rejects invalid, mismatched or non-douyin tasks before persistence", async () => {
     const invalidTasks = [
       { ...task, accountName: "另一个账号" },
+      { ...task, accountName: request.externalAccountKey },
       { ...task, taskId: "" },
       { ...task, platform: "视频号" }
     ];

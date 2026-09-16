@@ -1,6 +1,13 @@
+var createXiaomi14RecentsCleanup = require("./xiaomi14-recents-cleanup").createXiaomi14RecentsCleanup;
+
 function createDouyinPostPublishCleanup(options) {
   options = options || {};
   var logger = options.logger || { info: function () {}, warn: function () {} };
+  var deviceProfile = options.deviceProfile || (options.context && options.context.deviceProfile) || null;
+  var accessibility = options.accessibility || (options.context && options.context.accessibility) || null;
+  var randomInt = options.randomInt || function (min, max) {
+    return Math.floor(min + Math.random() * (max - min + 1));
+  };
   var wait = options.wait || function (milliseconds) {
     if (typeof sleep === "function") sleep(milliseconds);
   };
@@ -48,8 +55,12 @@ function createDouyinPostPublishCleanup(options) {
     try { if (descMatches(/.*(发布进度|正在发布|上传中).*/).findOne(200)) return true; } catch (error2) {}
     return false;
   };
+  function isXiaomi14() {
+    return String(deviceProfile && deviceProfile.key || "") === "xiaomi_14";
+  }
+
   var dismissCard = options.dismissCard || function (card) {
-    if (typeof swipe !== "function" || typeof device === "undefined") return false;
+    if (typeof device === "undefined") return false;
     var width = Number(device.width || 0);
     var height = Number(device.height || 0);
     if (width <= 0 || height <= 0) return false;
@@ -66,6 +77,7 @@ function createDouyinPostPublishCleanup(options) {
       try { target = target.parent && target.parent(); } catch (parentError) { target = null; }
     }
     if (!bounds) return false;
+    if (typeof swipe !== "function") return false;
     swipe(Math.floor(bounds.left + bounds.width() * 0.8), bounds.centerY(), Math.floor(bounds.left + bounds.width() * 0.1), bounds.centerY(), 420);
     return true;
   };
@@ -174,7 +186,6 @@ function createDouyinPostPublishCleanup(options) {
   var findAgentCardTimeoutMs = Math.max(0, Number(options.findAgentCardTimeoutMs == null ? 3000 : options.findAgentCardTimeoutMs));
   var homeReadyWaitMs = Math.max(0, Number(options.homeReadyWaitMs == null ? 1000 : options.homeReadyWaitMs));
   var findAgentHomeIconTimeoutMs = Math.max(0, Number(options.findAgentHomeIconTimeoutMs == null ? 3000 : options.findAgentHomeIconTimeoutMs));
-
   function fallbackToHome(taskId, reason) {
     var returnedHome = false;
     try { returnedHome = goHome() !== false; } catch (error) {}
@@ -208,9 +219,16 @@ function createDouyinPostPublishCleanup(options) {
       logger.warn("抖音仍显示发布进度，跳过后台清理", { taskId: taskId });
       return { completed: false, reason: "PUBLISH_STILL_IN_PROGRESS" };
     }
+    if (isXiaomi14()) {
+      return createXiaomi14RecentsCleanup({
+        logger: logger, wait: wait, randomInt: randomInt,
+        accessibility: accessibility, getCurrentPackage: getCurrentPackage
+      }).run(payload);
+    }
     // Only the just-backgrounded foreground app can use the unlabeled-card fallback.
     var douyinWasForeground = isDouyinForeground();
-    if (openRecents() === false) {
+    var recentsOpened = openRecents();
+    if (recentsOpened === false) {
       logger.warn("抖音发布成功后无法打开最近任务，继续返回燎原星火", { taskId: taskId });
       return fallbackToHome(taskId, "RECENTS_UNAVAILABLE");
     }
